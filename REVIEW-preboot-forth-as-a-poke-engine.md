@@ -199,7 +199,13 @@ separating because they do not cost the same.
 Read from the source, not the manual. Ranked by value-per-line in Forth, not by
 how impressive they look.
 
-### E1 — Constraints: fields that REFUSE to map
+### E1 — Constraints: fields that REFUSE to map — **BUILT 2026-08-30**
+
+> **`?elf64` / `?phdrs` in [`dsl/elf.fth`](examples/openbios-the-rival-that-shipped/dsl/elf.fth),
+> `chk` / `chk<` / `chk?` in `dsl/struct.fth`, measured by
+> `smoke-openbios.sh elf-methods` on both arches. Four corruptions —
+> class, ehsize, byte order, magic — each aborts BY NAME with want and got, and
+> none reaches the marker after it.**
 
 The single biggest difference in kind. `struct.fth` **describes** a layout;
 poke-elf **validates** one, and a violated constraint makes the map fail rather
@@ -214,14 +220,27 @@ uint<8> ei_abiversion : ei_osabi == ELF_OSABI_NONE => ei_abiversion == 0;
 Note the third: `=>` is **implication**, a first-class operator, so a conditional
 constraint reads as one.
 
-**Transliteration is cheap and it is the top item.** A constraint is a predicate
-over a mapped base, and Forth has `abort"`:
+**Transliteration is cheap and it is the top item.** As built:
 
 ```forth
-: ?elf64 ( base -- base )
-  dup e_magic t@ 464c457f <> abort" not an ELF: bad magic"
-  dup e_class t@ 2 <>       abort" not ELF64" ;
+: ?elf64 ( -- )
+  @elf e_magic t@ 464c457f  s" bad ELF magic (want 7f 'E' 'L' 'F')"  chk
+  @elf e_class t@ 2         s" not ELF64 (e_class)"                  chk
+  ...
+  @elf e_osabi t@ 0= 0=  @elf e_abiversion t@ 0=  or
+    s" e_abiversion must be 0 when e_osabi is NONE" chk? ;
 ```
+
+That last line is poke's implication operator: **`a => b` is `a 0= b or`**, which
+is all an implication ever was. No syntax needed.
+
+**The sketch in the first draft of this section did not work, and the failure is
+worth keeping.** It proposed `abort"` directly. The first implementation wrapped
+it as an immediate word (`postpone chk-report postpone abort"`) assuming POSTPONE
+defers an immediate word's compilation semantics; in this Forth it does not — the
+string was never parsed and the firmware answered `never": undefined word.`
+Passing the message as an ordinary string needs no immediacy and reads at least
+as well.
 
 **Why this matters more here than in poke**: this repo's whole ethos is that a
 plausible wrong number is worse than an honest refusal, and `struct.fth` already
@@ -285,7 +304,19 @@ declared size and lets a mismatch surface elsewhere. **The Forth track is
 stricter** — it asserts the declaration against the file's own `e_phentsize`.
 That is a place where this repo's habit is genuinely ahead.
 
-### E4 — Methods: semantics, not layout
+### E4 — Methods: semantics, not layout — **BUILT 2026-08-30**
+
+> **`elf-load-base`, `vaddr>off`, `sh-name` and the string reader
+> (`cstr` / `.cstr`), measured against ground truth unpacked from the same bytes
+> on the host: load base `100000`, entry `101d70` → file offset `2d70`, an
+> address in no segment → `-1`, and all ten section names in order.**
+>
+> **One bug, and only the narrow cell showed it.** `get_load_base` is a minimum
+> over `PT_LOAD`, and the first draft used `min` — which is **signed**. With
+> `ffffffff` as the sentinel that is `+4294967295` on a 64-bit cell and `-1` on a
+> 32-bit one, so amd64 answered `100000` and x86 answered `ffffffff`: the
+> sentinel winning every comparison. Running the track on both arches is the only
+> reason it was seen.
 
 57 of them, and the interesting ones are not accessors:
 
@@ -838,16 +869,14 @@ Re-grading the first review's table, plus what this proposal adds:
    definer already shipped (§G2). What it cost instead was the *typing*: two
    accessors the firmware lacks, and seven injections to establish that the
    assertions bite.
-3. **Constraints, from `poke-elf` §E1 — now above bit-fields.** A predicate word
-   per layout plus `abort"`, so a layout can *refuse* a file rather than
-   describe it wrongly. `struct.fth` already refuses what it cannot represent
-   (`T-ERR-*`); this is the other half, and it is the cheapest high-value item
-   the ELF pickles suggested.
-4. **The two forensics methods, from §E4** — `vaddr_to_file_offset` and
-   `get_load_base` are ordinary Forth over the array walk that already works, and
-   they are exactly the shape §G6 says the one licensed application needs. A
-   string-table reader (`c@` until NUL) comes with them and is the smallest
-   concrete gap in the layer.
+3. ~~**Constraints, from `poke-elf` §E1.**~~ — **DONE 2026-08-30.** `?elf64` /
+   `?phdrs` over `chk` / `chk<` / `chk?`, including poke's implication as
+   `a 0= b or`. Four corruptions refused by name in `smoke-openbios.sh
+   elf-methods`, and the same predicate accepts a header `elf-new` just authored.
+4. ~~**The two forensics methods, from §E4.**~~ — **DONE 2026-08-30.**
+   `elf-load-base`, `vaddr>off` and `sh-name` with the string reader, all against
+   host ground truth. The format moved to `dsl/elf.fth` on top of the engine,
+   which is §E6's structural lesson applied rather than skipped.
 5. **Bit-fields as a library (G4).** Skip unit-typed offsets, deliberately and in
    writing — §E7 now says what that costs.
 6. **Pick ONE application and drive it end to end** before generalising. On the
@@ -878,6 +907,12 @@ Re-grading the first review's table, plus what this proposal adds:
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
+- **§E1 and §E4 are built; §E2, §E3, §E5, §E6 and §E7 are not.** What shipped is
+  the two the analysis rated highest, plus the structural split (§E6's lesson,
+  not its registry) and bit-fields (§G4). §E2 — byte order taken from `ei_data`
+  at map time — is **refused by name** rather than implemented, so a big-endian
+  ELF64 halts instead of being misread. §E3's declarative `file:` definer and
+  §E5's unions remain sketches.
 - **`poke-elf` was read, not run.** Same standard as §P: every §E finding is
   from its source at `ae45538`. No pickle was loaded into a poke, so the
   behaviour of a constraint on a real file is quoted from the code, not watched.
@@ -904,5 +939,6 @@ Re-grading the first review's table, plus what this proposal adds:
 | First pass | [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md) — F2 closed 2026-08-29 |
 | poke corpus | GNU poke **5.0** tarball from `ftp.gnu.org/gnu/poke/`, `sha256` `6873d59abe821c8111b88623…`, retrieved 2026-08-29 — read, **not built or run** |
 | ELF pickles | `git://git.savannah.gnu.org/poke/poke-elf.git` @ **`ae45538`** (2024-10-15), cloned 2026-08-30 — **unreleased**, no tarball exists. 5,060 lines / 16 pickles, read, **not run** |
-| Type layer | [`examples/openbios-the-rival-that-shipped/dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth), measured by `smoke-openbios.sh struct-layer`, `struct-array` and `struct-device` on amd64 **and** x86 |
+| Type layer | engine: [`dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth) — format: [`dsl/elf.fth`](examples/openbios-the-rival-that-shipped/dsl/elf.fth). Measured by `smoke-openbios.sh struct-layer`, `struct-array`, `struct-device` and `elf-methods` on amd64 **and** x86 |
+| Walkthrough | [`MANUAL-TYPE-LAYER.md`](examples/openbios-the-rival-that-shipped/MANUAL-TYPE-LAYER.md) — the same ground driven by hand at the `0 >` prompt |
 | Written | 2026-08-29; §P and the G7 resolution added the same day; §G2 **built and corrected** the same day; §G2's arrays and §G8's device backend added 2026-08-30 |

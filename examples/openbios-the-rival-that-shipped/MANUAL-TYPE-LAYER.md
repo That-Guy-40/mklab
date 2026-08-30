@@ -37,6 +37,7 @@ against `readelf` on this machine:
 W=${OPENBIOS_WORKDIR:-$HOME/openbios-lab}
 mkdir -p "$W/typelayer"
 cp dsl/struct.fth                          "$W/typelayer/STRUCT.FTH"
+cp dsl/elf.fth                             "$W/typelayer/ELF.FTH"
 cp "$W/openbios/obj-amd64/openbios.multiboot" "$W/typelayer/SUBJ.ELF"
 genisoimage -quiet -o "$W/typelayer.iso" -V TYPELAYER -r -J "$W/typelayer"
 ```
@@ -83,16 +84,24 @@ way.
 - **Ctrl-A C** switches between the Forth prompt and the QEMU monitor.
 - **Ctrl-A X** quits.
 
-At the prompt:
+At the prompt — **two files, in this order**:
 
 ```forth
 load /ide@1/cdrom@0:\struct.fth
 load-base load-size evaluate
+load /ide@1/cdrom@0:\elf.fth
+load-base load-size evaluate
 ```
 
-The first prints some `Probing for …` chatter and `Path=/struct.fth`; the second
-just says ` ok`. You now have `field:`, `le-field:`, `dev-field:`, `array:`,
-`t@`, `t!`, `t-adr`, and the ELF64 layouts.
+The `load`s print some `Probing for …` chatter and a `Path=`; the `evaluate`s
+just say ` ok`.
+
+**Why two files.** `struct.fth` is the **engine** — `field:`, `t@`, `t!`,
+`array:`, `>virt`, `chk`, `dump` — and mentions no format at all. `elf.fth` is
+**one format** on top of it: the ELF64 layouts, the constraints, and the
+methods. That is GNU poke's own split (`elf-64.pk` is not part of `libpoke`),
+and it means a different format is a different second file, not a fork of the
+engine.
 
 ---
 
@@ -268,7 +277,63 @@ load /ide@1/cdrom@0:\subj.elf
 ```
 
 `load` reads the whole file to `load-base` and stops. Nothing has interpreted
-it — the bytes are just sitting there, and `elf64-ehdr` is a layout over them:
+it — the bytes are just sitting there.
+
+**Bind it once, then stop passing it around.** poke says
+`var f = Elf64_File @ 0#B`; here it is a value:
+
+```forth
+load-base elf-at
+```
+
+**Now make it prove it is an ELF.** `?elf64` is GNU poke's field constraints
+(§E1 of the review) as a Forth predicate — it *refuses* rather than describing
+a file wrongly:
+
+```forth
+?elf64
+```
+
+Silence and ` ok` means every constraint held. You will see it bite in §9.
+
+**Look at it.** Three words, the three views `readelf` is usually run for:
+
+```forth
+.elf
+.phdrs
+.sections
+```
+
+```
+ELF64  entry=101d70  phnum=3  shnum=a  ehsize=40
+idx type     flg offset   vaddr    filesz   memsz
+  0 LOAD    RWX     1000  100000   20830   a17b0
+  1 NOTE    R--     1020  100020      50      50
+  2 t6474e551 RW-        0       0       0       0
+idx name                 type      addr     offset   size
+  0                     NULL            0       0       0
+  1 .hdr                PROGBITS   100000    1000      20
+  2 .note               NOTE       100020    1020      50
+  3 .text               PROGBITS   100070    1070   1235f
+  4 .rodata             PROGBITS   1123e0   133e0    5a7b
+  5 .eh_frame           PROGBITS   117e60   18e60    4af4
+  6 .data               PROGBITS   11c960   1d960    3e28
+  7 .initctx            PROGBITS   1207a0   217a0      90
+  8 .bss                NOBITS     121000   21830   807b0
+  9 .shstrtab           STRTAB          0   21830      42
+```
+
+Those **names are read out of the file's own string table** — `.shstrtab` at
+offset `0x21830` — not a list compiled into the firmware. `t6474e551` is
+`PT_GNU_STACK`, a type the small name table does not carry; unknown values print
+as `t<hex>` rather than being guessed at.
+
+Compare any of it with `readelf -hlS` in your other terminal.
+
+### The fields underneath
+
+`elf64-ehdr` is a layout over the same bytes, and every field is still there
+by name:
 
 ```forth
 load-base e_magic t@ u.
@@ -373,6 +438,38 @@ phtab 1 phdr[] p_type t@ u. phtab 1 phdr[] p_offset-lo t@ u.
 
 `readelf -lW` on the host prints the same table.
 
+### The methods — questions about meaning, not layout
+
+Walking a table by hand is the *mechanism*. What you usually want is an answer,
+and `elf.fth` carries GNU poke's two most useful ones (§E4):
+
+```forth
+elf-load-base u.        \ the lowest vaddr any PT_LOAD segment loads at
+101d70 vaddr>off u.     \ which byte of the FILE becomes that address at run time
+```
+
+```
+100000 2d70  ok
+```
+
+The entry point `0x101d70` lives at file offset `0x2d70`. That second question —
+*which bytes become that address* — is exactly what boot forensics asks, and it
+is why the review rates these above everything else in `poke-elf`.
+
+An address in no segment answers `-1`, not a plausible number:
+
+```forth
+7fff0000 vaddr>off u.       \ ffffffffffffffff
+```
+
+And the string table by index:
+
+```forth
+3 sh-name .cstr             \ .text
+```
+
+### Doing it by hand anyway
+
 Something a table makes possible that a single field does not — a **derived**
 answer over the whole traversal:
 
@@ -398,25 +495,87 @@ console can survive. Forth does not care where the newlines fall.
 
 ---
 
-## 9. Part 6 — author a header, and let the host read it
+## 9. Part 6 — make it refuse
+
+A layout that only *describes* will describe a broken file just as confidently
+as a good one. Break the header and watch `?elf64` stop:
+
+```forth
+0 @elf e_class t!
+?elf64
+```
+
+```
+CONSTRAINT: not ELF64 (e_class) -- want=2  got=0
+ Aborted.
+```
+
+**Both values, and the operation did not complete.** "Constraint failed" on its
+own would send you back to the prompt to work out which; and a message followed
+by a return would be worse than no message at all — the review calls that the
+LIED rung.
+
+Others to try (each needs a fresh `load /ide@1/cdrom@0:\subj.elf` first, since
+you just corrupted the copy in memory):
+
+```forth
+0 @elf e_magic t!       ?elf64      \ bad ELF magic
+99 @elf e_ehsize t!     ?elf64      \ e_ehsize disagrees with the layout
+2 @elf e_data t!        ?elf64      \ big-endian
+```
+
+That last one is worth reading. `elf.fth` declares byte order **per field**,
+where GNU poke takes it from `ei_data` *at map time* — so a big-endian ELF64
+would be silently misread here. Rather than let it through, the constraint says
+so. **A limit you can see is a different thing from a bug.**
+
+Write your own constraint the same way — the message is an ordinary string:
+
+```forth
+: ?x86-64  @elf e_machine t@ 3e s" not x86-64" chk ;
+?x86-64
+```
+
+`chk` compares, `chk<` bounds, `chk?` takes any flag. poke's implication
+`a => b` is just `a 0= b or` handed to `chk?`.
+
+---
+
+## 10. Part 7 — author a header, and let the host read it
 
 The other direction. Build an ELF64 header from nothing, in a buffer, using only
 `t!` — then hand the bytes to `readelf`.
 
 ```forth
 40 alloc-mem value hdr
-: zap 40 0 do 0 hdr i + c! loop ;
-zap hdr u.
+hdr elf-new
+?elf64
+hdr u.
 ```
 
-Note the address it prints. Then fill in the fields **by name**:
+`elf-new` zeroes `0x40` bytes and fills the fields **by name** with `t!` — and
+then **the same `?elf64` that rejected the corrupted file in §9 accepts what you
+just built.** One predicate, two subjects: that is the whole argument for having
+a constraint rather than a comment.
+
+Note the address `hdr u.` prints. Look at the bytes:
 
 ```forth
-464c457f hdr e_magic t!  2 hdr e_class t!
-1 hdr e_data t!  1 hdr e_version1 t!
-2 hdr e_type t!  3e hdr e_machine t!  1 hdr e_version t!
-401000 hdr e_entry-lo t!
-40 hdr e_ehsize t!  38 hdr e_phentsize t!  40 hdr e_shentsize t!
+hdr 40 dump
+```
+
+```
+   14c68: 7f 45 4c 46 02 01 01 00  00 00 00 00 00 00 00 00  |.ELF............|
+   14c78: 02 00 3e 00 01 00 00 00  00 00 00 00 00 00 00 00  |..>.............|
+   14c88: 00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+   14c98: 00 00 00 00 40 00 38 00  00 00 40 00 00 00 00 00  |....@.8...@.....|
+```
+
+Change anything you like before saving it — every field is addressable:
+
+```forth
+401000 @elf e_entry-lo t!
+3 @elf e_type t!            \ DYN instead of EXEC
 ```
 
 **Ctrl-A C**, then save those 64 bytes — substituting the address `hdr` printed:
@@ -452,7 +611,7 @@ with the loop closed at both ends.
 
 ---
 
-## 10. Reference — what `struct.fth` gives you
+## 11. Reference — the two files
 
 | word | stack | what it does |
 |---|---|---|
@@ -469,17 +628,45 @@ with the loop closed at both ends.
 | `>virt` | `( phys -- adr )` | physical → Forth address (identity on amd64) |
 | `>phys` | `( adr -- phys )` | the inverse |
 | `load-base-phys` | `( -- p )` | `400000` on x86, `4000000` on amd64 |
+| `chk` | `( actual expected c-addr u -- )` | equal, or print both and **abort** |
+| `chk<` | `( n limit c-addr u -- )` | unsigned `n < limit`, or abort |
+| `chk?` | `( flag c-addr u -- )` | any predicate; `a => b` is `a 0= b or` |
+| `bits@` | `( value lsb width -- field )` | bit-field extract |
+| `bit?` | `( value n -- flag )` | one bit |
+| `cstr` / `.cstr` / `cstr-len` | `( adr -- … )` | NUL-terminated strings |
+| `dump` | `( adr len -- )` | hex + ASCII, 16 to a line |
+
+### `elf.fth` — one format on top of it
+
+| word | stack | what it does |
+|---|---|---|
+| `elf-at` | `( adr -- )` | bind the ELF everything else works on |
+| `@elf` | `( -- adr )` | that base |
+| `?elf64` | `( -- )` | §E1 constraints — **refuses** a file it cannot describe |
+| `?phdrs` | `( filesize -- )` | no `PT_LOAD` may run past the end of the file |
+| `.elf` `.phdrs` `.sections` | `( -- )` | the three `readelf` views |
+| `elf-load-base` | `( -- vaddr )` | poke's `get_load_base` |
+| `vaddr>off` | `( vaddr -- off \| -1 )` | poke's `vaddr_to_file_offset` |
+| `sh-name` | `( i -- adr )` | a section's name in the string table |
+| `elf-ph` / `elf-sh` | `( i -- adr )` | one program / section header |
+| `elf-phnum` / `elf-shnum` | `( -- n )` | how many |
+| `elf-new` | `( adr -- )` | author a valid ELF64 header there |
+| `.p-type` `.sh-type` `.p-flags` | `( n -- )` | names and `RWX`, not numbers |
 
 Widths are 1, 2, 4 (and 8 in memory space, on a 64-bit cell). Anything else is
 **refused by name** — `T-ERR-width=<n>`, `T-ERR-be64`, `T-ERR-devwidth=<n>`,
 `T-ERR-narrow-cell` — rather than answered with a plausible wrong number.
 
-Layouts that ship: `elf64-ehdr` (`/elf64-ehdr`), `elf64-phdr` (`/elf64-phdr`)
-with `phdr[]`, and `elf64-entry` for the 8-byte `x-entry` view.
+Layouts that ship in `elf.fth`: `/elf64-ehdr`, `/elf64-phdr` with `phdr[]`,
+`/elf64-shdr` with `shdr[]`, and `/elf64-entry` for the 8-byte `x-entry` view.
+
+**Adding a format is a new file, not a fork.** Declare the layouts with
+`field:`/`le-field:`, a `?`-word with `chk`, and whatever methods answer the
+questions you actually ask. That is the whole shape.
 
 ---
 
-## 11. When something goes wrong
+## 12. When something goes wrong
 
 | symptom | cause |
 |---|---|
@@ -491,10 +678,12 @@ with `phdr[]`, and `elf64-entry` for the 8-byte `x-entry` view.
 | prompt shows `5 > ` and the last line said ` compiled` | you are inside an unfinished `:` definition. Finish it — `clear` here throws it away |
 | a store "works" but nothing happens | Part 2. On x86 a Forth address is not a physical one — aim at `<phys> >virt`, and check with `xp` from the monitor |
 | `invalid char 'h' in expression` | quote the path you gave `pmemsave` |
+| `CONSTRAINT: …` then ` Aborted.` | working as intended — `?elf64` refused. The line says what it wanted and what it got |
+| a constraint fires on a field you did not touch | you corrupted the header earlier and never reloaded it. `load … subj.elf` again |
 
 ---
 
-## 12. Where this is checked automatically
+## 13. Where this is checked automatically
 
 Everything above is asserted, on both arches, by three smoke tracks — with
 controls, which is the part a walkthrough cannot give you:
@@ -503,6 +692,8 @@ controls, which is the part a walkthrough cannot give you:
 ./smoke-openbios.sh struct-layer     # the two checkpoints, and the refusals
 ./smoke-openbios.sh struct-array     # the phdr walk, graded by a derived sum
 ./smoke-openbios.sh struct-device    # the device backend, and the x86 false positive
+./smoke-openbios.sh elf-methods      # the constraints and the methods — four
+                                     # corruptions must each be refused BY NAME
 ```
 
 Background: [`README.md`](README.md) (§"And where the type layer starts"),

@@ -1,5 +1,11 @@
 \ struct.fth — a TYPE layer over OpenBIOS Forth, for REVIEW G2.
 \
+\ THIS FILE IS THE ENGINE. The ELF layouts that used to live here moved to
+\ dsl/elf.fth on 2026-08-30, which is poke's own structure (elf-64.pk is a
+\ separate pickle from libpoke) and REVIEW §E6's lesson applied to ourselves:
+\ keeping the format out of the engine is why elf-64.pk stays 446 readable
+\ lines. Load this first, then whichever format you are looking at.
+\
 \ WHAT THIS IS NOT. It is not a definer built from scratch: OpenBIOS already
 \ ships one. `forth/bootstrap/bootstrap.fs:1570` has
 \
@@ -162,53 +168,6 @@ hex
   dup t-order swap t-width                  ( u adr order width )
   r> if (t!dev) else (t!mem) then ;
 
-\ ── the ELF64 header, as a layout ──────────────────────────────────
-\ e_entry/e_phoff/e_shoff are 8 bytes in ELF64 and are declared here as two
-\ 4-byte little-endian halves ON PURPOSE, so one layout serves BOTH arches: an
-\ 8-byte field would refuse on x86's 32-bit cell and the whole parse would halt
-\ on a field nobody was asking about. The 8-byte path is exercised separately.
-
-struct
-  4 le-field: e_magic          \ 7f 'E' 'L' 'F', read as an LE quad
-  1    field: e_class          \ 1 = ELF32, 2 = ELF64
-  1    field: e_data
-  1    field: e_version1
-  1    field: e_osabi
-  8    field: e_pad            \ blob: addressable, not scalar-readable
-  2 le-field: e_type
-  2 le-field: e_machine
-  4 le-field: e_version
-  4 le-field: e_entry-lo
-  4 le-field: e_entry-hi
-  4 le-field: e_phoff-lo       \ the program-header table's file offset
-  4 le-field: e_phoff-hi
-  4 le-field: e_shoff-lo
-  4 le-field: e_shoff-hi
-  4 le-field: e_flags
-  2 le-field: e_ehsize         \ the header's OWN size -- see below
-  2 le-field: e_phentsize      \ the stride of the phdr array
-  2 le-field: e_phnum          \ ...and its length
-  2 le-field: e_shentsize
-  2 le-field: e_shnum
-  2 le-field: e_shstrndx
-constant /elf64-ehdr
-
-\ /elf64-ehdr is 0x40, and so is `e_ehsize` READ OUT OF THE FILE. That equality
-\ is the layout checking itself against its own subject: a structure that
-\ declares its own size is rare and this one does, so an offset that drifted
-\ anywhere above would be caught by a field the drift itself moved. It costs
-\ one assertion and it is stronger than any constant written down twice.
-
-\ A SECOND VIEW of the same bytes, and it is the arch control. e_entry lives at
-\ 0x18 in an ELF64 header; declaring it as ONE 8-byte little-endian field must
-\ agree with e_entry-hi:e_entry-lo above on a 64-bit cell -- and must REFUSE by
-\ name on a 32-bit one. Two views of one region that disagree would mean the
-\ offsets are arithmetic nobody checked.
-
-struct
-  18   field: x-ident-and-more   \ blob up to e_entry
-  8 le-field: x-entry
-constant /elf64-entry
 
 \ ── arrays of a type ───────────────────────────────────────────────
 \ The other half of GNU poke's COMPOSITE model, and the half a single mapped
@@ -233,22 +192,6 @@ constant /elf64-entry
     @ * +
   ;
 
-\ ── the ELF64 program header ───────────────────────────────────────
-\ Its 8-byte members are declared as 4-byte little-endian halves for the same
-\ reason the ehdr's are: one layout has to serve a 32-bit cell too.
-
-struct
-  4 le-field: p_type
-  4 le-field: p_flags
-  4 le-field: p_offset-lo   4 le-field: p_offset-hi
-  4 le-field: p_vaddr-lo    4 le-field: p_vaddr-hi
-  4 le-field: p_paddr-lo    4 le-field: p_paddr-hi
-  4 le-field: p_filesz-lo   4 le-field: p_filesz-hi
-  4 le-field: p_memsz-lo    4 le-field: p_memsz-hi
-  4 le-field: p_align-lo    4 le-field: p_align-hi
-constant /elf64-phdr
-
-/elf64-phdr array: phdr[]
 
 \ ── the address space, which a type layer does NOT give you ────────
 \ A layout makes field access convenient. It does nothing whatsoever to make an
@@ -286,3 +229,75 @@ constant /elf64-phdr
 : load-base-phys ( -- p )  /n 8 = if 4000000 else 400000 then ;
 : >virt ( phys -- adr )    load-base-phys - load-base + ;
 : >phys ( adr -- phys )    load-base - load-base-phys + ;
+
+\ ── constraints: the primitive REVIEW §E1 is about ─────────────────
+\ GNU poke attaches a predicate to a field and REFUSES TO MAP when it is false
+\ (`Elf_Half e_shstrndx : e_shnum == 0 || e_shstrndx < e_shnum;`). The layer so
+\ far refuses what it CANNOT REPRESENT -- a width it does not implement, an
+\ 8-byte field on a 32-bit cell -- and says nothing about what it SHOULD NOT
+\ ACCEPT. This is that other half, and it is the same idea: a plausible wrong
+\ number is worse than an honest stop.
+\
+\ THE FIRST DESIGN DID NOT WORK, and the failure is worth keeping. `chk"` was
+\ built as an immediate word wrapping abort" -- `postpone chk-report postpone
+\ abort"` -- on the assumption that POSTPONE of an immediate word defers its
+\ compilation semantics. In this Forth it does not: the string was never parsed
+\ and the firmware answered `never": undefined word.` So the message is passed
+\ as an ordinary string instead, which needs no immediacy and reads at least as
+\ well:
+\
+\     @elf e_class t@ 2 s" not ELF64 (e_class)" chk
+\
+\ Each prints BOTH values on failure, because "constraint failed" without them
+\ sends you back to the prompt to find out which.
+\
+\ THE CONSTRAINT MUST NOT BE THE ONLY CHECK OF ITSELF: a validator that has
+\ never rejected anything is a scan that matches nothing. Every `?`-word that
+\ ships here is driven, in `smoke-openbios.sh elf-methods`, against a
+\ deliberately corrupted copy as well as a real one.
+
+\ chk  ( actual expected c-addr u -- )   equal, or report both and abort
+: chk
+  2over = if 2drop 2drop exit then
+  cr ." CONSTRAINT: " type ."  -- want=" u. ."  got=" u. cr abort ;
+
+\ chk< ( n limit c-addr u -- )           unsigned n < limit, or abort
+: chk<
+  2over u< if 2drop 2drop exit then
+  cr ." CONSTRAINT: " type ."  -- limit=" u. ."  got=" u. cr abort ;
+
+\ chk? ( flag c-addr u -- )              an arbitrary predicate, incl. poke's
+\                                        `=>` implication as `0= swap or`
+: chk?
+  rot if 2drop exit then
+  cr ." CONSTRAINT: " type cr abort ;
+
+\ ── bit-fields (REVIEW §G4: "cheap, do it") ────────────────────────
+\ Mask-and-shift over primitives the kernel already has. A p_flags RWX triple or
+\ an st_info bind/type split is two of these and nothing else.
+: bits@ ( value lsb width -- field )  1 swap lshift 1- -rot rshift and ;
+: bit?  ( value n -- flag )           1 swap lshift and 0<> ;
+
+\ ── NUL-terminated strings, which poke spells `string @ offset` ────
+\ REVIEW §E4 named this the smallest concrete gap in the layer: poke-elf's
+\ get_section_name is a string read out of a string table, and there was no
+\ string type here at all.
+: cstr-len ( adr -- len )  dup begin dup c@ while 1+ repeat swap - ;
+: cstr     ( adr -- adr len )  dup cstr-len ;
+: .cstr    ( adr -- )  cstr type ;
+
+\ ── a hex+ASCII dump, because exploring needs one ──────────────────
+\ Not poke-derived; poke gives you this for free and a bare `0 >` prompt does
+\ not. 16 bytes a line, address first, printable ASCII on the right.
+: .hexbyte ( c -- )  dup 10 < if ." 0" then u. ;
+: .ascii   ( adr n -- )
+  0 do dup i + c@ dup 20 7f within if emit else drop 2e emit then loop drop ;
+: dump ( adr len -- )
+  over + swap ?do
+    i 8 u.r ." : "
+    10 0 do
+      i j + c@ .hexbyte
+      i 7 = if ."  " then
+    loop
+    ."  |" i 10 .ascii ." |" cr
+  10 +loop ;
