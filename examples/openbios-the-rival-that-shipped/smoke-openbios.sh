@@ -1875,7 +1875,7 @@ FTH
       grep -qE 'FB=[[:space:]]*40000000( |$)' <<<"$VL" \
         || fail "REGRESSION: $A: frame-buffer-adr is $(grep -aoE 'FB=[0-9a-f]+' <<<"$VL" | tail -1 | cut -d= -f2), not 40000000 — either the BAR lost its address again (pci_mem_base, TODO 0.6c) or map-fb stopped reaching it — see $VLOG"
       grep -qaE 'Exception|general protection|invalid opcode' <<<"$VL" \
-        && fail "REGRESSION: $A threw during the VGA probe — opening the display used to fault and the whole point of 0.6c/0.6d is that it no longer does: $(grep -aoE '(Unexpected Exception|Exception #)[^\n]{0,60}' <<<"$VL" | head -1) — see $VLOG"
+        && fail "REGRESSION: $A threw during the VGA probe — opening the display used to fault and the whole point of 0.6c/0.6d is that it no longer does: $(grep -aoE '(Unexpected Exception|Exception #).{0,60}' <<<"$VL" | head -1) — see $VLOG"
     done
 
     pass "TODO 13.1 DRIVER_VGA + 13.3(D): amd64 enumerates PCI (QEMU,VGA@2 is under the i440FX bridge at its REAL device number, openbios-video-width=0x320), the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone — and '\" screen\" find-dev' now returns that node's phandle instead of 0, which it did on every run for as long as pci.c wrote its property cells in host byte order — and the node can now be OPENED as well as found: my-#acells is 3 where a PCI bus that declares nothing defaulted to 2, open-dev returns an ihandle where it used to fault on both arches, and frame-buffer-adr is 40000000 where the BAR used to be assigned address zero (TODO 0.6c/0.6d)"

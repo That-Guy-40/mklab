@@ -64,7 +64,13 @@ is_confined() {
 patch_paths() { grep -oE '^\+\+\+ b/[^ 	]+' "$1" | sed 's|^+++ b/||' | sort -u; }
 
 # The declaration, if any.
-declared_arches() { grep -oiE '^Arch-tested:[^\n]*' "$1" | head -1 | cut -d: -f2- | tr 'A-Z' 'a-z'; }
+# `.*`, NOT `[^\n]*`. In a POSIX ERE bracket expression a backslash is LITERAL, so
+# `[^\n]` means "not a backslash and not the letter n" -- it truncated every
+# Arch-tested: line at its first `n`, which is why `unix` read as ` u`. grep is
+# line-oriented and `.` never matches a newline, so `.*` is the whole line and is
+# what was meant. Same family as the `\t` that once ate every line ending in `t`;
+# must-not-6 below is the fixture that keeps it fixed.
+declared_arches() { grep -oiE '^Arch-tested:.*' "$1" | head -1 | cut -d: -f2- | tr 'A-Z' 'a-z'; }
 
 # Verdict for one patch. Echoes a reason on failure, nothing on success.
 classify() {
@@ -126,6 +132,10 @@ mk must-not-2.patch 'Subject: [PATCH] both arch dirs this lab owns
 +++ b/arch/amd64/openbios.c'
 mk must-not-3.patch 'Subject: [PATCH] shared, and declares all three
 Arch-tested: x86 amd64 ppc
+--- a/libopenbios/initprogram.c
++++ b/libopenbios/initprogram.c'
+mk must-not-6.patch 'Subject: [PATCH] shared, all three declared AFTER a word containing n
+Arch-tested: none-of-the-below, actually x86 amd64 ppc
 --- a/libopenbios/initprogram.c
 +++ b/libopenbios/initprogram.c'
 mk must-not-4.patch 'Subject: [PATCH] per-arch config files are confined
@@ -196,4 +206,4 @@ if (( ${#problems[@]} )); then
     fail "$(printf '%d patch(es) leave arch/{x86,amd64} without saying what was tested:' "${#problems[@]}"; printf '\n      %s' "${problems[@]}")"
 fi
 
-pass "$checked patch(es) checked: every one that touches a path outside arch/{x86,amd64} names all of ${LAB_ARCHES[*]} as tested (11 self-controls fired first; ${#exempted[@]} grandfathered by name with reasons)"
+pass "$checked patch(es) checked: every one that touches a path outside arch/{x86,amd64} names all of ${LAB_ARCHES[*]} as tested (12 self-controls fired first; ${#exempted[@]} grandfathered by name with reasons)"

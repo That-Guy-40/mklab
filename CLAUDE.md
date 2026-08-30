@@ -193,6 +193,18 @@ Four rules follow, and the last two are the ones that were learned the expensive
   `check-guided-path-is-a-view.sh` share
   [`tools/lib/verb-probe.sh`](tools/lib/verb-probe.sh). A copy drifts from its subject and
   then proves something about the copy.
+- **Reproduce with the tool the SUBJECT runs, not the one your shell hands you.** An
+  interactive shell is not a neutral instrument: it carries aliases, functions and exported
+  variables a script does not inherit, so "I ran the same command by hand and it worked" can
+  be a statement about two different programs. Real, 2026-08-30:
+  `check-patch-scope.sh` truncated every `Arch-tested:` line at its first `n` — in an ERE
+  `[^\n]` is *"not a backslash and not the letter n"*, the same family as the `\t` above —
+  and **an hour went into "I cannot reproduce it, so I will not file it"** because every
+  by-hand check ran a `grep` **shell function** instead of `/usr/bin/grep`. The bug
+  reproduced instantly against the real binary. `type <cmd>` is the whole diagnosis, and it
+  costs nothing: run it *before* concluding that a script and your shell disagree. When a
+  script and a hand-run of "the same" command differ, the difference is evidence — chase it,
+  because one of the two is not running what you think.
 
 **And a checker that cannot decide must say so.** `check-doc-verbs.sh` grades a bare
 `` `preserve.sh two tiers` `` as a warning, not a failure, because prose and a command are
