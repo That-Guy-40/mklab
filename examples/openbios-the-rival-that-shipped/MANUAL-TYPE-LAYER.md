@@ -1,12 +1,22 @@
 # Driving the type layer by hand — `0 >` on both arches
 
 A **hands-on** walkthrough of [`dsl/struct.fth`](dsl/struct.fth): draw on the VGA
-text buffer through a typed layout, parse a real ELF64 header, walk its
-program-header table, and author a header the *host's* `readelf` can read.
+text buffer through a typed layout, parse a real ELF64 header (or an ELF32), walk
+its program-header table, author a header the *host's* `readelf` can read — and
+then reach for the device-register end of the DSL: set and clear individual bits
+without disturbing their neighbours (Part 8), and hide the whole read-modify-write
+behind a named control that reads as English (Part 9).
 
 This is not [`MANUAL_TESTING.md`](MANUAL_TESTING.md), which is the **record** of
-what has been run, and it is not the `struct-*` smoke tracks, which run the same
-ground automatically and grade it. This is the version you type yourself.
+what has been run, and it is not the `struct-*` / `elf-methods` / `rmw-fields`
+smoke tracks, which run the same ground automatically and grade it. This is the
+version you type yourself.
+
+Parts 1–2 are the VGA and the arch trap; Parts 3–7 are ELF inspection and
+authoring; §10a adds the second ELF class; **Parts 8 and 9** are the
+register-write end — mudge's `light-on` idiom (Phrack 53:9, 1998; see
+[`upstream-tutorial/`](upstream-tutorial/)) generalised into `t-set`/`t-clr`/`t-tog`
+and then into named `control:` verbs.
 
 **Both arches, on purpose.** Part 2 is the one worth doing even if you skip the
 rest: the identical VGA code that works on `amd64` **silently does nothing** on
