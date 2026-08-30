@@ -907,6 +907,17 @@ Re-grading the first review's table, plus what this proposal adds:
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
+- **This is ELF64 only.** `poke-elf` ships `elf-32.pk` (347 lines) beside
+  `elf-64.pk`; `dsl/elf.fth` has no ELF32 layouts. That is a *stated* limit
+  rather than a silent one: an ELF32 is refused by name
+  (`not ELF64 (e_class) -- want=2 got=1`, measured against the real
+  `openbios-builtin.elf32` header), which matters because the first 24 bytes of
+  the two formats are identical and everything from `e_entry` on diverges.
+  Measured alongside it: **a real ELF32 cannot be `load`ed at all** — the
+  firmware's own loader recognises it and never returns to the prompt. The same
+  bytes with one magic byte altered load fine, which is how that was isolated.
+  An ELF64 is not recognised, which is the only reason this lab's subject is
+  loadable as data.
 - **§E1 and §E4 are built; §E2, §E3, §E5, §E6 and §E7 are not.** What shipped is
   the two the analysis rated highest, plus the structural split (§E6's lesson,
   not its registry) and bit-fields (§G4). §E2 — byte order taken from `ei_data`

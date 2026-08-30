@@ -23,6 +23,22 @@
 \        name rather than letting it through -- an honest halt for a limit this
 \        layer really has.
 \
+\ ELF64 ONLY, AND IT SAYS SO. poke-elf ships elf-32.pk (347 lines) beside
+\ elf-64.pk; there is no equivalent here. An ELF32 is REFUSED by name --
+\ `CONSTRAINT: not ELF64 (e_class) -- want=2 got=1` -- rather than misread,
+\ which matters because the first 24 bytes of the two formats are IDENTICAL
+\ (e_ident, e_type, e_machine, e_version) and everything from e_entry on
+\ diverges: ELF32 puts e_entry at 0x18 as 4 bytes and its header is 0x34 long,
+\ not 0x40. A layer without the class check would read the first six fields
+\ correctly and then quietly produce nonsense.
+\
+\ AND YOU CANNOT `load` ONE ANYWAY, measured 2026-08-30: `load` of a real
+\ ELF32 never returns to the prompt, because the firmware's OWN loader
+\ recognises it and takes over. The same bytes with one magic byte changed
+\ (`ELG`) load fine, which is how that was isolated. An ELF64 is not
+\ recognised, which is the only reason the subject used throughout this lab is
+\ loadable as data at all.
+\
 \ Base is HEX.
 hex
 
@@ -123,7 +139,10 @@ constant /elf64-shdr
 
 0 value @elf
 : elf-at ( adr -- )  to @elf ;
-: elf ( -- adr )  @elf ;          \ for `@elf e_type t@`-style spelling
+\ NO `: elf @elf ;` CONVENIENCE ALIAS. It was here for one commit and the
+\ firmware answered `elf isn't unique.` -- forth/debugging/client.fs:79 already
+\ defines `1 constant elf`, and shadowing it would have broken the
+\ client-program debugging path for a spelling nobody needed. @elf is the name.
 
 : elf-phnum ( -- n )   @elf e_phnum t@ ;
 : elf-shnum ( -- n )   @elf e_shnum t@ ;

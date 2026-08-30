@@ -680,6 +680,8 @@ questions you actually ask. That is the whole shape.
 | `invalid char 'h' in expression` | quote the path you gave `pmemsave` |
 | `CONSTRAINT: …` then ` Aborted.` | working as intended — `?elf64` refused. The line says what it wanted and what it got |
 | a constraint fires on a field you did not touch | you corrupted the header earlier and never reloaded it. `load … subj.elf` again |
+| `CONSTRAINT: not ELF64 (e_class)` on a file you believe is fine | it is an **ELF32**. This layer is ELF64-only and says so rather than misreading it — the first 24 bytes of the two formats are identical, so a layer without that check would look right and then produce nonsense |
+| `load` of an ELF32 never comes back | the firmware's **own** loader recognises ELF32 and takes over. An ELF64 is not recognised, which is why this lab's subject is loadable as data at all |
 
 ---
 
