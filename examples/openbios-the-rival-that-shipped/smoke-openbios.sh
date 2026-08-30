@@ -4110,6 +4110,21 @@ PYX
     grep -qaE '^(feval|fword):' <<<"$UOUT" \
       && fail "REGRESSION: unix: a clean session printed a feval/fword failure line — a warning on every healthy run is how real warnings stop being believed — see $ULOG"
 
+    # (v) CTRL-D ON A REAL TERMINAL, which is a DIFFERENT SEAM from a pipe and
+    #     is why the first three attempts at this shipped broken. init_terminal()
+    #     clears ICANON, so the tty never turns ^D into EOF -- it arrives as the
+    #     byte 0x04. Every test above drives a PIPE and would pass with Ctrl-D
+    #     completely inert, which is exactly what a user hit. So drive a pty.
+    if python3 -c 'import pty' 2>/dev/null; then
+      if python3 "$HERE/tests/pty-ctrl-d.py" "$UBIN" "$UDICT" > "$ULOG.pty" 2>&1; then
+        note "Ctrl-D on a real pty: $(cat "$ULOG.pty")"
+      else
+        fail "REGRESSION: unix: Ctrl-D on a REAL TERMINAL did not leave cleanly — $(cat "$ULOG.pty"). The tty runs raw (ICANON cleared), so ^D is the byte 0x04 and never becomes EOF; a pipe test cannot see this — see $ULOG.pty"
+      fi
+    else
+      note "SKIPPED the pty check: python3 has no pty module here, so Ctrl-D on a real terminal is UNVERIFIED"
+    fi
+
     note "prompt reached: 3 4 + . answers 7, bye reaches Farewell!"
     note "a missing dictionary is NAMED and exits $UBRC; end-of-input exits 0 without spinning; a clean run prints no feval/fword line"
     note "stdin=0x$USTDIN stdout=0x$USTDOUT start-mem=0x$UMEM — all inside four bytes, which is what encode-int is handed"

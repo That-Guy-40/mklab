@@ -3120,7 +3120,7 @@ index 5b3fcc1..d2826e2 100644
      debug("boot eax = %#lx\n", info->boot_type);
      debug("boot ebx = %#lx\n", info->boot_data);
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
-index cb9757e..2f09466 100644
+index cb9757e..907716b 100644
 --- a/arch/unix/unix.c
 +++ b/arch/unix/unix.c
 @@ -17,6 +17,7 @@
@@ -3139,7 +3139,7 @@ index cb9757e..2f09466 100644
  static int verbose = 0;
  
  #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
-@@ -182,6 +184,23 @@ static ucell read_dictionary(char *fil)
+@@ -182,6 +184,24 @@ static ucell read_dictionary(char *fil)
   * functions used by primitives
   */
  
@@ -3159,11 +3159,12 @@ index cb9757e..2f09466 100644
 + * clean exit beside `bye` (TODO 18(b)) rather than as a bootstrap that died.
 + */
 +static int saw_eof = 0;
++static int eof_seen = 0;
 +
  static int unix_availchar(void)
  {
  	int tmp = getc(stdin);
-@@ -189,6 +208,8 @@ static int unix_availchar(void)
+@@ -189,6 +209,8 @@ static int unix_availchar(void)
  		ungetc(tmp, stdin);
  		return -1;
  	}
@@ -3172,7 +3173,7 @@ index cb9757e..2f09466 100644
  	return 0;
  }
  
-@@ -200,7 +221,20 @@ static int unix_putchar(int c)
+@@ -200,7 +222,59 @@ static int unix_putchar(int c)
  
  static int unix_getchar(void)
  {
@@ -3185,16 +3186,55 @@ index cb9757e..2f09466 100644
 +	 * the reader is waiting for and what every REPL does with Ctrl-D: finish
 +	 * the line, then leave. The STOP flag set beside it is what actually ends
 +	 * the wait in kernel/forth.c's key(). */
++	/* CTRL-D ON A TERMINAL IS NOT EOF, and that is the whole trap. This
++	 * console runs the tty in RAW mode -- init_terminal() clears ICANON --
++	 * so the kernel never turns ^D at the start of a line into end-of-file
++	 * the way a cooked line would. It arrives as the literal byte 0x04, and
++	 * the line editor silently swallowed it: pressing Ctrl-D did NOTHING,
++	 * repeatedly, which reads to a user as input that is queued and not
++	 * flushing. On a terminal EOT *is* end of input, so say so here.
++	 *
++	 * (The first version of this fix handled only EOF, which meant it worked
++	 * for pipes and redirects and never once for a person at a prompt.) */
++	/* A TERMINAL AND A PIPE END DIFFERENTLY, and conflating them is what the
++	 * first two attempts at this got wrong.
++	 *
++	 * Ctrl-D from a person is ONE keystroke and means "I am done": leave now.
++	 * There is no second one coming, and waiting for it just hangs -- which is
++	 * exactly what happened when this returned a carriage return and expected
++	 * a latched EOF to follow. A tty does not latch; the next read BLOCKS. */
++	if (c == 0x04) {
++		saw_eof = 1;
++		interruptforth |= FORTH_INTSTAT_STOP;
++		printk("\n");
++		exit_terminal();
++		exit(0);
++	}
++
++	/* A pipe DOES latch EOF, so there the first one can finish a final line
++	 * that had no trailing newline, and the second -- which arrives
++	 * immediately -- leaves. */
 +	if (c == EOF) {
 +		saw_eof = 1;
 +		interruptforth |= FORTH_INTSTAT_STOP;
-+		return '\r';
++
++		/* ONCE as end-of-line, so a final line with no trailing newline is
++		 * still interpreted -- then leave. stdio latches EOF, so without
++		 * the second branch every subsequent read returns instantly and the
++		 * interpreter prints an endless run of empty `0 >  ok` prompts
++		 * before dying on an exception. Reported from a real terminal. */
++		if (eof_seen++ == 0)
++			return '\r';
++
++		printk("\n");
++		exit_terminal();
++		exit(0);
 +	}
 +	return c;
  }
  
  static struct _console_ops unix_console_ops = {
-@@ -363,13 +397,72 @@ int_handler(int signo __attribute__ ((unused)),
+@@ -363,13 +437,72 @@ int_handler(int signo __attribute__ ((unused)),
      exit(1);
  }
  
@@ -3268,7 +3308,7 @@ index cb9757e..2f09466 100644
  	if (!memory) {
  		printk("panic: not enough memory on host system.\n");
  		exit_terminal();
-@@ -521,7 +614,9 @@ int main(int argc, char *argv[])
+@@ -521,7 +654,9 @@ int main(int argc, char *argv[])
  	/* Initialise console */
  	init_console(unix_console_ops);
  
@@ -3279,7 +3319,7 @@ index cb9757e..2f09466 100644
  		printk("panic: not enough memory.\n");
  		return 1;
  	}
-@@ -556,7 +651,17 @@ int main(int argc, char *argv[])
+@@ -556,7 +691,17 @@ int main(int argc, char *argv[])
          if (verbose)
              printk("done.\n");
  
@@ -3298,7 +3338,7 @@ index cb9757e..2f09466 100644
  	forth_init();
  
  	PUSH_xt( bind_noname_func(arch_init) );
-@@ -580,12 +685,50 @@ int main(int argc, char *argv[])
+@@ -580,12 +725,50 @@ int main(int argc, char *argv[])
  		}
  
  		enterforth((xt_t)PC);
@@ -3350,7 +3390,7 @@ index cb9757e..2f09466 100644
  
  	} else {		/* input file is not a dictionary */
  		printk("not supported.\n");
-@@ -595,8 +738,8 @@ int main(int argc, char *argv[])
+@@ -595,8 +778,8 @@ int main(int argc, char *argv[])
  	if (diskemu!=-1)
  		close(diskemu);
  
