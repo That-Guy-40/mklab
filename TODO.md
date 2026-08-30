@@ -4538,3 +4538,75 @@ not bad: §15.2's *"three private copies of the net, one already drifted weaker"
 is what somebody found by reading, and nothing has yet been able to measure the
 rest.
 
+
+---
+
+## 18. `openbios-unix`: an honest halt that reports success (2026-08-30)
+
+Found by verifying [`MANUAL_TESTING.md`](examples/openbios-the-rival-that-shipped/MANUAL_TESTING.md)
+§5 rather than reading it. The documented invocation does not work:
+
+```console
+$ printf '3 4 + .\nbye\n' | obj-amd64/openbios-unix obj-amd64/openbios-unix.dict
+encode-int: value does not fit in the 4 bytes 1275 encodes an integer into
+$ echo $?
+0
+```
+
+**Two separate things, and only the second is a defect.**
+
+### (a) The refusal is CORRECT. Do not weaken it.
+
+It looks at first like patch 26 mis-scoped its gate into `l!-be`, a general
+4-byte big-endian store whose callers now include `dsl/struct.fth`. Measured
+instead: **all five trips come through `int!`** — the 1275 property encoder —
+and never through a raw `l!-be`. What is being encoded is an ihandle
+(`forth/admin/iocontrol.fs:42,76` write `/chosen`'s `stdin`/`stdout`), and on
+this target an ihandle is a **raw 64-bit host pointer** — `0x76fb51003650` in
+one run — because `include/kernel/stack.h:35` defines `pointer2cell` as a plain
+cast when the target cell is as wide as the host's. [Patch
+48](examples/openbios-the-rival-that-shipped/patches/48-todo-17-5-cause-2-bootstrap-baked-host-pointers.patch)
+records the same asymmetry from the other side: at *narrower* widths `cross.h`
+subtracts `base_address`, which is why `arch/x86` never showed it.
+
+A host pointer cannot survive four bytes. Before patch 26 this target "worked"
+by silently truncating them to their low 32 bits — the LIED rung — which is the
+era §5's old transcript came from. Patch 26 turned that into an honest halt.
+
+### (b) THE DEFECT: the honest halt still exits 0
+
+`arch/unix/unix.c:599` returns 0 unconditionally after `enterforth()`, so a
+bootstrap that aborted and one that ran to completion are indistinguishable to
+the shell. A false success outranks an honest failure, so this is the part worth
+fixing.
+
+**Three obvious signals were measured and all three fail to discriminate** —
+recorded so the next attempt does not re-derive them:
+
+| signal | abort case | clean case |
+|---|---|---|
+| `enterforth()`'s return (`rstackcnt != tmp`) | `0` | `0` — `throw` with no catch frame unwinds to depth 0, so the return stack balances |
+| `interruptforth & FORTH_INTSTAT_STOP` | `0` | `0` — cleared by the time `enterforth` returns |
+| `exception()` (`kernel/bootstrap.c:605`) | never called | never called — it serves the dictionary-BUILD path, not a prebuilt dict at runtime |
+
+So the fix needs a deliberate "initialisation completed" flag, which is a
+Forth→C binding or a shared-kernel change rather than an arch-local edit. Left
+undone on purpose; `smoke-openbios.sh unix` prints it as a **KNOWN DEFECT** on
+every run and its `[[ $URC -eq 0 ]]` row **goes red the day it is fixed**, which
+sends the fixer here.
+
+### (c) The deeper option, NOT taken
+
+Giving the Unix target a base-relative `pointer2cell` at equal widths — the
+mechanism patch 48 documents for cross-builds — would genuinely restore §5. It
+edits `include/kernel/stack.h`, shared by every arch, and changes what an
+ihandle *is* on targets that are currently green. That deserves its own change
+with its own sweep of all 30 boot tracks, not a ride-along with a documentation
+fix.
+
+**Coverage, which is why this sat for four days:** `openbios-unix` was
+documented since 2026-07-21 and driven by nothing. `smoke-openbios.sh unix` and
+`tests/test-smoke-unix.sh` close that; both of its controls were watched to bite
+(the refusal removed → the absence is named; the refusal printed but not
+enforced → the LIED row fires, which a grep on the message alone would have
+passed).
