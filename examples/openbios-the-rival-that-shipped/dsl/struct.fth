@@ -310,7 +310,9 @@ hex
 \ the mask, the byte order and the address are all hidden:
 \
 \     struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
-\     b8000 >virt d-at  10  control: backlight   \ the ATTRIBUTE byte, at +1
+\     /dc array: dcell[]
+\     b8000 >virt 800 dcell[] value spare   \ cell 800 is PAST the 7d0-cell
+\     spare d-at  10  control: backlight    \ screen; d-at is the attr, at +1
 \     backlight enable        \ set the bit(s), preserving the rest
 \     backlight disable
 \     backlight toggle
