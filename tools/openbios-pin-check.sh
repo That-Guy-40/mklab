@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # openbios-pin-check.sh — has upstream moved past the pin in build-openbios.sh?
 #
-# The clone is pinned to exact commits (see build-openbios.sh) so that the 30
-# patches in patches/ are diffs against a tree that does not move under them.
+# The clone is pinned to exact commits (see build-openbios.sh) so that every
+# patch in patches/ is a diff against a tree that does not move under them.
 # A pin that nobody looks at is a pin that silently ages, so this asks the
 # question on a schedule instead: it compares the pinned SHAs against the
 # remotes' current HEADs and says which way they differ.
 #
-# IT DOES NOT BUMP ANYTHING. Moving the pin means re-reading 30 patches and
+# IT DOES NOT BUMP ANYTHING. Moving the pin means re-reading the whole series and
 # re-running every track on three arches; that is a decision, and this exists so
 # that it is a decision someone makes rather than a surprise mid-build.
 #

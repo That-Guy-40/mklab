@@ -703,7 +703,8 @@ an empty store, not a failure.
 
   Success signature, from
   [`tools/openbios-check-reproducible.sh`](../../tools/openbios-check-reproducible.sh)
-  (four container builds, minutes each — deliberately **not** in `run-all.sh`):
+  (**five** container builds, minutes each — two per arch, plus the unset-epoch
+  negative control — deliberately **not** in `run-all.sh`):
 
   ```
   - x86: byte-identical across two builds, stamped 'Nov 14 2023 22:13' (3 artifacts)
@@ -712,7 +713,42 @@ an empty store, not a failure.
   PASS: TODO 17.5 measured rather than asserted …
   ```
 
-  **Both arches are byte-reproducible with the epoch pinned** (patch 48 closed
+- **Is the tree we measure the tree the record defines?** (TODO §17.5's last
+  sentence, measured 2026-08-30.) The lab's tree is not stored anywhere — it is
+  *defined* as the pinned commit plus [`patches/TESTED-TREE.patch`](patches/TESTED-TREE.patch),
+  while the working copy under `~/openbios-lab/` has been patched, rebuilt and
+  hand-edited for weeks. §17.5 said the two building identical bytes was a claim
+  the lab *could* make; nobody had made it.
+
+  ```console
+  $ tools/openbios-check-cold-tree.sh examples/openbios-the-rival-that-shipped
+    - source: 722/722 files sha256-identical — the pin plus TESTED-TREE.patch regenerates the working tree exactly
+    - controls: a one-byte perturbation compares unequal; the two arches' dictionaries differ
+    - reach: of the 6 artifacts, the two openbios.multiboot loaders do NOT embed the dictionary — a Forth-source
+      change is witnessed by the .dict and openbios-builtin.elf only, a C-source change by all of them
+  PASS: TODO §17.5's last sentence measured rather than asserted: … 6/6 artifacts byte-for-byte identical across x86 and amd64 …
+  ```
+
+  A cold clone plus four container builds (~6 min here), so it is **not** in
+  `run-all.sh`. **The negative control was run and watched to bite** — a copy of
+  the working tree with one line appended to `forth/bootstrap/bootstrap.fs`:
+
+  ```console
+  $ OPENBIOS_WORKDIR=/tmp/negctl tools/openbios-check-cold-tree.sh examples/openbios-the-rival-that-shipped
+    - the COLD tree and the DEV tree are NOT the same source: 1 file(s) differ (cold has 722, dev has 722) — an edit
+      lives in the working copy that no patch records … ./forth/bootstrap/bootstrap.fs
+    - x86/openbios-x86.dict differs … by 50665 byte(s) — expected, given the source difference reported above
+  FAIL: 5 cold-tree problem(s) — see the lines above
+  ```
+
+  That is the defect the check exists for, and it is silent otherwise: both
+  trees build and both boot. **The control also found three bugs in the checker**
+  — the artifact message originally read *"the sources are identical, so a third
+  source of non-determinism has appeared"* in the very run whose source half had
+  just reported them different; `cmp -l` was leaking `EOF on <file>` to stderr;
+  and one edited file was counted as two, `diff` emitting a `<` and a `>` for the
+  same path. None was visible in the passing run.
+- **Both arches are byte-reproducible with the epoch pinned** (patch 48 closed
   the second cause: the bootstrap was baking **host-arena pointers** into the
   image, and `arch/x86` only escaped because `pointer2cell` subtracts
   `base_address` at narrower widths). The last line is the **negative control** —
