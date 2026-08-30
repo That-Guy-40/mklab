@@ -1,0 +1,21 @@
+# Directories under */tests/ that ci.yml's "EXIT-trap safety net" loop does NOT
+# point tools/check-harness-net.sh at — one per line, each with its reason.
+#
+# THIS IS A LIST OF NAMED UNKNOWNS, NOT A PASS LIST. Until 2026-08-30 the loop
+# enumerated `git ls-files '*/tests/lib.sh'`, so a suite with no shared net was
+# not a failing row — it was not a row (TODO 15.1). Four directories were
+# invisible to CI for as long as the step had existed. Three were enrolled the
+# same day; what is left is written down here, where it can be read, rather than
+# left implicit in an enumeration.
+#
+# The loop refuses a stale entry two ways, by name: one naming a directory that
+# no longer exists, and one naming a directory that has since gained a lib.sh
+# and could therefore be checked.
+
+# The meta-checkers' own tests. check-harness-net.sh's first section asks for a
+# shared tests/lib.sh, and these deliberately have none: several of them test
+# lib.sh-shaped things, and a checker that sourced the harness it is checking
+# would be supplying its own subject — the same argument check-harness-net.sh
+# makes for providing its own verdict helpers. TODO 15.3 excludes this directory
+# for the same reason.
+tools/tests

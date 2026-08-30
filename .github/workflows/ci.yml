@@ -121,16 +121,69 @@ jobs:
         # Each phase's run-all.sh already runs its own tests/test-harness-net.sh, but the
         # example labs' suites are not in CI at all -- so without this loop the rule would
         # be enforced only where a suite happens to run. Rootless, seconds, no daemons.
+        #
+        # IT ENUMERATES DIRECTORIES, NOT lib.sh FILES, and that is TODO 15.1. The loop
+        # used to walk `git ls-files '*/tests/lib.sh'`, while check-harness-net.sh's FIRST
+        # check is whether a lib.sh exists at all -- so a suite with no shared net was not
+        # a failing row here, it was not a row. Four directories were invisible to this
+        # step for as long as it has existed. That is "a scan that matches nothing and a
+        # scan that is broken print the same green tick" moved up a level: a broken
+        # POPULATION rather than a broken pattern, and the population was keyed on the
+        # very defect the checker exists to find.
+        #
+        # Three of the four were enrolled on 2026-08-30 (a verbatim lib.sh, a runner, a
+        # test-harness-net.sh). The fourth, tools/tests, is a NAMED exemption in
+        # .harness-net-exempt with its reason -- an UNKNOWN that says so, not a pass.
+        # tools/tests/test-harness-net-loop.sh drives this step, sed'd out of this file,
+        # against fixtures for every way it can go quietly wrong.
         run: |
-          rc=0
-          for lib in $(git ls-files '*/tests/lib.sh'); do
-            d="$(dirname "$lib")"
+          mapfile -t exempt < <(sed 's/#.*//' .harness-net-exempt | awk 'NF {print $1}')
+          # A stale exemption is a cache entry. Two ways it rots, both refused by name:
+          # it can outlive the directory it names, and it can outlive the REASON -- a
+          # directory that has since gained a lib.sh can be checked, and an exemption
+          # nobody revisits is how the other four stayed invisible.
+          for e in "${exempt[@]}"; do
+            if [ ! -d "$e" ]; then
+              echo "::error::.harness-net-exempt names $e, which is not a directory — a stale exemption keeps excusing something that moved, while whatever took its place is checked by nobody"
+              exit 1
+            fi
+            if [ -f "$e/lib.sh" ]; then
+              echo "::error::.harness-net-exempt still excuses $e, but it now HAS a tests/lib.sh — it can be enrolled, and the exemption is now hiding a directory that could be checked"
+              exit 1
+            fi
+          done
+          mapfile -t dirs < <(git ls-files '*/tests/*.sh' | xargs -n1 dirname | sort -u)
+          # A floor, not a count: the population is 18 today and grows. What this refuses
+          # is a collapse to a handful, which reads exactly like a clean pass.
+          if [ "${#dirs[@]}" -lt 10 ]; then
+            echo "::error::only ${#dirs[@]} tests/ directories were enumerated — the selection collapsed, and a loop over almost nothing prints the same green tick as a loop over everything"
+            exit 1
+          fi
+          rc=0; checked=0; not_checked=""
+          for d in "${dirs[@]}"; do
+            if printf '%s\n' "${exempt[@]}" | grep -qxF "$d"; then
+              not_checked="$not_checked $d"
+              continue
+            fi
             echo "::group::$d"
             bash tools/check-harness-net.sh "$d"; r=$?
             [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
+            checked=$((checked+1))
             echo "::endgroup::"
           done
+          # The ratio, for the same reason every run-all.sh prints one.
+          echo "harness net: checked $checked of ${#dirs[@]} tests/ directories — NOT checked (see .harness-net-exempt):${not_checked:- none}"
           exit $rc
+
+      - name: the harness-net loop's own control
+        # Same treatment as the shellcheck gate above, and for the same reason: the step
+        # before this one is an ENUMERATION, and an enumeration that collapsed prints the
+        # same green tick as one that covered everything. This seds that step out of
+        # ci.yml and drives it against fixtures — a directory with no lib.sh must FAIL it
+        # unexempted (that is TODO 15.1's defect, re-injected), exempting it must pass AND
+        # be printed, and an exemption that has outlived its directory or its reason must
+        # fail by name.
+        run: bash tools/tests/test-harness-net-loop.sh
 
       - name: no verdict gated on a SIGPIPE-prone pipe into grep -q
         # `producer | grep -q X && fail` skips the assertion entirely when the producer is
@@ -585,8 +638,28 @@ jobs:
           # REVIVAL_MARKERS array against the patch it describes, and all 30 patches
           # against git's own diff reader. The marker array is a CACHED DESCRIPTION OF A
           # PATCH -- bug class #1 in CLAUDE.md -- and nothing had ever compared the two.
-          for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
-                   examples/almalinux-packer-images/tests/test-offline-archive.sh \
+          #
+          # kali, almalinux and package-mirror-ram: RUNNERS SINCE 2026-08-30, where the
+          # first two were named here as individual TEST FILES and the third was named
+          # nowhere -- so CI had never run its state-mount guard at all. Each gained a
+          # tests/run-all.sh (a ratio, and the names of anything skipped) and a lib.sh
+          # copied verbatim rather than hand-written, which is TODO 15.1, 15.2 and 15.3
+          # closed for all three: they are now visible to check-harness-net.sh's loop,
+          # they no longer carry private copies of the EXIT net, and their contents are
+          # listed in a file a ratio checker reads instead of in this YAML.
+          #
+          # lab-ca: ADDED 2026-08-30, and it is the repo's TRUST ANCHOR — the pxeboot
+          # HTTPS tier, System Transparency OSPKG signing and now signed netboot payloads
+          # all chain to it, and nothing checked any of it. It asserts the tracked
+          # certificate matches the tracked fingerprint beside it, that no private key is
+          # tracked, and that the two leaf profiles its consumers require stay
+          # incompatible (Ed25519/no-EKU for stboot's Go x509, ECDSA/codeSigning for iPXE)
+          # — the shape somebody will one day "simplify" into a single issuer, breaking a
+          # boot rather than a test. Headless: openssl and git only.
+          for t in examples/kali-packer-vagrant/tests/run-all.sh \
+                   examples/almalinux-packer-images/tests/run-all.sh \
+                   examples/package-mirror-ram/tests/run-all.sh \
+                   examples/lab-ca/tests/run-all.sh \
                    examples/openbios-the-rival-that-shipped/tests/run-all.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \

@@ -9,7 +9,16 @@
 #
 # `image` is used as the qcow2 BACKING file, so it must be an ABSOLUTE path;
 # lab-vm.sh layers a per-VM copy-on-write overlay on top (your base stays
-# pristine).  Edit the path to match where your image lives.
+# pristine).  **Edit it to match YOUR checkout** — it names this repo's own
+# `out/root-on-zfs.qcow2`, which is what install-zfs-root.sh writes, and which
+# is where the other absolute-path specs in this repo point too.
+#
+# It used to read /home/user/mklab/... — absolute, and nobody's home directory
+# on any machine. Nothing caught that for as long as the file existed, because
+# the only question ever asked of the path was whether it began with a slash
+# (TODO 15.7). `tests/test-vm-spec.sh` now derives the expected value from the
+# lab's own location, and `lab-vm.sh` refuses an unreadable backing file before
+# it makes a VM directory.
 #
 # Why UEFI: ZFSBootMenu is an EFI executable — OVMF's boot manager launches the
 # efibootmgr entry the installer registered (\EFI\zbm\vmlinuz.EFI).  Under BIOS
@@ -18,7 +27,7 @@
 [[vm]]
 name       = "zbm-debian"
 backend    = "disk-image"
-image      = "/home/user/mklab/examples/zfsbootmenu-boot-environments/out/root-on-zfs.qcow2"
+image      = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/zfsbootmenu-boot-environments/out/root-on-zfs.qcow2"
 firmware   = "uefi"          # OVMF two-file pflash (lab-vm.sh default)
 cloud_init = false           # the ZFS image is not cloud-init driven
 arch       = "x86_64"

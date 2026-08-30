@@ -1078,12 +1078,79 @@ Note the two distinct iPXE error codes: **0216eb3c** = "No usable certificates"
 mismatch (the tamper was cryptographically caught). They are distinguishable in
 the log, which matters when diagnosing a real failure.
 
-### 13.3 The signing half in CI (no QEMU/Docker)
+### 13.3 The SHARED lab root CA, verified by the firmware — ✅ 2026-08-30 (TODO 15.4)
+
+Everything above signs with a root `--gen-keys` minted here, for this lab, on this
+run. [`examples/lab-ca/`](../examples/lab-ca/README.md) is the repo's **shared**
+anchor — the pxeboot HTTPS tier and System Transparency OSPKG signing already
+chain to it — and until 2026-08-30 `git grep lab-ca netboot/` returned nothing.
+A trust anchor with one consumer is a self-signed certificate with extra steps.
+
+```bash
+examples/lab-ca/make-ca.sh                              # once, ever (ECDSA P-256 root)
+examples/lab-ca/issue-codesign-cert.sh netboot-payload  # ECDSA P-256 + codeSigning EKU
+
+netboot/sign-payload.sh --lab-ca netboot-payload \
+    --out-trust ~/netboot/codesign/lab-ca.der \
+    ~/netboot/images/dns/{current,previous}/{vmlinuz,initrd.gz}
+
+netboot/build-ipxe.sh --server http://10.0.2.2:8181/images/dns \
+    --kernel-path /vmlinuz --initrd-path /initrd.gz --append "console=ttyS0" \
+    --imgverify --payload-trust ~/netboot/codesign/lab-ca.der
+```
+
+The DER baked into the firmware is the tracked anchor, not a copy of one —
+`sha256` of `~/netboot/codesign/lab-ca.der` equals
+`examples/lab-ca/lab-ca.fingerprint` (`4F:A6:9C:1A:…:0A:61`), both derived.
+
+**Measured, KVM, payload = `micro-linux/out/x86_64/`:**
+
+```
+# ── both slots signed under the shared root ────────────────────────────────
+iPXE: slot current VERIFIED -- booting
+[    0.030746] Kernel command line: console=ttyS0 slot=current
+[    1.238970] Run /init as init process               ← verified image booted ✓
+
+# ── control: 1 byte flipped in current/initrd.gz, .sig left stale ──────────
+Could not verify: Invalid argument (https://ipxe.org/1c69e502)
+iPXE: imgverify FAILED for slot current
+iPXE: rolling back current -> previous
+iPXE: slot previous VERIFIED -- booting
+[    0.029092] Kernel command line: console=ttyS0 slot=previous   ← rolled back ✓
+```
+
+> **The host-side check was never the proof, which is why this section exists.**
+> `openssl` blesses a chain the firmware may refuse — the `022ae13c` row in
+> Troubleshooting below is precisely that, and it cost a day in
+> `examples/metal-as-a-service/`. So the claim "iPXE accepts the shared lab CA"
+> is a boot, watched, with the control watched too.
+>
+> **Two things were learned by doing it rather than reasoning about it.**
+> First, this works **only because the pin is v2.0.0**: the shared root is
+> ECDSA P-256, and `crypto/ecdsa.c` + `crypto/p256.c` + `crypto/p384.c` arrive
+> in iPXE's first release since 2020 (`versions.env` pins `12798ec`). On
+> v1.21.1 an ECDSA root would be unparseable. Second, the tamper surfaces as
+> **`1c69e502` "Invalid argument"** where the RSA run in §13.2 reported
+> `0227e13c` "Permission denied" — a different code for the same refusal, worth
+> recognising rather than debugging. The outcome that matters is identical:
+> refused, rolled back, never booted unverified.
+
+### 13.4 The signing half in CI (no QEMU/Docker)
 
 ```bash
 netboot/tests/test-sign-payload.sh
 # → PASS: sign-payload.sh: CMS-signs (codeSigning EKU), verifies, rejects tampering, fails closed
+netboot/tests/test-sign-payload-lab-ca.sh
+# → PASS: netboot payloads sign under the SHARED lab root CA (TODO 15.4) …
 ```
+
+The second drives a **throwaway** root via `LAB_CA_DIR`/`LAB_CA_KEYDIR`, because
+the shared root's private key is gitignored and a guard that can only run on one
+machine is an UNKNOWN everywhere else. It also asserts the thing most likely to
+be "tidied up" later: the **stboot** leaf (Ed25519, *no* EKU — Go's x509 rejects
+a codeSigning leaf when `KeyUsages` is unset) is **refused by name** here, and
+the iPXE leaf would be refused there. One root, two deliberately different leaf
+profiles.
 
 This is the load-bearing building block for the RAM-resident infrastructure lab
 family — see [`../RAM_INFRA_LAB_PLAN.md`](../RAM_INFRA_LAB_PLAN.md).

@@ -12,23 +12,19 @@
 #   2. NFS mount OK      → exit 0 + a real `mount -t nfs4 …` was attempted
 #   3. iSCSI attach FAILS→ exit 0 (guard)
 #   4. already-mounted   → exit 0, no re-mount
-set -uo pipefail
+# shellcheck disable=SC1091
+. "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+set +e                # the scenarios below capture rc explicitly
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-SUT="$HERE/../state-mount.sh"
+# The private trap this file used to install was TODO 15.2's example: it had no
+# _VERDICT flag and whitelisted rc == 1, so a `die` (which IS exit 1) ended the
+# run with NO FAIL: line — the exact silent exit the net exists to prevent.
+# Cleanup is registered instead, so there is one EXIT trap and it is lib.sh's.
+HERE="$TEST_DIR"
+SUT="$LAB_DIR/state-mount.sh"
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/state-mount-test.XXXXXX")"
+on_exit 'rm -rf -- "$TMP"'
 BIN="$TMP/bin"; mkdir -p "$BIN"
-
-skip() { printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass() { printf 'PASS: %s\n' "$*" >&2; exit 0; }
-note() { printf '  - %s\n' "$*" >&2; }
-
-# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
-# single-quoted trap body; shellcheck analyses the string without carrying the assignment
-# into the uses that follow it.
-trap 'rc=$?; rm -rf -- "$TMP"; [[ $rc == 0 || $rc == 77 || $rc == 1 ]] || \
-      printf "FAIL: test exited early (rc=%s)\n" "$rc" >&2' EXIT
 
 [[ -f "$SUT" ]] || fail "missing script under test: $SUT"
 
