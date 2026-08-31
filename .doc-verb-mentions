@@ -1,0 +1,41 @@
+# Mentions, not commands — read by tools/check-doc-verbs.sh (TODO 11.4a).
+#
+# A code span inside a sentence or a table cell is where prose and a command are
+# STRUCTURALLY IDENTICAL: "`preserve.sh` two tiers" parses exactly like
+# "`lab-fc.sh clone`". check-doc-verbs.sh refuses to guess between them, and is
+# right to — but it then warned about the same nine rows on every run, and a
+# warning list that never empties is one everybody learns to scroll past. This
+# file is how a document says which it meant, once, with the reason.
+#
+# FORMAT:  <doc>  <tool-as-written>  <verb>   # why
+#
+# WHAT IT CANNOT DO: silence a fenced command. Only inline/table mentions consult
+# this file; an instruction someone can copy out of a code block stays a hard
+# failure whatever is written here, or this would be a way to bless a broken
+# instruction.
+#
+# EVERY ENTRY IS RE-CHECKED, three ways, each a FAILURE:
+#   * the document must still exist
+#   * the tool must still NOT have the verb — if it gains one, the entry is
+#     asserting a falsehood and the mention has become a real command
+#   * it must silence something this run — an entry that matches nothing is
+#     describing a sentence that has changed
+
+# The micro-cloud plan's §8.1 table exists to say WHICH VERBS THE fc BACKEND DOES
+# NOT HAVE, and why each absence is correct. Every cell here is the doc making
+# exactly the point the checker would otherwise flag.
+MICRO_CLOUD_LAB_PLAN.md   lab-fc.sh   console    # "no such verb. The fc backend was built without it and is right to have been"
+MICRO_CLOUD_LAB_PLAN.md   lab-fc.sh   ssh        # "no such verb, and no plan to add one — the guest images run no sshd"
+MICRO_CLOUD_LAB_PLAN.md   lab-fc.sh   preserve   # "not in this tool" — preserve is examples/micro-cloud/preserve.sh, one level up
+MICRO_CLOUD_LAB_PLAN.md   lab-fc.sh   mmds       # "not a verb" — MMDS is a create-time key (--mmds / mmds = true)
+MICRO_CLOUD_LAB_PLAN.md   lab-vm.sh   export     # struck through in the slice-7 row: the verb shipped as `export-tarball`
+MICRO_CLOUD_LAB_PLAN.md   lab-vm.sh   boot       # prose in the slice-9 row ("...at first boot"), not an invocation
+
+# TODO.md's §11.4 entry documents THIS CHECKER's own false positives, by quoting
+# them. The quotations are the subject matter.
+TODO.md   tools/pxe-fetch.sh   probe   # quoted as an example of a false positive; the path is lab-root-relative
+TODO.md   lab-chroot.sh        up      # quoted while explaining that no such verb has ever existed
+
+# phase6-tui/SHOWCASE.md quotes the verbs a planner ONCE emitted, while saying in
+# the same sentence that neither driver has ever had them.
+phase6-tui/SHOWCASE.md   lab-vm.sh   up   # quoted as broken planner output, immediately called out as never having existed

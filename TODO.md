@@ -1632,12 +1632,54 @@ prose never puts `|` `,` `{` `(` against the word. **The control fixture is what
 Measured after: **106 probed** (was 89), 15 by tier B, 1 genuine subverb, 11 warnings, **78
 unprobed** (was 93), 0 hard failures.
 
-- [ ] **11.4a** — the remaining tail: **78 unprobed rows** (17 of them destructive-by-verb,
-      the rest with no dispatch, or whose answer was too thin to judge) and **11 warnings**.
-      What is left is genuinely hard rather than unfinished: a tool with no verb dispatch has
-      no self-description to read, and a bare-name mention in prose is structurally identical
-      to a command. Closing either needs the *document* to say which it meant — a convention,
-      not a regex.
+- [x] **11.4a** — the warning tail is **CLOSED 2026-08-30**; the unprobed set is a **named
+      boundary**, not a backlog. The entry called for *"the document to say which it meant —
+      a convention, not a regex"*, and that is what shipped.
+
+      **0 undecided warnings**, from 11. Two of them were never ambiguous at all: `#` was
+      being read as a **root prompt**, so `# gen-almalinux-ks.sh stays in netboot/` and
+      `# lab-vm.sh also needs jq` had the English words *stays* and *also* parsed as verbs.
+      Measured across the corpus: all **25** `# <repo-tool>` lines inside fences are
+      comments; this repo writes privilege as `sudo`, never as a `#` prompt. A comment is
+      prose by definition, so it is now skipped — which also means ~25 commented-out
+      commands are no longer read at all. They were warning-only before, so nothing that
+      could *fail* was lost, and that trade is deliberate rather than accidental.
+
+      The other nine are declared in [`.doc-verb-mentions`](.doc-verb-mentions), each with
+      its reason: six are rows in the micro-cloud plan's table *whose whole subject is which
+      verbs `lab-fc.sh` does not have*, two are TODO entries quoting this checker's own
+      false positives, one is a SHOWCASE quoting a planner's broken output. **A declaration
+      cannot reach a fenced command** — only inline/table rows consult the file — or the
+      mechanism would be a way to bless an instruction someone will copy. Entries are
+      refused when the document is gone, and when they silence nothing (which covers *"the
+      tool has since gained the verb"* without a second probe).
+
+      **Why it matters that the list is now empty:** eleven permanent warnings is a list
+      everybody learns to scroll past, and a new one would have arrived looking exactly like
+      the noise. The same argument this checker already made about UNKNOWN rows, turned on
+      its own output.
+
+      **Two of its own controls found defects in the change**, both the same shape — a
+      rehearsal mutating production state:
+
+      | | |
+      |---|---|
+      | §0's fixtures append to the same `WARNINGS` array the report reads | the run printed *"1 warning(s) — see the ! lines above"* with **no `!` line anywhere above it** |
+      | §0.2b drives the declaration machinery by assigning `MENTIONS` directly, and left it **empty** | the real run then reported 9 undecided warnings and 0 declared — the controls had disabled the feature they had just proved |
+
+      **And the first draft of the staleness check crossed the probe-safety boundary**: it
+      called `verb_present()` directly to ask whether a tool had *since gained* a declared
+      verb, invoked `pxe-fetch.sh probe`, and reported that the call *"does not look like a
+      refusal"* — i.e. it may have done work. The vbmc-destroy lesson, committed by the
+      guard against stale exemptions. The run already answers that question (a tool with the
+      verb never reaches the declaration), so the probe was deleted rather than fixed.
+
+      **What remains UNPROBED is 77 rows in four named groups, and it is a boundary rather
+      than a tail:** 17 destructive-by-verb (never invoked, by policy — correct forever), 25
+      with no verb dispatch, 25 whose tool did not answer a nonce with a usage block, 10
+      whose answer was too thin to list verbs. Each is printed by name on every run. A tool
+      with no dispatch has no self-description to read, and inventing one would be the guess
+      this checker exists not to make.
 
 ### 11.5 Open question left by D8: should `lab-fc.sh` take an env override for the VMM?
 
