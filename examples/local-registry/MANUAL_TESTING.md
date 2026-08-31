@@ -25,7 +25,7 @@ see that this lab did **not** mint a root of its own.
 
 ```console
 $ examples/local-registry/registry-lab.sh up
-[registry-lab] spec volumes name this checkout: examples/local-registry/state/certs and …/state/data
+[registry-lab] spec renders to this lab: examples/local-registry/state/certs and …/state/data
 [registry-lab] starting via the phase-4 driver (no one-off podman run)
 [info] starting (plain) service 'registry' as lab-local-registry-registry (image=docker.io/library/registry:2)
 [info] ── lab 'local-registry' up ──
@@ -89,7 +89,33 @@ of those prints its own `SKIP:` line naming the missing precondition. In CI all 
 absent, so this row is honestly reported as not-run rather than counted green.
 `test-spec-paths.sh` needs none of them and always runs.
 
-## 5. What this lab does NOT prove
+## 5. The spec was hard-coded, and CI said so — 2026-08-30
+
+The first version of `local-registry.toml` carried this checkout's absolute path in
+`volumes`, with a checker that derived the correct value and refused a mismatch. It passed
+here and failed on the first CI run:
+
+```console
+FAIL: REGRESSION: local-registry.toml does not contain the volume line this checkout needs:
+      want: /home/runner/work/mklab/mklab/examples/local-registry/state/certs:/certs:ro,Z
+```
+
+The check was right; the design was not. **A value that is false everywhere except one
+machine is not rescued by checking it** — so the tracked file now carries `@LAB_DIR@` and
+`registry-lab.sh render` writes the absolute paths into a gitignored copy.
+
+Verified the way the failure was found — from somewhere else entirely:
+
+```console
+$ cp -a examples/local-registry /tmp/elsewhere/examples/ && rm -rf /tmp/elsewhere/examples/local-registry/state
+$ /tmp/elsewhere/examples/local-registry/tests/test-spec-paths.sh
+PASS: the tracked spec is portable (@LAB_DIR@, no absolute host path), rendering it produces
+exactly the volume lines the driver asks for with no placeholder left …
+$ grep state/certs /tmp/elsewhere/examples/local-registry/state/local-registry.rendered.toml
+  "/tmp/elsewhere/examples/local-registry/state/certs:/certs:ro,Z",
+```
+
+## 6. What this lab does NOT prove
 
 - **No authentication anywhere.** Anyone who can reach `127.0.0.1:5000` can push. The
   loopback bind is what makes that acceptable, and `test-spec-paths.sh` fails if the spec

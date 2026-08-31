@@ -3943,11 +3943,39 @@ work items, and are deliberately not checkboxes here.
       via `--cert-dir`, never `~/.config/containers/certs.d`: installing the CA globally
       would make every later run pass for a reason that has nothing to do with this lab.
 
-      **15.7's lesson was applied before it could happen again.** `volumes` needs absolute
-      host paths, which is exactly the cached-machine-fact that let a sibling spec carry
-      `/home/user/…` unnoticed. Here the driver derives what those lines must be and refuses
-      by name, and `tests/test-spec-paths.sh` asserts it with no podman, no network and no
-      registry — with a control that mangles a path and watches the refusal.
+      **15.7's lesson was applied, got it half right, and CI supplied the other half within
+      the hour.** `volumes` needs absolute host paths — the cached-machine-fact that let a
+      sibling spec carry `/home/user/…` unnoticed. The first draft hard-coded this
+      checkout's path and added a checker to derive the correct value and refuse a
+      mismatch. That is a real improvement, and it was still wrong:
+
+      ```
+      FAIL: REGRESSION: local-registry.toml does not contain the volume line this checkout needs:
+            want: /home/runner/work/mklab/mklab/examples/local-registry/state/certs:/certs:ro,Z
+      ```
+
+      **A value that is false everywhere except one machine is not rescued by checking it.**
+      The check fired correctly on a design that could never have passed anywhere but here.
+      So the tracked spec carries `@LAB_DIR@`, `registry-lab.sh render` substitutes wherever
+      the lab actually is, and podman reads a gitignored copy. `tests/test-spec-paths.sh`
+      asserts the tracked file stays **portable** and that rendering produces what the
+      driver asks for — verified the way the failure was found, by running it from a copy at
+      a completely different path.
+
+- [ ] **15.10 — five specs still hard-code one checkout's absolute path** *(found 2026-08-30
+      while building 15.6)*. `examples/systemd261-nixos-measured-boot/` (four) and
+      `examples/rhel-bootc-minimal/` name `/media/sqs/COLD_STORAGE/LAB_CREATE_V2/…` in
+      `image =`, and `zbm-debian.toml` does too after 15.7. They are wrong on every machine
+      but this one, and nothing says so.
+
+      **15.7's fix is weaker than it reads, and this is the honest correction:** the
+      zfsbootmenu test asserts the path equals *this* checkout's, so it would fail in any
+      other — it passes only because that suite is **not wired into CI**. The registry lab
+      shows the shape that survives being run elsewhere: a placeholder in the tracked file,
+      substitution at run time, and a test that asserts the tracked file carries no absolute
+      host path at all. Doing the same for `image =` needs the phase-2 driver to read a
+      rendered spec, or `lab-vm.sh` to expand a placeholder itself — a decision, not a
+      copy-paste, which is why it is a box rather than a silent edit.
 
 - [ ] **15.9 — should `push` become a verb in phases 4 and 5?** *(split out of 15.6 on
       2026-08-30, once there was something to push to.)* 15.6 said a registry would

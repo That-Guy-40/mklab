@@ -10,19 +10,23 @@
 #   examples/local-registry/registry-lab.sh demo      # push, pull, compare digests
 #   examples/local-registry/registry-lab.sh down
 #
-# ─── The absolute paths below are THIS CHECKOUT'S ───────────────────────────
-# `volumes` needs absolute host paths, and five other specs in this repo carry
-# the same shape. That is a cached fact about a machine, and TODO 15.7 is the
-# entry where one of them turned out to name `/home/user/…` — nobody's home
-# directory, on any machine, for as long as the file had existed. Nothing caught
-# it because the only question ever asked of the path was whether it began with
-# a slash.
+# ─── @LAB_DIR@ IS A PLACEHOLDER, AND THAT IS THE WHOLE POINT ────────────────
+# `volumes` needs ABSOLUTE host paths, and five other specs in this repo answer
+# that by hard-coding one checkout's path. That is a cached fact about a machine
+# living in a tracked file, and TODO 15.7 is the entry where one of them turned
+# out to name `/home/user/…` — nobody's home directory, on any machine, for as
+# long as the file had existed.
 #
-# So here the value is CHECKED rather than trusted: `registry-lab.sh` derives
-# what these paths must be from its own location and refuses by name if the file
-# disagrees, and tests/test-spec-paths.sh asserts the same thing without needing
-# podman. Edit them to match your checkout; the driver will tell you if you miss
-# one.
+# The first draft of THIS file made the same trade and added a checker: derive
+# the right path, compare, refuse. CI answered within the hour — its checkout is
+# `/home/runner/work/mklab/mklab`, so the check failed correctly and the design
+# was still wrong. A value that is false everywhere except one machine cannot be
+# rescued by checking it; it must not be cached.
+#
+# So `registry-lab.sh render` substitutes @LAB_DIR@ for wherever this lab
+# actually is and writes state/local-registry.rendered.toml, which is what
+# lab-podman.sh reads. The tracked file below is portable; the derived one is
+# gitignored and regenerated on every `up`.
 
 [lab]
 name        = "local-registry"
@@ -41,8 +45,8 @@ image  = "docker.io/library/registry:2"
 ports  = ["127.0.0.1:5000:5000"]
 
 volumes = [
-  "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/local-registry/state/certs:/certs:ro,Z",
-  "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/local-registry/state/data:/var/lib/registry:Z",
+  "@LAB_DIR@/state/certs:/certs:ro,Z",
+  "@LAB_DIR@/state/data:/var/lib/registry:Z",
 ]
 
 [service.environment]

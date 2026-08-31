@@ -28,7 +28,8 @@ set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "$HERE/../.." && pwd)"
 LAB_CA="$REPO/examples/lab-ca"
-SPEC="$HERE/local-registry.toml"
+SPEC="$HERE/local-registry.toml"            # the TEMPLATE: portable, tracked
+RENDERED=""                                  # set by render(); gitignored, derived
 STATE="$HERE/state"
 CERTS="$STATE/certs"
 DATA="$STATE/data"
@@ -55,8 +56,10 @@ Usage: registry-lab.sh <verb>
             really being verified by pushing once WITHOUT the CA
   status    is it listening, and does its certificate chain to the shared root
   down      stop and remove the container
-  paths     print the absolute paths the spec must contain (see 'spec-check')
-  spec-check  verify local-registry.toml's volume paths match THIS checkout
+  paths     print the absolute volume lines this checkout needs
+  render    substitute @LAB_DIR@ and write state/local-registry.rendered.toml
+  spec-check  render, then check the result names this lab (and that the TRACKED
+            template stayed portable)
 
 The registry is loopback-only and unauthenticated on purpose; see the header.
 USAGE
@@ -64,25 +67,49 @@ USAGE
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 
-# ── the spec's absolute paths are a CACHED FACT, so they are checked ────────────────────
-# TODO 15.7: a sibling spec carried /home/user/… — absolute, and nobody's home — because
-# the only question ever asked of it was whether it started with a slash. Here the expected
-# value is DERIVED from this script's own location, so the file cannot quietly describe a
-# machine that does not exist.
+# ── DERIVE THE PATH; DO NOT CACHE IT ────────────────────────────────────────────────────
+# podman needs absolute host paths for a bind mount. Five other specs in this repo answer
+# that by hard-coding one checkout's path — a cached fact about a machine, in a tracked
+# file, which is how TODO 15.7's sibling came to name `/home/user/…` (absolute, and nobody's
+# home) for months.
+#
+# THE FIRST DRAFT OF THIS LAB MADE THE SAME TRADE AND ADDED A CHECKER: derive the right
+# path, compare, refuse by name. CI answered within the hour — its checkout is
+# `/home/runner/work/mklab/mklab`, so the check fired, correctly, on a design that was
+# still wrong. A value that is false everywhere except one machine is not rescued by
+# checking it; it must not be written down. The tracked spec now carries @LAB_DIR@ and the
+# absolute paths exist only in a rendered copy nobody commits.
 want_paths() { printf '%s\n%s\n' "$CERTS:/certs:ro,Z" "$DATA:/var/lib/registry:Z"; }
+render() {
+    [[ -r "$SPEC" ]] || die "no spec template at $SPEC"
+    grep -qF '@LAB_DIR@' "$SPEC" \
+        || die "the spec template has no @LAB_DIR@ placeholder left in it.
+  Someone has substituted a real path into the TRACKED file, which makes it true on one
+  machine and false on every other — the defect this placeholder exists to prevent."
+    mkdir -p "$STATE"
+    RENDERED="$STATE/local-registry.rendered.toml"
+    # The lab path can contain characters sed would read as delimiters, so substitute with
+    # awk on a literal string rather than building a regex out of a path.
+    awk -v d="$HERE" '{ gsub(/@LAB_DIR@/, d); print }' "$SPEC" > "$RENDERED" \
+        || die "could not render the spec into $RENDERED"
+    printf '%s' "$RENDERED"
+}
 spec_check() {
-    [[ -r "$SPEC" ]] || die "no spec at $SPEC"
-    local missing=0 w
+    local r missing=0 w
+    r="$(render)"
     while IFS= read -r w; do
-        grep -qF -- "$w" "$SPEC" || { printf '  MISSING from %s:\n    %s\n' "${SPEC#"$REPO"/}" "$w" >&2; missing=1; }
+        grep -qF -- "$w" "$r" || { printf '  MISSING from the rendered spec:\n    %s\n' "$w" >&2; missing=1; }
     done < <(want_paths)
-    if (( missing )); then
-        die "local-registry.toml's volumes do not name this checkout.
-  The paths are absolute because podman requires it, which makes them a cached fact about
-  a machine — so they are derived and compared rather than trusted. Fix the file (the
-  wanted lines are above), or run this from the checkout the spec describes."
+    (( missing == 0 )) \
+        || die "rendering local-registry.toml did not produce the volume lines this lab needs.
+  The template's @LAB_DIR@ lines and want_paths() have drifted apart, so the container would
+  mount something other than this lab's state directory."
+    # The TRACKED file must stay portable: no absolute path to any home or checkout.
+    if grep -nE '"(/[A-Za-z0-9._-]+)+/state/' "$SPEC" >&2; then
+        die "the TRACKED spec contains an absolute host path. That is the 15.7 shape: true on
+  one machine, false on every other, and unrescuable by any amount of checking."
     fi
-    log "spec volumes name this checkout: ${CERTS#"$REPO"/} and ${DATA#"$REPO"/}"
+    log "spec renders to this lab: ${CERTS#"$REPO"/} and ${DATA#"$REPO"/}"
 }
 
 cmd_certs() {
@@ -117,7 +144,8 @@ cmd_up() {
         die "127.0.0.1:${HOSTPORT##*:} is already in use — $(ss -lntp 2>/dev/null | grep -E "127\\.0\\.0\\.1:${HOSTPORT##*:}[[:space:]]" | head -1)"
     fi
     log "starting via the phase-4 driver (no one-off podman run)"
-    "$REPO/phase4-podman/lab-podman.sh" up --config "$SPEC" >&2 || die "lab-podman.sh up failed"
+    local r; r="$(render)"
+    "$REPO/phase4-podman/lab-podman.sh" up --config "$r" >&2 || die "lab-podman.sh up failed"
     cmd_status
 }
 
@@ -187,7 +215,8 @@ cmd_demo() {
 
 cmd_down() {
     need podman
-    "$REPO/phase4-podman/lab-podman.sh" down --config "$SPEC" >&2 || true
+    local r; r="$(render)"
+    "$REPO/phase4-podman/lab-podman.sh" down --config "$r" >&2 || true
     log "down"
 }
 
@@ -198,6 +227,7 @@ case "${1:-}" in
     status)     cmd_status ;;
     down)       cmd_down ;;
     paths)      want_paths ;;
+    render)     render; printf '\n' ;;
     spec-check) spec_check ;;
     -h|--help|help) usage; exit 0 ;;
     "")         usage >&2; exit 1 ;;

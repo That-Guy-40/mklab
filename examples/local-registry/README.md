@@ -63,26 +63,36 @@ pointer: *"the tag came back"* is equally true of a registry that returned somet
 | where the trust is installed | nowhere global. `--cert-dir` keeps the decision inside the command being demonstrated; installing the CA into `~/.config/containers/certs.d` would make every later run pass for a reason unrelated to this lab |
 | what a real deployment adds | authentication (htpasswd/token), a non-loopback bind behind it, and image signing — `cosign` appears in **0** files here, which is the honest state of container-artifact signing in this repo |
 
-## The absolute paths in the spec are checked, not trusted
+## The absolute paths are derived, not written down — and the first draft got this wrong
 
-`volumes` needs absolute host paths, so [`local-registry.toml`](local-registry.toml)
-contains two of them — a cached fact about a machine, sitting in a tracked file. The
-sibling spec that did this named `/home/user/mklab/…` from the day it was written:
-absolute, and nobody's home directory on any machine (TODO 15.7). Nothing caught it because
-the only question ever asked of the path was whether it began with a slash.
+`volumes` needs absolute host paths. Five specs in this repo answer that by hard-coding one
+checkout's path — a cached fact about a machine, in a tracked file — which is how the
+sibling in TODO 15.7 came to name `/home/user/mklab/…`, absolute and nobody's home
+directory, from the day it was written. Nothing caught it because the only question ever
+asked of that path was whether it began with a slash.
 
-So `registry-lab.sh` **derives** what those lines must be from its own location and refuses
-by name if the file disagrees; [`tests/test-spec-paths.sh`](tests/test-spec-paths.sh)
-asserts the same thing with no podman, no network and no registry, and carries a control
-that mangles a path and watches the refusal.
+**The first draft of this lab made the same trade and added a checker**: hard-code the
+path, derive the correct one, compare, refuse by name. That is a real improvement, and it
+was still wrong. CI answered within the hour — its checkout is
+`/home/runner/work/mklab/mklab`, so the check fired **correctly** on a design that could
+never have passed anywhere but one machine.
+
+> **A value that is false everywhere except one machine is not rescued by checking it.**
+
+So [`local-registry.toml`](local-registry.toml) carries `@LAB_DIR@`, `registry-lab.sh
+render` substitutes wherever the lab actually is, and podman is handed a gitignored
+`state/local-registry.rendered.toml`. [`tests/test-spec-paths.sh`](tests/test-spec-paths.sh)
+asserts the tracked file stays portable **and** that rendering produces what the driver
+asks for — with no podman, no network and no registry, on any machine — and both halves
+were watched to fail on injected defects.
 
 ## Files
 
 | file | what it is |
 |---|---|
 | [`registry-lab.sh`](registry-lab.sh) | the lab driver: `certs`, `up`, `demo`, `status`, `down`, `spec-check` |
-| [`local-registry.toml`](local-registry.toml) | the phase-4 service spec — read by `lab-podman.sh`, never a one-off `podman run` |
+| [`local-registry.toml`](local-registry.toml) | the phase-4 service **template** (`@LAB_DIR@`) — rendered, then read by `lab-podman.sh`, never a one-off `podman run` |
 | [`tests/`](tests/) | the always-runnable spec check, and the round trip (skips, by name, without podman / the image / the CA key) |
-| `state/` | gitignored: the issued leaf, the registry's storage, and the client `--cert-dir` |
+| `state/` | gitignored: the rendered spec, the issued leaf, the registry's storage, and the client `--cert-dir` |
 
 Manual transcripts and what each run proved: [`MANUAL_TESTING.md`](MANUAL_TESTING.md).
