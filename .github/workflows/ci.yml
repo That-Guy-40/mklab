@@ -565,7 +565,16 @@ jobs:
           # incompatible (Ed25519/no-EKU for stboot's Go x509, ECDSA/codeSigning for iPXE)
           # — the shape somebody will one day "simplify" into a single issuer, breaking a
           # boot rather than a test. Headless: openssl and git only.
-          for t in examples/kali-packer-vagrant/tests/run-all.sh \
+          #
+          # air-gapped-install: ADDED 2026-08-30 (TODO 15.5), and it is package-mirror-ram's
+          # first CONSUMER — that lab served a Debian mirror nothing installed from. Its
+          # install runs inside `unshare -rn`, so the runner needs a /etc/subuid range and
+          # debootstrap; both are checked by name and the suite SKIPs with a reason rather
+          # than failing confusingly. The mirror build is ~42 MB from deb.debian.org, once
+          # per run. The test that matters most is test-the-air-gap-is-real.sh, which takes
+          # the namespace away and requires the same rows to refuse to produce a verdict.
+          for t in examples/air-gapped-install/tests/run-all.sh \
+                   examples/kali-packer-vagrant/tests/run-all.sh \
                    examples/almalinux-packer-images/tests/run-all.sh \
                    examples/package-mirror-ram/tests/run-all.sh \
                    examples/lab-ca/tests/run-all.sh \

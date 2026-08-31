@@ -24,6 +24,16 @@ family (see [`../../RAM_INFRA_LAB_PLAN.md`](../../RAM_INFRA_LAB_PLAN.md) §4c).
 | **Guarded network-state mount** (`state-mount.sh`) | The mirror mount is `\|\|`-guarded — a missing/unreachable store serves an empty tree instead of **panicking PID 1**; a working store is mounted | ✅ **verified** — [`tests/test-state-mount-guard.sh`](tests/test-state-mount-guard.sh) (host-only, no docker/root) |
 | **Verified RAM boot + A/B rollback** (mechanic ①) | The ephemeral OS only boots a fleet-signed image | ✅ **verified mechanism** — [`../../netboot/MANUAL_TESTING.md` §13](../../netboot/MANUAL_TESTING.md) |
 | **The live NFS/iSCSI mirror mount + node image** ([`package-mirror-chroot.toml`](package-mirror-chroot.toml)) | The mirror is mounted from a real storage server and served | ⏳ **author-run** (see below) |
+| **Something actually installs from the tree** ([`../air-gapped-install/`](../air-gapped-install/README.md)) | The mirror is a mirror — a Debian base system installs from it with **no route to upstream** | ✅ **verified** — that lab's `tests/run-all.sh` (host-only, no root) |
+
+**This lab is the producer; [`../air-gapped-install/`](../air-gapped-install/README.md) is
+the consumer.** Until 2026-08-30 there was no consumer at all: this node served a Debian
+mirror while all four zero-touch install labs pointed at public mirrors, so nothing had
+ever checked that the tree was *installable* rather than merely *servable*. That lab builds
+a signed tree in exactly this node's layout (nginx `root /srv/mirror;` → `dists/` and
+`pool/` at the server root, no path prefix) and installs from it inside a network namespace
+with only loopback. The **transport** here — NFS or iSCSI — stays author-run; what is now
+verified is the half beyond it.
 
 **Why the live mount is author-run (honest).** Exercising a real NFS or iSCSI
 mount touches **host-global kernel state** — the kernel NFS server, the iSCSI
