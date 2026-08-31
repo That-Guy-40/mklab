@@ -295,6 +295,12 @@ firmware_for() {
 #   @REPO@       this repo's root, derived from the driver's own location
 #   @NETBOOT@    $LAB_NETBOOT_DIR, or ~/netboot — the netboot workdir, so the
 #                spec stops carrying a second copy of where that lives
+#   @HOME@       $HOME, for the per-user directories a lab genuinely needs
+#                (~/.config/lab-netboot/…, ~/.local/state/lab-create/…)
+#
+# The vocabulary is closed on purpose: four placeholders a reader can hold in
+# their head, not an expression language. A spec needing something else should
+# get its own named placeholder here rather than reaching for a general one.
 #
 # THE REPLACEMENT IS ESCAPED BEFORE USE. In awk's gsub, an unescaped `&` in the
 # replacement expands to the MATCHED text, and a backslash escapes — so a
@@ -302,43 +308,53 @@ firmware_for() {
 # documented past defect in this repo (a `2>&1` in a replacement spliced the
 # match back into itself), so it is handled here rather than assumed away.
 _expand_spec_paths() {   # <json> <config-file> → json with placeholders resolved
-    local json="$1" file="$2" labdir repo netboot
+    local json="$1" file="$2" labdir repo netboot home
     labdir="$(cd -- "$(dirname -- "$file")" && pwd)"
     repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
     netboot="${LAB_NETBOOT_DIR:-$HOME/netboot}"
-    printf '%s' "$json" | awk -v d="$labdir" -v r="$repo" -v n="$netboot" '
+    home="$HOME"
+    printf '%s' "$json" | awk -v d="$labdir" -v r="$repo" -v n="$netboot" -v h="$home" '
         BEGIN {
             gsub(/[\\&]/, "\\\\&", d)
             gsub(/[\\&]/, "\\\\&", r)
             gsub(/[\\&]/, "\\\\&", n)
+            gsub(/[\\&]/, "\\\\&", h)
         }
-        { gsub(/@LAB_DIR@/, d); gsub(/@REPO@/, r); gsub(/@NETBOOT@/, n); print }
+        { gsub(/@LAB_DIR@/, d); gsub(/@REPO@/, r); gsub(/@NETBOOT@/, n); gsub(/@HOME@/, h); print }
     '
 }
 
-toml_to_json() {
+_toml_to_json_raw() {
     local file="$1"
     [[ -r "$file" ]] || die "config file not readable: $file"
     # Review: `|| die` on each parser so a malformed TOML is a hard, explicit
     # error.  Without it the non-zero exit gets swallowed (set -e is suppressed
     # when this runs inside a command substitution / `||` context), and an
     # empty-input jq downstream returns 0 → `create` silently succeeds.
-    local _raw
     if have tomlq; then
-        _raw="$(tomlq -c '.' "$file")" || die "failed to parse TOML: $file (tomlq error above)"
-        _expand_spec_paths "$_raw" "$file"
+        tomlq -c '.' "$file" || die "failed to parse TOML: $file (tomlq error above)"
     elif have yq && yq --version 2>&1 | grep -qi 'mikefarah'; then
-        _raw="$(yq -p toml -o json "$file")" || die "failed to parse TOML: $file (yq error above)"
-        _expand_spec_paths "$_raw" "$file"
+        yq -p toml -o json "$file" || die "failed to parse TOML: $file (yq error above)"
     elif have dasel; then
-        _raw="$(dasel -f "$file" -r toml -w json)" || die "failed to parse TOML: $file (dasel error above)"
-        _expand_spec_paths "$_raw" "$file"
+        dasel -f "$file" -r toml -w json || die "failed to parse TOML: $file (dasel error above)"
     else
         die "no TOML parser found.  Install one with:
         $(install_hint yq)        # mikefarah/yq, supports -p toml
    or   pipx install yq           # kislyuk/yq → tomlq
    or   install dasel from https://github.com/tomwright/dasel"
     fi
+}
+
+toml_to_json() {
+    # THE PARSER IS SPLIT OUT so the placeholder expansion below is the same in every
+    # driver. Each phase carries its own parser (this one differs from the others by
+    # design — see the branches in _toml_to_json_raw), but `_expand_spec_paths` is
+    # duplicated BYTE-FOR-BYTE per the per-phase self-containment rule, and
+    # tools/check-driver-helper-parity.sh fails if the copies ever drift.
+    local raw
+    raw="$(_toml_to_json_raw "$1")" || die "failed to parse TOML: $1"
+    [[ -n "$raw" ]] || die "config produced no JSON (empty or unparseable): $1"
+    _expand_spec_paths "$raw" "$1"
 }
 
 # ─── State / manifest management ────────────────────────────────────────────

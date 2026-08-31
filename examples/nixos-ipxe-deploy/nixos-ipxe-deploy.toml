@@ -22,7 +22,7 @@ name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
-volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+volumes = ["@NETBOOT@:/usr/share/nginx/html:ro"]
 
 [[vm]]
 name           = "ipxe-deploy-demo"

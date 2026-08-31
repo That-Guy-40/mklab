@@ -101,8 +101,9 @@ FAIL: REGRESSION: local-registry.toml does not contain the volume line this chec
 ```
 
 The check was right; the design was not. **A value that is false everywhere except one
-machine is not rescued by checking it** — so the tracked file now carries `@LAB_DIR@` and
-`registry-lab.sh render` writes the absolute paths into a gitignored copy.
+machine is not rescued by checking it** — so the tracked file carries `@LAB_DIR@`. It was
+first resolved by a `render` step in this lab's own driver; since TODO 15.11 the phase-4
+driver resolves it itself, and the private step is gone.
 
 Verified the way the failure was found — from somewhere else entirely:
 
@@ -111,8 +112,8 @@ $ cp -a examples/local-registry /tmp/elsewhere/examples/ && rm -rf /tmp/elsewher
 $ /tmp/elsewhere/examples/local-registry/tests/test-spec-paths.sh
 PASS: the tracked spec is portable (@LAB_DIR@, no absolute host path), rendering it produces
 exactly the volume lines the driver asks for with no placeholder left …
-$ grep state/certs /tmp/elsewhere/examples/local-registry/state/local-registry.rendered.toml
-  "/tmp/elsewhere/examples/local-registry/state/certs:/certs:ro,Z",
+$ REPO=. examples/local-registry/registry-lab.sh spec-check
+[registry-lab] spec is portable, and the driver resolves it to …/state/certs and …/state/data
 ```
 
 ## 6. What this lab does NOT prove

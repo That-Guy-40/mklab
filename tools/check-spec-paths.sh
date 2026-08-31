@@ -96,13 +96,14 @@ must_catch "leading whitespace"          '    image = "/home/sqs/x.qcow2"'
 must_not   "a placeholder"               'image = "@LAB_DIR@/out/root-on-zfs.qcow2"'
 must_not   "the repo placeholder"        'kernel = "@REPO@/micro-linux/out/x86_64/kernel"'
 must_not   "the netboot placeholder"     'pxe_dir = "@NETBOOT@"'
+must_not   "the home placeholder"        'image = "@HOME@/.local/state/lab-create/x.qcow2"'
 must_not   "a system path"               'chroot = "/var/lib/lab-create/chroots/vm-seed"'
 must_not   "a container image reference" 'image = "docker.io/library/registry:2"'
 must_not   "a distro image name"         'image = "images:debian/13"'
 must_not   "a comment mentioning a path" '# image = "/home/sqs/netboot/ipxe.qcow2" is what it used to say'
 (( c_bad == 0 )) \
     || fail "§0: $c_bad of $((c_ok + c_bad)) scanner controls behaved wrongly — nothing below means anything"
-note "§0: $c_ok fixtures behaved (6 must-catch, 7 must-not-catch)"
+note "§0: $c_ok fixtures behaved (6 must-catch, 8 must-not-catch)"
 
 # ── §1. the tracked specs ───────────────────────────────────────────────────────────────
 mapfile -t SPECS < <(git ls-files '*.toml')
@@ -120,17 +121,22 @@ if [[ -n "$hits" ]]; then
 fi
 note "phase-2 path fields: ${#SPECS[@]} specs scanned, none names a home or a checkout"
 
-# ── §2. the volumes gap, counted rather than hidden ─────────────────────────────────────
-# phase3/4/5 do not expand placeholders yet, so these files are telling the truth when they
-# say "edit this". Counting them keeps the gap visible; excluding them would make it
-# disappear, which is how the phase-2 set reached nineteen.
+# ── §2. volumes, now GATED rather than counted (TODO 15.11) ─────────────────────────────
+# This section used to only COUNT these, because phase3/4/5 could not express them as
+# placeholders and failing a document for being honest would have been punishing the wrong
+# thing. All four drivers now carry a byte-identical _expand_spec_paths (bound by
+# check-driver-helper-parity.sh), so the reason for the exception is gone and the exception
+# goes with it.
 vol="$(grep -nE '^[[:space:]]*(volumes[[:space:]]*=[[:space:]]*\[?|[[:space:]]*)"/' "${SPECS[@]}" 2>/dev/null \
         | grep -E '"/[^"]+:' | grep -vE "$SYS_ROOTS" || true)"
 n_vol="$(printf '%s' "$vol" | grep -c . || true)"
 if (( n_vol > 0 )); then
-    note "NOT GATED — $n_vol volume path(s) still name a machine, in $(printf '%s\n' "$vol" | cut -d: -f1 | sort -u | grep -c .) file(s):"
-    printf '%s\n' "$vol" | head -4 | while IFS= read -r v; do note "    $v"; done
-    note "    (phase3/4/5 do not expand placeholders yet — TODO 15.11. Named, not excluded.)"
+    printf '%s\n' "$vol" | while IFS= read -r v; do note "$v"; done
+    fail "$n_vol volume path(s) name one machine's filesystem.
+  Every driver that reads a volumes list — phase3/4/5 — now expands @LAB_DIR@, @REPO@,
+  @NETBOOT@ and @HOME@ when it parses the spec, so an absolute host path here is a value
+  that is false on every machine but one."
 fi
+note "volumes: none names a home or a checkout either"
 
-pass "no tracked spec writes one machine's filesystem into a phase-2 path field: ${#SPECS[@]} specs scanned, $c_ok scanner controls fired first, and the $n_vol volume path(s) phase3/4/5 cannot yet express as placeholders are named above rather than quietly exempted"
+pass "no tracked spec writes one machine's filesystem into a phase-2 path field: ${#SPECS[@]} specs scanned, $c_ok scanner controls fired first, and volumes are gated the same way now that all four drivers expand the placeholders (TODO 15.11 — the exception went when its reason did)"

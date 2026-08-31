@@ -33,4 +33,4 @@ command = "sleep infinity"             # hold open; the box is used via `exec`
 # To make this flake (or the whole repo) visible inside the box, bind-mount it.
 # TOML does not expand shell vars, so either write an absolute path here or use
 # the imperative `podman run -v "$PWD:/work:Z"` form from the README.
-# volumes = ["/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/nix-build-box:/work:Z"]
+# volumes = ["@REPO@/examples/nix-build-box:/work:Z"]

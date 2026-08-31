@@ -35,4 +35,4 @@ name    = "http"
 engine  = "docker"
 image   = "nginx:alpine"
 ports   = ["8181:80"]
-volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+volumes = ["@NETBOOT@:/usr/share/nginx/html:ro"]

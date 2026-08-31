@@ -21,7 +21,7 @@ command = "sleep infinity"
 # the guest sees it. Everything else in this box is unprivileged.
 devices = ["/dev/kvm"]
 volumes = [
-  "/home/sqs/.local/state/lab-create/micro-cloud-s3/firecracker:/usr/local/bin/firecracker:ro",
-  "/home/sqs/.local/state/lab-create/micro-cloud-s1/vmlinux-6.1.155:/work/vmlinux:ro",
-  "/home/sqs/.local/state/lab-create/micro-cloud-s1/alpine.ext4:/work/rootfs.ext4:ro",
+  "@HOME@/.local/state/lab-create/micro-cloud-s3/firecracker:/usr/local/bin/firecracker:ro",
+  "@HOME@/.local/state/lab-create/micro-cloud-s1/vmlinux-6.1.155:/work/vmlinux:ro",
+  "@HOME@/.local/state/lab-create/micro-cloud-s1/alpine.ext4:/work/rootfs.ext4:ro",
 ]
