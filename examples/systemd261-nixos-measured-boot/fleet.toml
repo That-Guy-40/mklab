@@ -7,7 +7,7 @@ name = "nixos261-fleet"
 [[vm]]
 name = "fleet-1"
 backend = "disk-image"
-image = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+image = "@LAB_DIR@/out/nixos261.qcow2"
 firmware = "uefi"
 arch = "x86_64"
 memory = "2G"
@@ -18,7 +18,7 @@ ssh_port = 0
 [[vm]]
 name = "fleet-2"
 backend = "disk-image"
-image = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+image = "@LAB_DIR@/out/nixos261.qcow2"
 firmware = "uefi"
 arch = "x86_64"
 memory = "2G"
@@ -29,7 +29,7 @@ ssh_port = 0
 [[vm]]
 name = "fleet-3"
 backend = "disk-image"
-image = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+image = "@LAB_DIR@/out/nixos261.qcow2"
 firmware = "uefi"
 arch = "x86_64"
 memory = "2G"

@@ -3962,20 +3962,61 @@ work items, and are deliberately not checkboxes here.
       driver asks for — verified the way the failure was found, by running it from a copy at
       a completely different path.
 
-- [ ] **15.10 — five specs still hard-code one checkout's absolute path** *(found 2026-08-30
-      while building 15.6)*. `examples/systemd261-nixos-measured-boot/` (four) and
-      `examples/rhel-bootc-minimal/` name `/media/sqs/COLD_STORAGE/LAB_CREATE_V2/…` in
-      `image =`, and `zbm-debian.toml` does too after 15.7. They are wrong on every machine
-      but this one, and nothing says so.
+- [x] **15.10 — ~~five~~ FORTY-TWO specs hard-coded one machine's filesystem.** ✅ **DONE
+      2026-08-30.** The entry's own count was a hand-derived guess again: derived, it is
+      **42 specs / 60 paths**, and they are not one problem but three —
 
-      **15.7's fix is weaker than it reads, and this is the honest correction:** the
-      zfsbootmenu test asserts the path equals *this* checkout's, so it would fail in any
-      other — it passes only because that suite is **not wired into CI**. The registry lab
-      shows the shape that survives being run elsewhere: a placeholder in the tracked file,
-      substitution at run time, and a test that asserts the tracked file carries no absolute
-      host path at all. Doing the same for `image =` needs the phase-2 driver to read a
-      rendered spec, or `lab-vm.sh` to expand a placeholder itself — a decision, not a
-      copy-paste, which is why it is a box rather than a silent edit.
+      | class | what it names | verdict |
+      |---|---|---|
+      | 19 specs | `/media/sqs/COLD_STORAGE/LAB_CREATE_V2/…` — **this checkout** | false on every other machine |
+      | 29 specs | `/home/sqs/netboot…` — **this user's** netboot workdir | false for every other user |
+      | 5 specs | `/var/lib/lab-create/…` | **correct** — the same everywhere, and left alone |
+
+      `lab-vm.sh` now expands three placeholders when it parses a spec — **`@LAB_DIR@`**
+      (the config file's own directory), **`@REPO@`** (the repo root, derived from the
+      driver's location) and **`@NETBOOT@`** (`$LAB_NETBOOT_DIR`, else `~/netboot`, so the
+      spec stops carrying a second copy of where that lives). All 60 phase-2 paths are
+      converted; a real one was driven end to end (`create` → `start`, running, →
+      `destroy`) rather than only parsed.
+
+      **The fix is expansion, NOT a checker, and that distinction is the whole entry.** The
+      sibling lab built the same day tried the other way — hard-code the path, derive the
+      right one, refuse a mismatch — and CI failed it within the hour on
+      `/home/runner/work/mklab/mklab`. *A value that is false everywhere except one machine
+      is not rescued by checking it.* [`tools/check-spec-paths.sh`](tools/check-spec-paths.sh)
+      exists to keep the placeholders in place, not to validate a hard-coded path.
+
+      **Its own control rewrote the checker.** The first pattern *enumerated* the
+      machine-specific prefixes — `/home/…`, `/root`, `/Users/…`, and a guess at a checkout
+      under `/media` — and the fixtures caught it missing `/media/sqs/COLD_STORAGE/LAB_CREATE_V2/`
+      because that directory has a **digit** in it and the pattern said `[A-Z_]+`. Not a
+      typo to patch: enumerating machine-specific prefixes means **encoding this machine
+      into the checker that exists to stop specs encoding this machine.** It is inverted
+      now — match any absolute path, subtract a closed allowlist of system roots — so a new
+      kind of home, a checkout under `/srv`, or an NFS mount is caught without teaching it
+      anything, and a wrong allowlist fails loud instead of silent. 13 fixtures, 6
+      must-catch and 7 must-not, before it looks at a real file.
+
+      **15.7 is corrected rather than left standing.** Its test asserted the path equalled
+      *this* checkout's — so it would have failed anywhere else, and passed only because
+      that suite is not in CI. It now asserts the tracked file stays **portable**, which is
+      true on every machine including ones it has never run on.
+
+      And 14 specs carried the instruction *"Update /home/sqs to your `$HOME` if different
+      (no shell expansion in TOML)"*. That sentence was true when written and is now false;
+      it is replaced by the placeholder note, because a doc that tells you to do the thing
+      the driver now does for you is worse than one that says nothing.
+
+- [ ] **15.11 — `volumes` still names a machine, in 19 files (23 paths).** phase3/4/5 do not
+      expand placeholders, so those specs' *"edit this"* instruction is still **true** and
+      failing them would punish a document for being honest. `check-spec-paths.sh` counts
+      and names them on every run rather than excluding them — an exclusion is how the
+      phase-2 set reached nineteen unnoticed. Closing it means the same `_expand_spec_paths`
+      in `lab-podman.sh`/`lab-lxd.sh`/`lab-docker.sh`, which are three more copies of a
+      function that already exists in three near-identical variants — so the real decision
+      is whether the drivers finally share one, and that is worth deciding rather than
+      quietly duplicating a fourth time. `examples/local-registry/` renders its own spec for
+      the same reason and would be simplified by it.
 
 - [ ] **15.9 — should `push` become a verb in phases 4 and 5?** *(split out of 15.6 on
       2026-08-30, once there was something to push to.)* 15.6 said a registry would

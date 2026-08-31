@@ -61,7 +61,9 @@ engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
 volumes = [
-    # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
     # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
     "/home/sqs/netboot:/usr/share/nginx/html:ro",
     "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
@@ -77,8 +79,10 @@ arch    = "x86_64"
 memory  = "512M"
 cpus    = 1
 microvm = true
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-kernel  = "/home/sqs/netboot/kernel"
-initrd  = "/home/sqs/netboot/initrd.gz"
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
+kernel  = "@NETBOOT@/kernel"
+initrd  = "@NETBOOT@/initrd.gz"
 append  = "console=ttyS0 root=/dev/ram0 rw"
 network = true

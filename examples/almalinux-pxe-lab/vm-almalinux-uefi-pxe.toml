@@ -41,7 +41,7 @@ arch           = "x86_64"
 memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
 cpus           = 2
 cloud_init     = false
-pxe_dir        = "/home/sqs/netboot"    # QEMU slirp TFTP root
+pxe_dir        = "@NETBOOT@"    # QEMU slirp TFTP root
 pxe_bootfile   = "ipxe.efi"             # UEFI EFI binary
 
 # Uncomment for Secure Boot (requires signed ipxe.efi):

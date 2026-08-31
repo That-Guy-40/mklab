@@ -26,10 +26,11 @@ backend = "kernel+initrd"
 arch    = "x86_64"
 memory  = "4G"
 cpus    = 2
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML),
-# and match the --kernel/--output names you exported with.
-kernel  = "/home/sqs/netboot/kernel-debian-http"
-initrd  = "/home/sqs/netboot/initrd-debian-http.gz"
+# @NETBOOT@ is $LAB_NETBOOT_DIR (or ~/netboot); the phase-2 driver substitutes it
+# when it parses this file, so no machine's path is written down here (TODO 15.10).
+# Match the --kernel/--output names you exported with.
+kernel  = "@NETBOOT@/kernel-debian-http"
+initrd  = "@NETBOOT@/initrd-debian-http.gz"
 # console=ttyS0  -> systemd auto-spawns serial-getty@ttyS0 for a login prompt.
 # root=/dev/ram0 rw -> conventional "the initramfs IS the root fs" marker.
 # If systemd trips on cgroups, append: systemd.unified_cgroup_hierarchy=0

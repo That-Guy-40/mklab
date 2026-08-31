@@ -40,5 +40,5 @@ cloud_init = false
 # TFTP root: QEMU serves this directory via its built-in TFTP on 10.0.2.2.
 # The bootfile is what DHCP option 67 advertises to the PXE-booting VM.
 # OVMF's PXE client fetches tftp://10.0.2.2/ipxe.efi and executes it.
-pxe_dir      = "/home/sqs/netboot"
+pxe_dir      = "@NETBOOT@"
 pxe_bootfile = "ipxe.efi"

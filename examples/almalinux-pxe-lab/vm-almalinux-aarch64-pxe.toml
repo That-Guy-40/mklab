@@ -42,7 +42,7 @@
 [[vm]]
 name           = "almalinux-aarch64-pxe"
 backend        = "disk-image"
-image          = "/home/sqs/netboot/ipxe-aarch64.qcow2"   # aarch64 iPXE EFI ROM
+image          = "@NETBOOT@/ipxe-aarch64.qcow2"   # aarch64 iPXE EFI ROM
 install_target = "20G"
 mac            = "52:54:00:AA:64:01"
 arch           = "aarch64"

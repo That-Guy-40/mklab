@@ -36,8 +36,9 @@
 #   phase4-podman/lab-podman.sh down    --lab debian-hands-off
 #   phase2-qemu-vm/lab-vm.sh    destroy debian-hands-off-install --force
 #
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
 [lab]
 name        = "debian-hands-off"
 description = "Debian install driven by Philip Hands' Hands-Off d-i framework: rootless nginx serves the framework tree + a lab local/ overlay (Phase 4); QEMU target VM installs via iPXE -> d-i -> chained/class-composed preseed and reboots into Debian (Phase 2)."
@@ -68,5 +69,5 @@ arch           = "x86_64"
 memory         = "1536M"
 cpus           = 2
 cloud_init     = false                   # the framework provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_dir        = "@NETBOOT@"     # QEMU slirp TFTP root (serves boot.ipxe)
 pxe_bootfile   = "boot.ipxe"             # iPXE script (Hands-Off entry preseed URL + class selection baked in)

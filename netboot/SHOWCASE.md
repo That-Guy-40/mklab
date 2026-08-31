@@ -205,7 +205,7 @@ serves it via TFTP from 10.0.2.2:
 # examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
 [[vm]]
 name         = "pxe-tftp"
-pxe_dir      = "/home/sqs/netboot"   # serves ipxe.efi via TFTP
+pxe_dir      = "@NETBOOT@"   # serves ipxe.efi via TFTP
 pxe_bootfile = "ipxe.efi"
 ```
 
@@ -258,7 +258,7 @@ phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secu
 # examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 [[vm]]
 secure_boot  = true   # → OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd
-pxe_dir      = "/home/sqs/netboot"
+pxe_dir      = "@NETBOOT@"
 pxe_bootfile = "ipxe.efi"   # must be signed with snakeoil key
 ```
 

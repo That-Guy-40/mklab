@@ -46,8 +46,10 @@ backend = "kernel+initrd"
 arch    = "x86_64"
 memory  = "512M"
 cpus    = 1
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-kernel  = "/home/sqs/netboot/kernel"
-initrd  = "/home/sqs/netboot/initrd.gz"
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
+kernel  = "@NETBOOT@/kernel"
+initrd  = "@NETBOOT@/initrd.gz"
 append  = "console=ttyS0 root=/dev/ram0 rw"
 network = true

@@ -38,8 +38,9 @@
 #   phase4-podman/lab-podman.sh down    --lab rocky-kickstart
 #   phase2-qemu-vm/lab-vm.sh    destroy rocky-kickstart-install --force
 #
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
 [lab]
 name        = "rocky-kickstart"
 description = "Rocky Linux 9 kickstart gallery: install any official Rocky image kickstart (GenericCloud/EC2/Workstation/KDE/XFCE/…) zero-touch via QEMU pxe-install. Anaconda cousin of kali-preseed-gallery."
@@ -75,5 +76,5 @@ arch           = "x86_64"
 memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
 cpus           = 2
 cloud_init     = false                   # Anaconda provisions from the kickstart; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_dir        = "@NETBOOT@"     # QEMU slirp TFTP root (serves boot.ipxe)
 pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)

@@ -47,8 +47,10 @@ backend    = "disk-image"
 firmware   = "bios"   # SeaBIOS boots the single iPXE-ROM disk; x86_64 disk-image VMs
                       # otherwise default to OVMF/UEFI, which can't boot a BIOS-MBR disk.
                       # (verified: SeaBIOS → ipxe.qcow2 → iPXE → netboot)
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-image      = "/home/sqs/netboot/ipxe.qcow2"
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
+image      = "@NETBOOT@/ipxe.qcow2"
 arch       = "x86_64"
 memory     = "512M"
 cpus       = 1

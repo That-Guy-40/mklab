@@ -36,9 +36,11 @@ arch    = "x86_64"
 # (~1.5 GB) in RAM simultaneously.  2 GB is tight enough to OOM-panic.
 memory  = "4G"
 cpus    = 2
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-kernel  = "/home/sqs/netboot/kernel-full"
-initrd  = "/home/sqs/netboot/initrd-full.gz"
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
+kernel  = "@NETBOOT@/kernel-full"
+initrd  = "@NETBOOT@/initrd-full.gz"
 append  = "console=ttyS0 root=/dev/ram0 rw systemd.unified_cgroup_hierarchy=0"
 network = true
 # cloud_init=true: lab-vm.sh generates a NoCloud seed ISO with your SSH pubkey

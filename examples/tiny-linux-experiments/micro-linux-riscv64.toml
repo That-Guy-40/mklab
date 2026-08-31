@@ -26,7 +26,7 @@ arch    = "riscv64"
 memory  = "256M"
 cpus    = 1
 # EDIT these to your checkout if it is not at this path:
-kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/riscv64/kernel"
-initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/riscv64/initramfs.cpio"
+kernel  = "@REPO@/micro-linux/out/riscv64/kernel"
+initrd  = "@REPO@/micro-linux/out/riscv64/initramfs.cpio"
 append  = "console=ttyS0"
 network = false

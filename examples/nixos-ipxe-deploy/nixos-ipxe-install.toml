@@ -34,5 +34,5 @@ arch           = "x86_64"
 memory         = "4096M"           # netboot initrd (baked target closure) loads into RAM
 cpus           = 2
 cloud_init     = false
-pxe_dir        = "/home/sqs/netboot"
+pxe_dir        = "@NETBOOT@"
 pxe_bootfile   = "demo-install.ipxe"

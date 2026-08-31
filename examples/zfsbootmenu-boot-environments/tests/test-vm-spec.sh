@@ -37,22 +37,35 @@ need(vm.get("backend") == "disk-image", "backend must be 'disk-image' (boots a h
 need(vm.get("firmware") == "uefi", "firmware must be 'uefi' — ZFSBootMenu is an EFI executable")
 need(vm.get("cloud_init") is False, "cloud_init must be false — the ZFS image is not cloud-init driven")
 img = vm.get("image", "")
-need(isinstance(img, str) and img.startswith("/"),
-     "image must be an ABSOLUTE path (lab-vm.sh uses it as a qcow2 backing file)")
+# The resolved path must be absolute — lab-vm.sh uses it as a qcow2 backing file — but the
+# TRACKED value must not be, because an absolute path here names one machine. @LAB_DIR@ is
+# how a spec says "absolute, relative to me", and the driver resolves it at parse time.
+need(isinstance(img, str) and (img.startswith("/") or img.startswith("@")),
+     "image must be an absolute path or a @PLACEHOLDER@ the driver expands to one")
 # "Absolute" was the ONLY question ever asked of this path, and /home/user/mklab/...
-# answers it -- on nobody's machine. The artifact install-zfs-root.sh produces is
-# THIS lab's out/root-on-zfs.qcow2, so the path is derivable from where this test
-# is standing; asserting the derived value is what makes the check a statement
-# about the image rather than about the leading slash. (TODO 15.7)
-lab = os.path.realpath(sys.argv[2])
-want = os.path.join(lab, "out", "root-on-zfs.qcow2")
-need(os.path.realpath(img) == want,
-     f"image must name the artifact install-zfs-root.sh writes into THIS lab:\n"
-     f"      want {want}\n"
+# answers it -- on nobody's machine (TODO 15.7).
+#
+# THE FIX FOR THAT WAS ALSO WRONG, and this assertion is the corrected one. It used to
+# require the path to equal THIS checkout's out/root-on-zfs.qcow2 -- derived, compared,
+# refused on mismatch. Better, and still false everywhere else: it would have failed in
+# CI, and passed here, for the same reason the original defect survived. A value that is
+# false on every machine but one is not rescued by checking it (TODO 15.10).
+#
+# lab-vm.sh now expands @LAB_DIR@ when it parses the spec, so the assertion is that the
+# tracked file stays PORTABLE -- which is true on every machine, including the one this
+# test has never run on.
+need(img.startswith("@LAB_DIR@/"),
+     f"image must use the @LAB_DIR@ placeholder, which lab-vm.sh expands to this file's\n"
+     f"    own directory at parse time:\n"
+     f"      want @LAB_DIR@/out/root-on-zfs.qcow2\n"
      f"      got  {img}\n"
-     f"    An absolute path that exists on no machine passes an 'is it absolute?' check.")
+     f"    An absolute path here names one machine and is false on every other.")
+need(img == "@LAB_DIR@/out/root-on-zfs.qcow2",
+     f"image must name the artifact install-zfs-root.sh writes into this lab's out/:\n"
+     f"      want @LAB_DIR@/out/root-on-zfs.qcow2\n"
+     f"      got  {img}")
 print(f"  - spec ok: name={vm['name']} backend=disk-image firmware=uefi cloud_init=false", file=sys.stderr)
-print(f"  - image names this lab's own out/root-on-zfs.qcow2 (not a placeholder home)", file=sys.stderr)
+print(f"  - image is @LAB_DIR@/out/root-on-zfs.qcow2 — portable, expanded by the driver", file=sys.stderr)
 PY
 note "zbm-debian.toml: UEFI disk-image spec is well-formed  ✓"
 
