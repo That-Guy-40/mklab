@@ -91,9 +91,9 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 ### PKI / lab-CA consumers
 
-*One reusable trust anchor for real HTTPS + signed artifacts across labs.*
+*One reusable trust anchor for real HTTPS + signed artifacts across labs — and the part of PKI that is actually hard is having more than one consumer, so each of these chains to the SAME root rather than minting its own. Two of them prove it the only way that counts: iPXE's imgverify accepting a payload signed under that root at boot, and a container push refused with x509 when the client does not have it.*
 
-[`lab-ca`](../lab-ca/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`libvirt-ipxe-http-pxe/https`](../libvirt-ipxe-http-pxe/https/)
+[`lab-ca`](../lab-ca/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`libvirt-ipxe-http-pxe/https`](../libvirt-ipxe-http-pxe/https/) · [`local-registry`](../local-registry/)
 
 ### Close to the metal
 

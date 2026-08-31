@@ -3921,11 +3921,72 @@ work items, and are deliberately not checkboxes here.
       references it. `d-i mirror/http/hostname` (or kickstart `url --url=`) buys the
       **air-gapped install** — a path no lab here demonstrates end to end — and gives
       `package-mirror-ram`'s ⏳ author-run half its first consumer-side proof.
-- [ ] **15.6 — `push` exists only in phase 3, and there is no registry to push to.**
-      `registry:2` → **0 files** repo-wide. A rootless `registry:2` in a phase-4 pod gives the
-      verb a target, justifies it in phases 4/5, and — with 15.4 — is where TLS and (with
-      `cosign`, also 0 files) container-artifact signing would live. The repo has a firm
-      opinion about signed *boot* artifacts and none about signed *container* ones.
+- [x] **15.6 — `push` exists only in phase 3, and there is no registry to push to.**
+      ✅ **DONE 2026-08-30** — [`examples/local-registry/`](examples/local-registry/README.md):
+      a rootless `registry:2` under phase 4, its TLS leaf issued by the **shared** root
+      ([`lab-ca/`](examples/lab-ca/README.md)'s third consumer, after the HTTPS tier and
+      15.4's netboot signer). `registry-lab.sh demo` pushes an image, pulls it back, and
+      compares **manifest digests** — a tag is a mutable pointer, so *"the tag came back"*
+      is equally true of a registry that handed back something else.
+
+      **The control is the deliverable, not the push.** *"`podman push` succeeded"* proves
+      nothing about TLS: the ordinary way to run a lab registry is `--tls-verify=false`, and
+      from outside that is indistinguishable from a working chain until the day it matters.
+      So `demo` pushes **twice**, control first — with no CA it must fail, and it does:
+      `x509: certificate signed by unknown authority`. The test asserts that line rather
+      than the exit status, because a demo that silently stopped running the control would
+      still exit 0.
+
+      Deliberately **loopback-only, unauthenticated, delete disabled** — and the loopback
+      bind is asserted by a test, because it is the only thing that makes "no auth"
+      defensible and it would otherwise be one edit from gone. The client's trust goes in
+      via `--cert-dir`, never `~/.config/containers/certs.d`: installing the CA globally
+      would make every later run pass for a reason that has nothing to do with this lab.
+
+      **15.7's lesson was applied, got it half right, and CI supplied the other half within
+      the hour.** `volumes` needs absolute host paths — the cached-machine-fact that let a
+      sibling spec carry `/home/user/…` unnoticed. The first draft hard-coded this
+      checkout's path and added a checker to derive the correct value and refuse a
+      mismatch. That is a real improvement, and it was still wrong:
+
+      ```
+      FAIL: REGRESSION: local-registry.toml does not contain the volume line this checkout needs:
+            want: /home/runner/work/mklab/mklab/examples/local-registry/state/certs:/certs:ro,Z
+      ```
+
+      **A value that is false everywhere except one machine is not rescued by checking it.**
+      The check fired correctly on a design that could never have passed anywhere but here.
+      So the tracked spec carries `@LAB_DIR@`, `registry-lab.sh render` substitutes wherever
+      the lab actually is, and podman reads a gitignored copy. `tests/test-spec-paths.sh`
+      asserts the tracked file stays **portable** and that rendering produces what the
+      driver asks for — verified the way the failure was found, by running it from a copy at
+      a completely different path.
+
+- [ ] **15.10 — five specs still hard-code one checkout's absolute path** *(found 2026-08-30
+      while building 15.6)*. `examples/systemd261-nixos-measured-boot/` (four) and
+      `examples/rhel-bootc-minimal/` name `/media/sqs/COLD_STORAGE/LAB_CREATE_V2/…` in
+      `image =`, and `zbm-debian.toml` does too after 15.7. They are wrong on every machine
+      but this one, and nothing says so.
+
+      **15.7's fix is weaker than it reads, and this is the honest correction:** the
+      zfsbootmenu test asserts the path equals *this* checkout's, so it would fail in any
+      other — it passes only because that suite is **not wired into CI**. The registry lab
+      shows the shape that survives being run elsewhere: a placeholder in the tracked file,
+      substitution at run time, and a test that asserts the tracked file carries no absolute
+      host path at all. Doing the same for `image =` needs the phase-2 driver to read a
+      rendered spec, or `lab-vm.sh` to expand a placeholder itself — a decision, not a
+      copy-paste, which is why it is a box rather than a silent edit.
+
+- [ ] **15.9 — should `push` become a verb in phases 4 and 5?** *(split out of 15.6 on
+      2026-08-30, once there was something to push to.)* 15.6 said a registry would
+      "justify it in phases 4/5"; the registry now exists, and the honest answer is that
+      nothing has yet needed the verb. `examples/local-registry/` pushes with `podman push`
+      directly, which is what a reader would type. Adding a verb to two drivers is a real
+      blast radius — usage text, tests, the guided path, `check-doc-verbs`' probe boundary —
+      and this repo's own rule is that a verb added speculatively is a verb nobody has
+      watched work, which is precisely the defect 15.6 existed to fix. **So it is a decision
+      to make on evidence, not a leftover:** wire it when a lab wants to push as part of a
+      flow, and it arrives with a caller.
 - [x] **15.7 — one spec hard-codes ~~this machine's~~ NOBODY'S home.** ✅ **DONE
       2026-08-30**, and the framing was wrong in a way worth keeping: `/home/user/mklab/…`
       is not this machine's home, it is **no machine's**. The five sibling specs that carry

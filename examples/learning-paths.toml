@@ -709,8 +709,8 @@ members = ["tiny-linux-experiments/micro-linux-x86_64.toml",
 [[collection]]
 id      = "pki-lab-ca"
 title   = "PKI / lab-CA consumers"
-theme   = "One reusable trust anchor for real HTTPS + signed artifacts across labs."
-members = ["lab-ca/", "linuxboot-uefi-kexec/", "libvirt-ipxe-http-pxe/https/"]
+theme   = "One reusable trust anchor for real HTTPS + signed artifacts across labs — and the part of PKI that is actually hard is having more than one consumer, so each of these chains to the SAME root rather than minting its own. Two of them prove it the only way that counts: iPXE's imgverify accepting a payload signed under that root at boot, and a container push refused with x509 when the client does not have it."
+members = ["lab-ca/", "linuxboot-uefi-kexec/", "libvirt-ipxe-http-pxe/https/", "local-registry/"]
 
 [[collection]]
 id      = "close-to-the-metal"
