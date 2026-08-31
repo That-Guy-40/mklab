@@ -24,7 +24,7 @@ arch    = "ppc64le"
 memory  = "512M"
 cpus    = 1
 # EDIT these to your checkout if it is not at this path:
-kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/ppc64le/kernel"
-initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/ppc64le/initramfs.cpio.gz"
+kernel  = "@REPO@/micro-linux/out/ppc64le/kernel"
+initrd  = "@REPO@/micro-linux/out/ppc64le/initramfs.cpio.gz"
 append  = "console=hvc0 mllab.net=1"
 network = true

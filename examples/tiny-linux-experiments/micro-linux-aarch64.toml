@@ -24,7 +24,7 @@ arch    = "aarch64"
 memory  = "256M"
 cpus    = 1
 # EDIT these to your checkout if it is not at this path:
-kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/kernel"
-initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/initramfs.cpio.gz"
+kernel  = "@REPO@/micro-linux/out/aarch64/kernel"
+initrd  = "@REPO@/micro-linux/out/aarch64/initramfs.cpio.gz"
 append  = "console=ttyAMA0"
 network = false

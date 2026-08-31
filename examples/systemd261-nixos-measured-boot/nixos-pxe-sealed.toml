@@ -40,5 +40,5 @@ memory         = "3072M"
 cpus           = 2
 cloud_init     = false
 tpm            = true                    # measured boot + TPM2 sealing (swtpm → PCR 7+11)
-pxe_dir        = "/home/sqs/netboot"
+pxe_dir        = "@NETBOOT@"
 pxe_bootfile   = "nixos-sealed-deploy.efi"   # custom Nix-built ipxe.efi (sealed deploy script embedded)

@@ -273,6 +273,49 @@ firmware_for() {
 }
 
 # ─── TOML parser abstraction (jq required either way) ──────────────────────
+# ── @PLACEHOLDER@ EXPANSION: derive the path, do not write it down ──────────
+# TOML has no shell expansion, so a spec that needs an ABSOLUTE path (podman
+# bind mounts, qcow2 backing files, kernel/initrd) had one written into it. That
+# is a cached fact about a machine sitting in a tracked file, and it has been
+# wrong twice: examples/zfsbootmenu-boot-environments/zbm-debian.toml named
+# `/home/user/mklab/…` — nobody's home directory, on any machine, from the day
+# it was written (TODO 15.7) — and 19 other specs name THIS checkout, which is
+# false everywhere else. CI proved the second one on a lab built the same day:
+# its checkout is /home/runner/work/mklab/mklab, so a spec naming
+# /media/sqs/COLD_STORAGE/… could never have worked there.
+#
+# A CHECKER IS NOT ENOUGH, and that is the lesson worth keeping. The first
+# attempt derived the correct path and refused a mismatch — a real improvement,
+# and still wrong: a value that is false everywhere except one machine is not
+# rescued by checking it. It must not be written down.
+#
+# So a spec may write these, and the driver substitutes them at parse time:
+#
+#   @LAB_DIR@    the directory the config file itself is in
+#   @REPO@       this repo's root, derived from the driver's own location
+#   @NETBOOT@    $LAB_NETBOOT_DIR, or ~/netboot — the netboot workdir, so the
+#                spec stops carrying a second copy of where that lives
+#
+# THE REPLACEMENT IS ESCAPED BEFORE USE. In awk's gsub, an unescaped `&` in the
+# replacement expands to the MATCHED text, and a backslash escapes — so a
+# checkout path containing either would splice itself into the output. That is a
+# documented past defect in this repo (a `2>&1` in a replacement spliced the
+# match back into itself), so it is handled here rather than assumed away.
+_expand_spec_paths() {   # <json> <config-file> → json with placeholders resolved
+    local json="$1" file="$2" labdir repo netboot
+    labdir="$(cd -- "$(dirname -- "$file")" && pwd)"
+    repo="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+    netboot="${LAB_NETBOOT_DIR:-$HOME/netboot}"
+    printf '%s' "$json" | awk -v d="$labdir" -v r="$repo" -v n="$netboot" '
+        BEGIN {
+            gsub(/[\\&]/, "\\\\&", d)
+            gsub(/[\\&]/, "\\\\&", r)
+            gsub(/[\\&]/, "\\\\&", n)
+        }
+        { gsub(/@LAB_DIR@/, d); gsub(/@REPO@/, r); gsub(/@NETBOOT@/, n); print }
+    '
+}
+
 toml_to_json() {
     local file="$1"
     [[ -r "$file" ]] || die "config file not readable: $file"
@@ -280,12 +323,16 @@ toml_to_json() {
     # error.  Without it the non-zero exit gets swallowed (set -e is suppressed
     # when this runs inside a command substitution / `||` context), and an
     # empty-input jq downstream returns 0 → `create` silently succeeds.
+    local _raw
     if have tomlq; then
-        tomlq -c '.' "$file" || die "failed to parse TOML: $file (tomlq error above)"
+        _raw="$(tomlq -c '.' "$file")" || die "failed to parse TOML: $file (tomlq error above)"
+        _expand_spec_paths "$_raw" "$file"
     elif have yq && yq --version 2>&1 | grep -qi 'mikefarah'; then
-        yq -p toml -o json "$file" || die "failed to parse TOML: $file (yq error above)"
+        _raw="$(yq -p toml -o json "$file")" || die "failed to parse TOML: $file (yq error above)"
+        _expand_spec_paths "$_raw" "$file"
     elif have dasel; then
-        dasel -f "$file" -r toml -w json || die "failed to parse TOML: $file (dasel error above)"
+        _raw="$(dasel -f "$file" -r toml -w json)" || die "failed to parse TOML: $file (dasel error above)"
+        _expand_spec_paths "$_raw" "$file"
     else
         die "no TOML parser found.  Install one with:
         $(install_hint yq)        # mikefarah/yq, supports -p toml

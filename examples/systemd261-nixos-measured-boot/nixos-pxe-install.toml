@@ -37,5 +37,5 @@ arch           = "x86_64"
 memory         = "4096M"                # the netboot initrd (~590 MB store squashfs) loads into RAM
 cpus           = 2
 cloud_init     = false
-pxe_dir        = "/home/sqs/netboot"
+pxe_dir        = "@NETBOOT@"
 pxe_bootfile   = "nixos-boot.ipxe"

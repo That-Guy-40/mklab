@@ -30,7 +30,7 @@
 [[vm]]
 name     = "bootc-minimal"
 backend  = "disk-image"
-image    = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/rhel-bootc-minimal/output/disk.qcow2"
+image    = "@LAB_DIR@/output/disk.qcow2"
 arch     = "x86_64"
 firmware = "uefi"
 cloud_init = false             # minimal image has no datasource; root pw baked into the image

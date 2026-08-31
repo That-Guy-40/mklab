@@ -20,7 +20,7 @@
 [[vm]]
 name       = "nixos261s"
 backend    = "disk-image"
-image      = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261-sealed.qcow2"
+image      = "@LAB_DIR@/out/nixos261-sealed.qcow2"
 firmware   = "uefi"           # OVMF; the UKI sits at the removable ESP path
 arch       = "x86_64"
 memory     = "2G"

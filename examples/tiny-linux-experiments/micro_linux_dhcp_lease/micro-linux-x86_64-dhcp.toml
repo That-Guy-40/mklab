@@ -33,7 +33,7 @@ memory  = "256M"
 cpus    = 1
 microvm = true          # DHCP rides virtio-net over the mmio bus on -machine microvm
 # EDIT these to your checkout if it is not at this path:
-kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/kernel"
-initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/initramfs.cpio.gz"
+kernel  = "@REPO@/micro-linux/out/x86_64/kernel"
+initrd  = "@REPO@/micro-linux/out/x86_64/initramfs.cpio.gz"
 append  = "console=ttyS0 mllab.net=1"
 network = true

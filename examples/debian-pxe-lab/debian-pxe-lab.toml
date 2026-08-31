@@ -42,8 +42,9 @@
 # Real hardware: serve pxelinux/GRUB from the official netboot.tar.gz over
 # dnsmasq DHCP+TFTP — see examples/debian-pxe-lab/README.md §"Path B".
 #
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
 [lab]
 name        = "debian-pxe"
 description = "Zero-touch Debian 13 (trixie) PXE install: rootless nginx serves the Debian-installer kernel/initrd + preseed (Phase 4); QEMU target VM installs via iPXE -> d-i -> preseed and reboots into Debian (Phase 2)."
@@ -88,5 +89,5 @@ arch           = "x86_64"
 memory         = "1536M"
 cpus           = 2
 cloud_init     = false                   # d-i provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_dir        = "@NETBOOT@"     # QEMU slirp TFTP root (serves boot.ipxe)
 pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)

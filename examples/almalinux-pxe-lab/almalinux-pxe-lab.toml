@@ -41,8 +41,9 @@
 # The nginx server should bind loopback for QEMU-only use; widen to 0.0.0.0
 # only when serving real hardware on the LAN.
 #
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
 [lab]
 name        = "almalinux-pxe"
 description = "Zero-touch AlmaLinux 9 PXE install: rootless nginx serves vmlinuz/initrd/kickstart (Phase 4); QEMU target VM installs from iPXE -> Anaconda and reboots into AlmaLinux (Phase 2)."
@@ -83,5 +84,5 @@ arch           = "x86_64"
 memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
 cpus           = 2
 cloud_init     = false                   # Anaconda provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_dir        = "@NETBOOT@"     # QEMU slirp TFTP root (serves boot.ipxe)
 pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)

@@ -35,5 +35,5 @@ memory         = "3072M"
 cpus           = 2
 cloud_init     = false
 tpm            = true                    # measured boot after deploy (swtpm → PCR 11)
-pxe_dir        = "/home/sqs/netboot"
+pxe_dir        = "@NETBOOT@"
 pxe_bootfile   = "nixos-deploy.efi"      # the custom Nix-built ipxe.efi (deploy script embedded)

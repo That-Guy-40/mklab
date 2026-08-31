@@ -206,7 +206,7 @@ reboot
 [[vm]]
 name           = "almalinux-pxe-install"
 backend        = "disk-image"
-image          = "/home/USER/netboot/ipxe.qcow2"   # the iPXE ROM (bootindex=1, fallback)
+image          = "@NETBOOT@/ipxe.qcow2"   # the iPXE ROM (bootindex=1, fallback)
 install_target = "20G"                              # blank disk, bootindex=0 (install dest)
 mac            = "52:54:00:a1:9a:01"                # pinned so the per-MAC ks matches
 arch           = "x86_64"

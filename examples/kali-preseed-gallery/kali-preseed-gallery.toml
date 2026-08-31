@@ -39,8 +39,9 @@
 #   phase4-podman/lab-podman.sh down    --lab kali-preseed-gallery
 #   phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
 #
-# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-
+# Paths use @LAB_DIR@ (this file's directory), @REPO@ (the repo root) and
+# @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
+# when it parses this file, so nothing here names one machine (TODO 15.10).
 [lab]
 name        = "kali-preseed-gallery"
 description = "Zero-touch Kali install driven by ANY variant from the upstream kali-preseed-examples catalog. Rootless nginx serves the d-i kernel/initrd + the staged preseed gallery (Phase 4); a QEMU pxe-install VM netboots the selected variant via the NIC PXE ROM -> ipxe.pxe -> d-i -> preseed and reboots into Kali (Phase 2)."
@@ -93,5 +94,5 @@ arch           = "x86_64"
 memory         = "2048M"
 cpus           = 2
 cloud_init     = false                   # d-i provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_dir        = "@NETBOOT@"     # QEMU slirp TFTP root (serves boot.ipxe)
 pxe_bootfile   = "boot.ipxe"             # iPXE script (preseed in its append), run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)
