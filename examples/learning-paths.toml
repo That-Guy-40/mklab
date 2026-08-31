@@ -398,6 +398,10 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   learn      = "the debian-installer + preseed cousin (not Anaconda) — plain Debian 13 (trixie), the UPSTREAM of the whole d-i family, distilled from Debian's official example."
   checkpoint = "an unattended preseed install completes and reboots into trixie; `lsblk` shows the atomic layout (`vda1` ext4 `/`, `vda5` swap)."
   [[path.step]]
+  lab        = "air-gapped-install/"
+  learn      = "now take the mirror away. Every install above pulls from a PUBLIC mirror; this one installs from a local SIGNED mirror inside a network namespace with no route anywhere — the reason mirrors exist, and package-mirror-ram/'s first consumer. The lesson is the measurement, not the config: 'the config names a local mirror' is a different claim from 'this install had no other source', and only the second is worth anything."
+  checkpoint = "`airgap.sh install` unpacks a Debian 13 base system from 127.0.0.1 with no route out, and `airgap.sh controls` prints five rows — upstream refused ON THE NETWORK, a foreign keyring refused ON THE SIGNATURE, a corrupted .deb refused ON THE HASH, and the repaired tree installs again."
+  [[path.step]]
   lab        = "kali-pxe-lab/"
   tags       = ["🔗"]
   learn      = "the same d-i + preseed machinery on Kali (the offensive-distro sibling of debian-pxe-lab)."

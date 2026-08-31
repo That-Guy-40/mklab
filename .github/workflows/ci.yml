@@ -445,6 +445,35 @@ jobs:
             echo "::warning::binfmt qemu-aarch64 not registered — phase 3's multiarch row will SKIP"
           fi
 
+      - name: Install debootstrap (so air-gapped-install's two real rows RUN, not SKIP)
+        # ADDED 2026-08-30, on the first run of the suite it exists for, and it is this
+        # repo's own lesson arriving on schedule: MEASURED HERE IS NOT MEASURED THERE.
+        # examples/air-gapped-install/ went green on the author's box in 13 s and green in
+        # CI having proved NOTHING — `SKIP: missing required command: debootstrap`, and
+        # then the air-gap meta-control skipped in cascade because there was no mirror for
+        # it to take the namespace away from. `2 passed, 2 skipped, 0 failed`, and the two
+        # that skipped are the only two that make a claim. A green check is not a result.
+        #
+        # ~300 KB, and it buys the whole lab: the offline install AND the negative control
+        # that keeps it honest. debootstrap needs no root here — the install runs
+        # `--foreign` inside `unshare -rn --map-auto`, which is the same second gate the
+        # MAAS DHCP rows need above, so it is reported separately rather than assumed.
+        # debian-archive-keyring IS NOT OPTIONAL and is NOT pulled in by debootstrap here:
+        # on Ubuntu, debootstrap Depends on ubuntu-keyring. Installing only debootstrap left
+        # the runner refusing with "missing /usr/share/keyrings/debian-archive-keyring.gpg"
+        # — the SECOND green-having-checked-nothing run in a row, and the strict gate added
+        # above is what turned it red instead of hiding it in an annotation.
+        run: |
+          timeout 300 sudo apt-get install -y debootstrap debian-archive-keyring \
+            || echo "::warning::debootstrap / debian-archive-keyring install failed or timed out — air-gapped-install's 2 real rows will SKIP"
+          # ASK THE LAB, DO NOT KEEP A LIST HERE. The first version of this step hand-wrote
+          # two checks and reported both satisfied; there were THREE, and the third is what
+          # failed. A precondition list beside the caller is a re-implementation of a
+          # requirement the driver already owns, and it drifts the moment the driver grows
+          # a fourth. `preflight` is the shipped answer and names every unmet one.
+          bash examples/air-gapped-install/airgap.sh preflight \
+            || echo "::warning::air-gapped-install preflight reported unmet preconditions (named above) — its 2 real rows will SKIP, and the strict gate below will fail the step rather than let that pass quietly"
+
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
@@ -473,14 +502,26 @@ jobs:
           # Never observed because none of them has yet exited non-zero here. Measured
           # 2026-08-21: `bash -e -o pipefail -c 'f(){ return 77; }; f; r=$?; echo reached'`
           # prints nothing and exits 77.
+          # A THIRD ARGUMENT, `strict`, for a suite whose preconditions CI INSTALLS ITSELF.
+          # Added 2026-08-30 after examples/air-gapped-install/ went green here having run
+          # neither of the two tests that make a claim (no debootstrap on the runner, then
+          # its meta-control skipping in cascade). A skip is an honest UNKNOWN on a
+          # developer's box; in a job that apt-gets the tool three steps earlier it is a
+          # CI defect, and it must be red rather than one line inside a collapsed group.
+          # The annotation below already NAMED both files — and a green tick is what
+          # anybody actually reads.
           run_suite() {
-            local label="$1" cmd="$2" log r=0
+            local label="$1" cmd="$2" strict="${3:-}" log r=0
             log="$(mktemp)"
             echo "::group::$label"
             bash "$cmd" > "$log" 2>&1 || r=$?
             cat "$log"
             echo "::endgroup::"
             [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
+            if [ -n "$strict" ] && grep -q '^skipped — these did NOT run' "$log"; then
+              echo "::error::$label SKIPPED tests in a job that installs its preconditions — $(awk '/^skipped — these did NOT run/{f=1;next} /^failed:/{f=0} f && NF {printf "%s ", $1}' "$log")— so this suite went green having checked less than it claims. Either the install step above stopped working, or the suite grew a gate CI does not satisfy; name it here rather than tolerating a quiet all-skip."
+              rc=1
+            fi
             # %0A is how a workflow command encodes a newline in an annotation, and it
             # keeps this on ONE line -- a literal newline here would be a shallower line
             # inside a YAML block scalar, which silently ends the block. awk rather than
@@ -565,6 +606,18 @@ jobs:
           # incompatible (Ed25519/no-EKU for stboot's Go x509, ECDSA/codeSigning for iPXE)
           # — the shape somebody will one day "simplify" into a single issuer, breaking a
           # boot rather than a test. Headless: openssl and git only.
+          #
+          # air-gapped-install: ADDED 2026-08-30 (TODO 15.5), and it is package-mirror-ram's
+          # first CONSUMER — that lab served a Debian mirror nothing installed from. Its
+          # install runs inside `unshare -rn`, so the runner needs a /etc/subuid range and
+          # debootstrap; both are checked by name and the suite SKIPs with a reason rather
+          # than failing confusingly. The mirror build is ~42 MB from deb.debian.org, once
+          # per run. The test that matters most is test-the-air-gap-is-real.sh, which takes
+          # the namespace away and requires the same rows to refuse to produce a verdict.
+          # STRICT: this job apt-gets debootstrap for it, so a skip here is a CI defect,
+          # not an UNKNOWN. It is out of the loop for that third argument alone.
+          run_suite examples/air-gapped-install/tests/run-all.sh \
+                    examples/air-gapped-install/tests/run-all.sh strict
           for t in examples/kali-packer-vagrant/tests/run-all.sh \
                    examples/almalinux-packer-images/tests/run-all.sh \
                    examples/package-mirror-ram/tests/run-all.sh \

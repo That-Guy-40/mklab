@@ -3916,11 +3916,107 @@ work items, and are deliberately not checkboxes here.
       string — command substitution — so firing it would have **staged the whole repo**.
       It is `CLAUDE.md`'s opening rule aimed at an error message: text that merely *names* a
       command must not sit where a shell will run it.
-- [ ] **15.5 — a package mirror nobody installs from.** `package-mirror-ram/` serves a Debian
-      mirror; all four ZTP install labs install from public mirrors, and no install lab
-      references it. `d-i mirror/http/hostname` (or kickstart `url --url=`) buys the
-      **air-gapped install** — a path no lab here demonstrates end to end — and gives
-      `package-mirror-ram`'s ⏳ author-run half its first consumer-side proof.
+- [x] **15.5 — a package mirror nobody installs from.**
+      ✅ **DONE 2026-08-30** — [`examples/air-gapped-install/`](examples/air-gapped-install/README.md):
+      `airgap.sh mirror` builds a **signed** partial Debian mirror (the 79-package `minbase`
+      closure, *derived from* `debootstrap --print-debs` rather than written down, every
+      `.deb` traced to a `gpgv`-verified upstream `InRelease`) in exactly the layout
+      [`package-mirror-ram`](examples/package-mirror-ram/README.md)'s nginx `root
+      /srv/mirror;` serves — then installs from it inside `unshare -rn`, a namespace whose
+      only interface is loopback. That lab now has its first consumer, and its README says
+      which half is which: the NFS/iSCSI **transport** stays author-run, the tree being
+      **installable rather than merely servable** is verified.
+
+      **The controls are the deliverable, and one of them was a liar for a whole draft.**
+      "The config names a local mirror" is not the same claim as "this install had no other
+      source." The first draft proved isolation the tempting way — point `debootstrap` at
+      `deb.debian.org` and watch it fail. Run *outside* the namespace as a control, that row
+      still printed **`failed as required`**, because a non-root `debootstrap` refuses before
+      it ever opens a socket (`E: debootstrap can only run as root`). It was reporting the
+      wrong refusal in exactly the scenario it existed to catch. C0 now asks `curl`, whose
+      network-class exit codes (6/7/28/35) *are* the answer, and the run **stops** rather
+      than grading anything against an unknown; C1/C2/C3 each assert their **own** reason —
+      the network, the signature, the hash — not merely that they failed.
+      [`tests/test-the-air-gap-is-real.sh`](examples/air-gapped-install/tests/test-the-air-gap-is-real.sh)
+      removes the namespace and requires the same rows to refuse a verdict.
+
+      **`gpgv`'s exit status is the wrong question — the one place in this repo where
+      parsing output beats reading `rc`.** A Debian `InRelease` carries several signatures;
+      `gpgv` exits non-zero unless it can check *every* one. This host's
+      `debian-archive-keyring` stops at bookworm, so trixie's `InRelease` yields one
+      `GOODSIG` and two `NO_PUBKEY` and `gpgv` exits **2** on a perfectly trustworthy file.
+      `debootstrap` says so in its own source (`read_gpg_status`,
+      `/usr/share/debootstrap/functions`): *"Don't worry about the exit status from gpgv."*
+      `--status-fd` is gpg's machine-readable interface, and the rule used is debootstrap's,
+      so the builder accepts exactly what the installer will.
+
+      **Two more defects, both in the instrument rather than the subject.** A *successful*
+      install reported `rc=1`: the server-reaping `trap` named a `local` variable, which is
+      out of scope by the time an EXIT trap runs, so under `set -u` the trap died on
+      `srv: unbound variable` — leaving the server running **and** overwriting a clean exit
+      with the teardown's. And `"$DRIVER" status | grep -q …` **skipped the most important
+      test in the lab** while the mirror sat on disk: `grep -q` exits at the first match,
+      SIGPIPEs the still-printing `status`, and `pipefail` reports 141. A skip is the quiet
+      direction of that bug.
+
+      **Also adds `lab-chroot.sh --keyring PATH`** (+ a `keyring =` TOML field), because a
+      local mirror is signed by a **local** key and no driver here could say so — the
+      keyring was chosen from the distro name alone, so `--mirror http://my-mirror/` could
+      only ever be a re-host of the same archive signed by the same people.
+      [`phase1-chroot/tests/test-keyring-override.sh`](phase1-chroot/tests/test-keyring-override.sh)
+      asserts the **argv debootstrap actually receives** (from both the flag and the TOML
+      field — two separate jq expressions, and the config one is the one that gets missed),
+      that an unreadable path is refused by name, and that `--no-check-gpg` is neither
+      passed nor accepted. That last check was first written as `grep -q -- --no-check-gpg
+      lab-chroot.sh` and failed **on the driver's own comment saying the flag is
+      deliberately not offered** — a regex over a line is not a question about a command,
+      for the fourth time in this repo.
+
+      Still author-run: the rooted second stage (`dpkg --configure`, which does **no**
+      network I/O — named in the README rather than glossed), and the full **d-i** install
+      via [`preseed-local-mirror.cfg`](examples/air-gapped-install/preseed-local-mirror.cfg),
+      whose diff against the gallery base *is* the lesson — `apt-setup/services-select`
+      emptied is what stops the installed machine being pointed back at
+      `security.debian.org` hours later.
+
+      **AND THE FIRST CI RUN CAUGHT THE LAST ONE, which is the repo's own rule arriving on
+      schedule: measured HERE is not measured THERE.** All seven checks went green, and the
+      suite had proved **nothing** — `SKIP: missing required command: debootstrap` (the
+      runner has no debootstrap), and then the air-gap meta-control skipped in cascade
+      because there was no mirror for it to take the namespace away from.
+      `2 passed, 2 skipped, 0 failed`, and the two that skipped are the only two that make
+      a claim. The `skipped —` names were in the log, inside a collapsed `::group::` that
+      nobody opens on a passing job.
+
+      Two fixes, because installing the package would only have closed *this* instance:
+      CI now `apt-get`s `debootstrap` (~300 KB) and reports **both** preconditions by name
+      (the binary, and the `/etc/subuid` range `unshare --map-auto` needs) rather than
+      assuming the install settled it; and `run_suite` in `ci.yml` gained a third
+      **`strict`** argument for a suite whose preconditions the job installs *itself* —
+      there, a skip is a CI defect, not an UNKNOWN, and it goes **red with an `::error::`
+      naming the file**. Proved against the shipped function by
+      [`tools/tests/test-ci-tolerates-a-skipped-suite.sh`](tools/tests/test-ci-tolerates-a-skipped-suite.sh),
+      which `sed`s `run_suite` out of `ci.yml` rather than copying it: the sneaky fixture
+      **exits 0 while naming a skipped test** (the exact shape that went green), a third
+      control deletes the strict branch and requires the gate to stop firing, and the
+      **non-regression** asserts every *non*-strict suite still tolerates the identical
+      input — twelve suites here legitimately skip on that runner, and a leak would turn
+      them all red at once.
+
+      **The strict gate earned itself on its very next run, catching the same class one
+      layer down.** With `debootstrap` installed, CI went green-having-checked-nothing
+      *again* — `missing /usr/share/keyrings/debian-archive-keyring.gpg`. On Ubuntu,
+      `debootstrap` depends on `ubuntu-keyring`, **not** the Debian one, so the runner had
+      the tool and could not verify the upstream index. The gate turned that red instead of
+      leaving it in an annotation. The defect, though, was mine and structural: the CI step
+      **hand-wrote two precondition checks and reported both satisfied — there were three.**
+      A precondition list kept beside the caller is a re-implementation of a requirement the
+      *driver* owns, and it drifts the moment the driver grows a fourth. So `airgap.sh`
+      gained a **`preflight`** verb that names every unmet precondition at once (including
+      two nobody had listed: a `debootstrap` that does not know the suite, and a subuid
+      range that exists while `unshare -rn --map-auto` is still refused), and **both** CI
+      and the suite's own gate now call it instead of keeping copies. `require_cmd` stopped
+      at the first missing command, so a short machine learned about one per run.
 - [x] **15.6 — `push` exists only in phase 3, and there is no registry to push to.**
       ✅ **DONE 2026-08-30** — [`examples/local-registry/`](examples/local-registry/README.md):
       a rootless `registry:2` under phase 4, its TLS leaf issued by the **shared** root

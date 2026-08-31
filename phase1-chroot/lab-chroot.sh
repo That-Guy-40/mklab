@@ -432,6 +432,7 @@ spec_from_cli() {
         --arg arch        "${OPT_ARCH:-}" \
         --arg target      "${OPT_TARGET:-}" \
         --arg mirror      "${OPT_MIRROR:-}" \
+        --arg keyring     "${OPT_KEYRING:-}" \
         --arg variant     "${OPT_VARIANT:-}" \
         --arg manager     "${OPT_MANAGER:-none}" \
         --arg lab         "${OPT_LAB:-}" \
@@ -444,7 +445,7 @@ spec_from_cli() {
         --argjson post_commands "$post_commands_json" \
         --argjson users         "$users_json" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
-          target:$target, mirror:$mirror, variant:$variant, manager:$manager, lab:$lab,
+          target:$target, mirror:$mirror, keyring:$keyring, variant:$variant, manager:$manager, lab:$lab,
           hostname:$hostname, init_script:$init_script,
           include:$include, binaries:$binaries, extras:$extras, groups:$groups,
           post_commands:$post_commands, users:$users, write_files:[]}'
@@ -472,6 +473,7 @@ specs_from_config() {
             arch:    (.arch    // ""),
             target:  (.target  // ""),
             mirror:  (.mirror  // ""),
+            keyring: (.keyring // ""),
             variant: (.variant // ""),
             manager: (.manager // "none"),
             lab:     ( if $cli_lab != "" then $cli_lab
@@ -635,8 +637,22 @@ debootstrap_default_mirror() {
     esac
 }
 
+# A LOCAL mirror is signed by a LOCAL key, and until TODO 15.5 this function was the
+# reason no lab here could install from one: the keyring was chosen from the distro name
+# and there was no way to say otherwise, so `--mirror http://my-mirror/` could only ever
+# be a mirror of the same archive, signed by the same people. An air-gapped site mirrors
+# and re-signs; examples/air-gapped-install/ does exactly that and needs to be able to say
+# which key the installer should trust.
+#
+# The override is a PATH, and it is checked for readability by name. `--no-check-gpg` is
+# deliberately NOT offered: it would turn every signature failure into a silent success,
+# which is the one outcome a lab about trusting a mirror must not make convenient.
 debootstrap_keyring_for() {
     local distro="$1" path
+    if [[ -n "${2:-}" ]]; then
+        [[ -r "$2" ]] || die "keyring not readable: $2"
+        printf '%s' "$2"; return 0
+    fi
     case "$distro" in
         debian) path=/usr/share/keyrings/debian-archive-keyring.gpg ;;
         ubuntu) path=/usr/share/keyrings/ubuntu-archive-keyring.gpg ;;
@@ -656,13 +672,14 @@ backend_debootstrap_create() {
     local spec="$1"
     require_cmd debootstrap
 
-    local name suite arch target distro mirror variant
+    local name suite arch target distro mirror variant keyring_override
     name="$(spec_get "$spec" name)"
     suite="$(spec_get "$spec" suite)"
     arch="$(spec_get "$spec" arch)"
     target="$(spec_get "$spec" target)"
     distro="$(spec_get "$spec" distro)"
     mirror="$(spec_get "$spec" mirror)"
+    keyring_override="$(spec_get "$spec" keyring)"
     variant="$(spec_get "$spec" variant)"
     [[ -n "$mirror"  ]] || mirror="$(debootstrap_default_mirror "$distro" "$arch")"
     # Rootless debootstrap uses the fakechroot variant (the muxup.com pattern):
@@ -675,7 +692,7 @@ backend_debootstrap_create() {
     host_arch="$(detect_host_arch)"
 
     local keyring
-    keyring="$(debootstrap_keyring_for "$distro")"
+    keyring="$(debootstrap_keyring_for "$distro" "$keyring_override")"
 
     local include
     include="$(jq -r '.include | join(",")' <<<"$spec")"
@@ -2506,6 +2523,9 @@ CREATE OPTIONS
   --name     <short-name>                  (defaults to basename of target)
   --hostname <name>                        (auto: <host-short>-<4rand> if omitted)
   --mirror   URL                           (backend default if omitted)
+  --keyring  /path/to/keyring.gpg          verify the mirror against THIS key instead of
+                                           the distro keyring (a local mirror is signed
+                                           by a local key; debootstrap only)
   --variant  minbase|buildd|fakechroot     (debootstrap only)
   --include  pkg,pkg,...
   --groups   group,group,...               (dnf only)
@@ -2591,6 +2611,7 @@ parse_args() {
             --target)        OPT_TARGET="$2"; shift 2 ;;
             --name)          OPT_NAME="$2"; shift 2 ;;
             --mirror)        OPT_MIRROR="$2"; shift 2 ;;
+            --keyring)       OPT_KEYRING="$2"; shift 2 ;;
             --variant)       OPT_VARIANT="$2"; shift 2 ;;
             --include)       OPT_INCLUDE="$2"; shift 2 ;;
             --groups)        OPT_GROUPS="$2"; shift 2 ;;

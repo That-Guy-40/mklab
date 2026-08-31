@@ -78,8 +78,12 @@ since 2020, which `netboot/versions.env` pins by commit.
 
 ## Its own tests
 
-`tests/run-all.sh` — the tracked anchor matches its tracked fingerprint, the keystore
-is unstageable, and the two leaf profiles are what their consumers require.
+[`tests/run-all.sh`](tests/) — driving
+[`tests/test-anchor-and-profiles.sh`](tests/test-anchor-and-profiles.sh): the tracked
+anchor matches its tracked fingerprint, the keystore is unstageable, and the two leaf
+profiles are what their consumers require (Ed25519 with **no** EKU for stboot's Go x509,
+ECDSA with `codeSigning` + `digitalSignature` for iPXE's `imgverify` — incompatible on
+purpose, and the shape somebody will one day "simplify" into a single issuer).
 
 ## Key hygiene assertion
 
