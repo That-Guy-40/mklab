@@ -569,6 +569,7 @@ jobs:
                    examples/almalinux-packer-images/tests/run-all.sh \
                    examples/package-mirror-ram/tests/run-all.sh \
                    examples/lab-ca/tests/run-all.sh \
+                   examples/local-registry/tests/run-all.sh \
                    examples/openbios-the-rival-that-shipped/tests/run-all.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \

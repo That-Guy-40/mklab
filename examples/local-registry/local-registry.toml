@@ -1,0 +1,58 @@
+# local-registry.toml — a rootless OCI registry with REAL TLS, anchored to the
+# shared lab root CA (examples/lab-ca/).
+#
+# Read by phase4-podman/lab-podman.sh. Do not run it by hand for the first time:
+# the TLS material has to exist before the container starts, so use the lab's own
+# driver, which issues it and then calls this file's phase tool:
+#
+#   examples/local-registry/registry-lab.sh certs     # leaf from the shared root
+#   examples/local-registry/registry-lab.sh up        # -> lab-podman.sh up --config <this>
+#   examples/local-registry/registry-lab.sh demo      # push, pull, compare digests
+#   examples/local-registry/registry-lab.sh down
+#
+# ─── The absolute paths below are THIS CHECKOUT'S ───────────────────────────
+# `volumes` needs absolute host paths, and five other specs in this repo carry
+# the same shape. That is a cached fact about a machine, and TODO 15.7 is the
+# entry where one of them turned out to name `/home/user/…` — nobody's home
+# directory, on any machine, for as long as the file had existed. Nothing caught
+# it because the only question ever asked of the path was whether it began with
+# a slash.
+#
+# So here the value is CHECKED rather than trusted: `registry-lab.sh` derives
+# what these paths must be from its own location and refuses by name if the file
+# disagrees, and tests/test-spec-paths.sh asserts the same thing without needing
+# podman. Edit them to match your checkout; the driver will tell you if you miss
+# one.
+
+[lab]
+name        = "local-registry"
+description = "A rootless OCI registry with REAL TLS, anchored to the shared lab root CA — the first place in this repo a container image can be pushed TO, and a push/pull round trip that compares digests rather than tags."
+tags        = ["registry", "oci", "podman", "tls", "lab-ca", "rootless"]
+
+[[service]]
+name   = "registry"
+engine = "podman"
+image  = "docker.io/library/registry:2"
+
+# 127.0.0.1 ON PURPOSE. A registry with no auth that answers on every interface
+# is a write-anything artifact store for the whole LAN; this lab is about the
+# TLS chain, not about running a service. The loopback bind is the only reason
+# "no authentication" is acceptable here, and it is stated where it is decided.
+ports  = ["127.0.0.1:5000:5000"]
+
+volumes = [
+  "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/local-registry/state/certs:/certs:ro,Z",
+  "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/local-registry/state/data:/var/lib/registry:Z",
+]
+
+[service.environment]
+# The leaf and its chain, issued by examples/lab-ca/issue-server-cert.sh.
+# fullchain (leaf THEN root) rather than the bare leaf: a client that has the
+# root still needs the leaf to chain, and a client that has neither must fail —
+# which is what registry-lab.sh's control asserts.
+REGISTRY_HTTP_TLS_CERTIFICATE = "/certs/tls.crt"
+REGISTRY_HTTP_TLS_KEY         = "/certs/tls.key"
+REGISTRY_HTTP_ADDR            = "0.0.0.0:5000"
+# Deleting a tag/manifest is off by default; the lab does not need it and an
+# enabled delete API on an unauthenticated registry is a footgun even on loopback.
+REGISTRY_STORAGE_DELETE_ENABLED = "false"
