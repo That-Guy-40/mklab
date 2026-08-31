@@ -445,6 +445,37 @@ jobs:
             echo "::warning::binfmt qemu-aarch64 not registered — phase 3's multiarch row will SKIP"
           fi
 
+      - name: Install debootstrap (so air-gapped-install's two real rows RUN, not SKIP)
+        # ADDED 2026-08-30, on the first run of the suite it exists for, and it is this
+        # repo's own lesson arriving on schedule: MEASURED HERE IS NOT MEASURED THERE.
+        # examples/air-gapped-install/ went green on the author's box in 13 s and green in
+        # CI having proved NOTHING — `SKIP: missing required command: debootstrap`, and
+        # then the air-gap meta-control skipped in cascade because there was no mirror for
+        # it to take the namespace away from. `2 passed, 2 skipped, 0 failed`, and the two
+        # that skipped are the only two that make a claim. A green check is not a result.
+        #
+        # ~300 KB, and it buys the whole lab: the offline install AND the negative control
+        # that keeps it honest. debootstrap needs no root here — the install runs
+        # `--foreign` inside `unshare -rn --map-auto`, which is the same second gate the
+        # MAAS DHCP rows need above, so it is reported separately rather than assumed.
+        run: |
+          timeout 300 sudo apt-get install -y debootstrap \
+            || echo "::warning::debootstrap install failed or timed out — air-gapped-install's 2 real rows will SKIP"
+          if command -v debootstrap >/dev/null 2>&1; then
+            echo "debootstrap: $(debootstrap --version)"
+          else
+            echo "::warning::debootstrap still absent — air-gapped-install's 2 real rows will SKIP"
+          fi
+          # The lab's OTHER precondition, checked by name for the same reason the dnsmasq
+          # step checks its second gate: without a subuid range `unshare --map-auto` cannot
+          # map the ids debootstrap unpacks, tar aborts partway through the base system,
+          # and the failure looks like a corrupt mirror rather than a missing mapping.
+          if grep -q "^$(id -un):" /etc/subuid 2>/dev/null && grep -q "^$(id -un):" /etc/subgid 2>/dev/null; then
+            echo "subuid/subgid range for $(id -un): present — the air-gapped install can unpack"
+          else
+            echo "::warning::no /etc/subuid+subgid range for $(id -un) — air-gapped-install will SKIP on its SECOND gate, so installing debootstrap did not buy it"
+          fi
+
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
@@ -473,14 +504,26 @@ jobs:
           # Never observed because none of them has yet exited non-zero here. Measured
           # 2026-08-21: `bash -e -o pipefail -c 'f(){ return 77; }; f; r=$?; echo reached'`
           # prints nothing and exits 77.
+          # A THIRD ARGUMENT, `strict`, for a suite whose preconditions CI INSTALLS ITSELF.
+          # Added 2026-08-30 after examples/air-gapped-install/ went green here having run
+          # neither of the two tests that make a claim (no debootstrap on the runner, then
+          # its meta-control skipping in cascade). A skip is an honest UNKNOWN on a
+          # developer's box; in a job that apt-gets the tool three steps earlier it is a
+          # CI defect, and it must be red rather than one line inside a collapsed group.
+          # The annotation below already NAMED both files — and a green tick is what
+          # anybody actually reads.
           run_suite() {
-            local label="$1" cmd="$2" log r=0
+            local label="$1" cmd="$2" strict="${3:-}" log r=0
             log="$(mktemp)"
             echo "::group::$label"
             bash "$cmd" > "$log" 2>&1 || r=$?
             cat "$log"
             echo "::endgroup::"
             [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
+            if [ -n "$strict" ] && grep -q '^skipped — these did NOT run' "$log"; then
+              echo "::error::$label SKIPPED tests in a job that installs its preconditions — $(awk '/^skipped — these did NOT run/{f=1;next} /^failed:/{f=0} f && NF {printf "%s ", $1}' "$log")— so this suite went green having checked less than it claims. Either the install step above stopped working, or the suite grew a gate CI does not satisfy; name it here rather than tolerating a quiet all-skip."
+              rc=1
+            fi
             # %0A is how a workflow command encodes a newline in an annotation, and it
             # keeps this on ONE line -- a literal newline here would be a shallower line
             # inside a YAML block scalar, which silently ends the block. awk rather than
@@ -573,8 +616,11 @@ jobs:
           # than failing confusingly. The mirror build is ~42 MB from deb.debian.org, once
           # per run. The test that matters most is test-the-air-gap-is-real.sh, which takes
           # the namespace away and requires the same rows to refuse to produce a verdict.
-          for t in examples/air-gapped-install/tests/run-all.sh \
-                   examples/kali-packer-vagrant/tests/run-all.sh \
+          # STRICT: this job apt-gets debootstrap for it, so a skip here is a CI defect,
+          # not an UNKNOWN. It is out of the loop for that third argument alone.
+          run_suite examples/air-gapped-install/tests/run-all.sh \
+                    examples/air-gapped-install/tests/run-all.sh strict
+          for t in examples/kali-packer-vagrant/tests/run-all.sh \
                    examples/almalinux-packer-images/tests/run-all.sh \
                    examples/package-mirror-ram/tests/run-all.sh \
                    examples/lab-ca/tests/run-all.sh \

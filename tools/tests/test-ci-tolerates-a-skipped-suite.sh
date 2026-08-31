@@ -131,6 +131,21 @@ build_step() {
 }
 build_step "$WORK/step.sh" "$RUN_SUITE" "$ANNOT"
 
+# build_strict_step <dest> <run_suite-text> — the same skeleton, but every suite is driven
+# with the third `strict` argument, which is what ci.yml passes for a suite whose
+# preconditions the job installs itself.
+build_strict_step() {
+    local dest="$1" fn="$2"
+    {
+        echo 'rc=0'
+        echo 'skipped_report=""'
+        printf '%s\n' "$fn"
+        echo 'for s in "$@"; do run_suite "$(basename "$s" .sh)" "$s" strict; done'
+        echo 'exit $rc'
+    } > "$dest"
+}
+build_strict_step "$WORK/strict.sh" "$RUN_SUITE"
+
 # drive <step> <mode> <suite...> — run the step the way GitHub does and report rc + output.
 OUT=""; RC=0
 drive() {
@@ -180,6 +195,34 @@ for MODE in "-e" "-eo pipefail"; do
     check '[[ "$RC" == 0 ]]' "$m: a clean run exited $RC"
     check '! grep -q "^::warning::" <<<"$OUT"' \
         "$m: annotated skipped rows on a run where nothing skipped — an annotation that always fires carries no information"
+
+    # 4e. STRICT: a suite whose preconditions CI installs itself must go RED when it skips.
+    # partial-skip.sh EXITS 0 and names a skipped test — the sneaky shape, and exactly what
+    # examples/air-gapped-install/ did on its first CI run: green, with both tests that make
+    # a claim unexecuted.
+    drive "$WORK/strict.sh" "$MODE" "$S/partial-skip.sh" "$S/later.sh"
+    check '[[ "$RC" == 1 ]]' \
+        "$m: strict did NOT fail the step on a suite that skipped a test while exiting 0 (rc=$RC) — the quiet all-skip this argument exists to catch stays green"
+    check 'grep -q "^::error::" <<<"$OUT"' \
+        "$m: strict failed the step with no ::error:: — a red tick with no reason is a bug report nobody can act on"
+    check 'grep -q "test-needs-kvm.sh" <<<"$OUT"' \
+        "$m: the strict error does not NAME the test that did not run — a count cannot say which guard went unexercised"
+    check 'grep -q SENTINEL-THE-LOOP-CONTINUED <<<"$OUT"' \
+        "$m: strict truncated the loop — one strict suite would hide the state of every suite behind it"
+
+    # 4f. …and must stay quiet on a suite that skipped nothing, or it carries no information.
+    drive "$WORK/strict.sh" "$MODE" "$S/ok.sh"
+    check '[[ "$RC" == 0 ]]' \
+        "$m: strict failed a suite that skipped nothing (rc=$RC) — a gate that always fires is not a gate"
+    check '! grep -q "^::error::" <<<"$OUT"' \
+        "$m: strict emitted an ::error:: for a clean suite"
+
+    # 4g. THE NON-REGRESSION, and the one that matters most: a NON-strict suite must keep
+    # tolerating the identical input. Twelve suites here legitimately skip on this runner;
+    # if strict leaked into the default they would all go red at once.
+    drive "$WORK/step.sh" "$MODE" "$S/partial-skip.sh"
+    check '[[ "$RC" == 0 ]]' \
+        "$m: a NON-strict suite that skipped a test now fails the step (rc=$RC) — strict leaked into the default, and every suite that legitimately skips on this runner goes red"
 done
 
 # ── 5. the controls: these assertions must be able to fail ─────────────────────────────
@@ -214,8 +257,24 @@ else
     note "control: with the annotation block removed, no ::warning:: appears  ✓"
 fi
 
+# 5c. remove the strict branch and 4e must stop firing. Built by DELETING the block rather
+# than by ${v/pat/repl}: the replacement form is what 5a's comment above warns about, and an
+# `&` or a backslash inside this block would splice the match into itself.
+nostrict="$(awk '/if \[ -n "\$strict" \]/ {skip=1} skip && /^[[:space:]]*fi$/ {skip=0; next} !skip' <<<"$RUN_SUITE")"
+if [[ "$nostrict" == "$RUN_SUITE" ]]; then
+    problems+=("CONTROL COULD NOT BE BUILT: run_suite() no longer contains an 'if [ -n \"\$strict\" ]' block, so the strict gate cannot be re-injected and sections 4e-4f are unproven")
+else
+    build_strict_step "$WORK/nostrict.sh" "$nostrict"
+    drive "$WORK/nostrict.sh" "-e" "$S/partial-skip.sh"
+    if [[ "$RC" == 0 ]] && ! grep -q '^::error::' <<<"$OUT"; then
+        note "control: with the strict branch removed, a skipping suite goes green again (rc=$RC, no ::error::)  ✓"
+    else
+        problems+=("CONTROL DID NOT FIRE: with the strict branch deleted the step STILL failed or annotated a skipping suite (rc=$RC), so 4e is measuring something other than the strict gate")
+    fi
+fi
+
 if (( ${#problems[@]} )); then
     fail "$(printf '%d problem(s) in the CI suite loop:' "${#problems[@]}"; printf '\n  - %s' "${problems[@]}")"
 fi
 
-pass "ci.yml's run_suite tolerates a suite that exits 77 wholesale and CONTINUES the loop, still fails the step on a real failure, and names every skipped test in exactly one annotation — under bash -e and bash -eo pipefail, with the pre-#267 shape shown to fail the same assertions"
+pass "ci.yml's run_suite tolerates a suite that exits 77 wholesale and CONTINUES the loop, still fails the step on a real failure, names every skipped test in exactly one annotation, and — for a suite marked 'strict', whose preconditions the job installs itself — goes RED with a naming ::error:: when it skips while leaving every non-strict suite's tolerance intact; under bash -e and bash -eo pipefail, with the pre-#267 shape AND a strict-branch-deleted shape each shown to fail the assertions they are supposed to"

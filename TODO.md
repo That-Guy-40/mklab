@@ -3978,6 +3978,30 @@ work items, and are deliberately not checkboxes here.
       whose diff against the gallery base *is* the lesson — `apt-setup/services-select`
       emptied is what stops the installed machine being pointed back at
       `security.debian.org` hours later.
+
+      **AND THE FIRST CI RUN CAUGHT THE LAST ONE, which is the repo's own rule arriving on
+      schedule: measured HERE is not measured THERE.** All seven checks went green, and the
+      suite had proved **nothing** — `SKIP: missing required command: debootstrap` (the
+      runner has no debootstrap), and then the air-gap meta-control skipped in cascade
+      because there was no mirror for it to take the namespace away from.
+      `2 passed, 2 skipped, 0 failed`, and the two that skipped are the only two that make
+      a claim. The `skipped —` names were in the log, inside a collapsed `::group::` that
+      nobody opens on a passing job.
+
+      Two fixes, because installing the package would only have closed *this* instance:
+      CI now `apt-get`s `debootstrap` (~300 KB) and reports **both** preconditions by name
+      (the binary, and the `/etc/subuid` range `unshare --map-auto` needs) rather than
+      assuming the install settled it; and `run_suite` in `ci.yml` gained a third
+      **`strict`** argument for a suite whose preconditions the job installs *itself* —
+      there, a skip is a CI defect, not an UNKNOWN, and it goes **red with an `::error::`
+      naming the file**. Proved against the shipped function by
+      [`tools/tests/test-ci-tolerates-a-skipped-suite.sh`](tools/tests/test-ci-tolerates-a-skipped-suite.sh),
+      which `sed`s `run_suite` out of `ci.yml` rather than copying it: the sneaky fixture
+      **exits 0 while naming a skipped test** (the exact shape that went green), a third
+      control deletes the strict branch and requires the gate to stop firing, and the
+      **non-regression** asserts every *non*-strict suite still tolerates the identical
+      input — twelve suites here legitimately skip on that runner, and a leak would turn
+      them all red at once.
 - [x] **15.6 — `push` exists only in phase 3, and there is no registry to push to.**
       ✅ **DONE 2026-08-30** — [`examples/local-registry/`](examples/local-registry/README.md):
       a rootless `registry:2` under phase 4, its TLS leaf issued by the **shared** root
