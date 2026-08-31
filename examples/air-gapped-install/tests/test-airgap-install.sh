@@ -20,11 +20,15 @@ set +e                      # every check below captures its own status
 DRIVER="$LAB_DIR/airgap.sh"
 [[ -x "$DRIVER" ]] || fail "missing the lab driver: $DRIVER"
 
-require_cmd debootstrap unshare ip python3 curl gpg gpgv
-
-me="$(id -un)"
-grep -q "^${me}:" /etc/subuid 2>/dev/null && grep -q "^${me}:" /etc/subgid 2>/dev/null \
-    || skip "no /etc/subuid + /etc/subgid range for '$me' — unshare --map-auto cannot map the ids debootstrap unpacks, so the install below cannot run here"
+# ASK THE DRIVER what it needs, rather than keeping a copy of the list here. `require_cmd`
+# stops at the FIRST missing command, so a machine short of three things learns about one
+# per run — and CI's own hand-written copy of this list was short by one (the Debian
+# keyring, which Ubuntu's debootstrap does not depend on), which is how this suite went
+# green having checked nothing twice in a row. `preflight` names them all at once.
+pre="$("$LAB_DIR/airgap.sh" preflight 2>&1)" || {
+    printf '%s\n' "$pre" | sed 's/^/    /' >&2
+    skip "this machine does not meet the lab's preconditions (named above) — an UNKNOWN, not a pass"
+}
 
 # The mirror is the one step that needs the network. Building it here rather than
 # requiring a prior manual step is deliberate: a test whose precondition is "somebody ran

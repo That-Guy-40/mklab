@@ -22,11 +22,34 @@ PASS: with the network namespace removed, the same control rows refuse to produc
 summary: 4/4 discovered tests ran (4 test files on disk) — 4 passed, 0 skipped, 0 failed
 ```
 
-Requires `debootstrap`, `unshare`, `ip`, `python3`, `curl`, `gpg`/`gpgv`, and a
-`/etc/subuid` + `/etc/subgid` range for your user (`unshare --map-auto` needs it to map the
-ids `debootstrap` unpacks — without it `tar` aborts partway through the base system, and
-the failure looks like a corrupt mirror). Each of those is checked by name and produces a
-`SKIP` with a reason rather than a confusing failure.
+**Ask the lab what it needs — do not read a list.** `airgap.sh preflight` names every
+unmet precondition at once, and the suite calls the same verb, so a `SKIP` here always
+tells you all of them rather than the first:
+
+```bash
+examples/air-gapped-install/airgap.sh preflight
+```
+
+```
+  ok      debootstrap
+  …
+  ok      /usr/share/keyrings/debian-archive-keyring.gpg
+  ok      debootstrap knows the suite trixie
+  ok      /etc/subuid + /etc/subgid range for you
+  ok      unshare -rn --map-auto (the air gap itself is available)
+  every precondition met: the air-gapped install can run here
+```
+
+That verb exists because a hand-written copy of this list in `ci.yml` was **short by one**
+— on Ubuntu, `debootstrap` depends on `ubuntu-keyring`, not `debian-archive-keyring`, so
+the runner had the tool and could not verify the upstream index. Two consecutive CI runs
+went green having checked nothing. The two that bite hardest:
+
+- **the Debian keyring** — the upstream fetch is verified against it; the mirror build
+  refuses rather than trusting bytes off the wire.
+- **a `/etc/subuid` + `/etc/subgid` range** — `unshare --map-auto` needs it to map the ids
+  `debootstrap` unpacks. Without it `tar` aborts partway through the base system and the
+  failure looks like a corrupt mirror.
 
 **Watch a control fire.** The point of the suite is that its assertions are attached to
 something. Two you can break by hand:

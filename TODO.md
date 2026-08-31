@@ -4002,6 +4002,21 @@ work items, and are deliberately not checkboxes here.
       **non-regression** asserts every *non*-strict suite still tolerates the identical
       input — twelve suites here legitimately skip on that runner, and a leak would turn
       them all red at once.
+
+      **The strict gate earned itself on its very next run, catching the same class one
+      layer down.** With `debootstrap` installed, CI went green-having-checked-nothing
+      *again* — `missing /usr/share/keyrings/debian-archive-keyring.gpg`. On Ubuntu,
+      `debootstrap` depends on `ubuntu-keyring`, **not** the Debian one, so the runner had
+      the tool and could not verify the upstream index. The gate turned that red instead of
+      leaving it in an annotation. The defect, though, was mine and structural: the CI step
+      **hand-wrote two precondition checks and reported both satisfied — there were three.**
+      A precondition list kept beside the caller is a re-implementation of a requirement the
+      *driver* owns, and it drifts the moment the driver grows a fourth. So `airgap.sh`
+      gained a **`preflight`** verb that names every unmet precondition at once (including
+      two nobody had listed: a `debootstrap` that does not know the suite, and a subuid
+      range that exists while `unshare -rn --map-auto` is still refused), and **both** CI
+      and the suite's own gate now call it instead of keeping copies. `require_cmd` stopped
+      at the first missing command, so a short machine learned about one per run.
 - [x] **15.6 — `push` exists only in phase 3, and there is no registry to push to.**
       ✅ **DONE 2026-08-30** — [`examples/local-registry/`](examples/local-registry/README.md):
       a rootless `registry:2` under phase 4, its TLS leaf issued by the **shared** root

@@ -458,23 +458,21 @@ jobs:
         # that keeps it honest. debootstrap needs no root here — the install runs
         # `--foreign` inside `unshare -rn --map-auto`, which is the same second gate the
         # MAAS DHCP rows need above, so it is reported separately rather than assumed.
+        # debian-archive-keyring IS NOT OPTIONAL and is NOT pulled in by debootstrap here:
+        # on Ubuntu, debootstrap Depends on ubuntu-keyring. Installing only debootstrap left
+        # the runner refusing with "missing /usr/share/keyrings/debian-archive-keyring.gpg"
+        # — the SECOND green-having-checked-nothing run in a row, and the strict gate added
+        # above is what turned it red instead of hiding it in an annotation.
         run: |
-          timeout 300 sudo apt-get install -y debootstrap \
-            || echo "::warning::debootstrap install failed or timed out — air-gapped-install's 2 real rows will SKIP"
-          if command -v debootstrap >/dev/null 2>&1; then
-            echo "debootstrap: $(debootstrap --version)"
-          else
-            echo "::warning::debootstrap still absent — air-gapped-install's 2 real rows will SKIP"
-          fi
-          # The lab's OTHER precondition, checked by name for the same reason the dnsmasq
-          # step checks its second gate: without a subuid range `unshare --map-auto` cannot
-          # map the ids debootstrap unpacks, tar aborts partway through the base system,
-          # and the failure looks like a corrupt mirror rather than a missing mapping.
-          if grep -q "^$(id -un):" /etc/subuid 2>/dev/null && grep -q "^$(id -un):" /etc/subgid 2>/dev/null; then
-            echo "subuid/subgid range for $(id -un): present — the air-gapped install can unpack"
-          else
-            echo "::warning::no /etc/subuid+subgid range for $(id -un) — air-gapped-install will SKIP on its SECOND gate, so installing debootstrap did not buy it"
-          fi
+          timeout 300 sudo apt-get install -y debootstrap debian-archive-keyring \
+            || echo "::warning::debootstrap / debian-archive-keyring install failed or timed out — air-gapped-install's 2 real rows will SKIP"
+          # ASK THE LAB, DO NOT KEEP A LIST HERE. The first version of this step hand-wrote
+          # two checks and reported both satisfied; there were THREE, and the third is what
+          # failed. A precondition list beside the caller is a re-implementation of a
+          # requirement the driver already owns, and it drifts the moment the driver grows
+          # a fourth. `preflight` is the shipped answer and names every unmet one.
+          bash examples/air-gapped-install/airgap.sh preflight \
+            || echo "::warning::air-gapped-install preflight reported unmet preconditions (named above) — its 2 real rows will SKIP, and the strict gate below will fail the step rather than let that pass quietly"
 
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only

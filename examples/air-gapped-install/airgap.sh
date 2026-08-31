@@ -65,6 +65,7 @@ USAGE
   $LAB_PROG install              bootstrap from it inside a loopback-only netns
   $LAB_PROG controls             the four rows: three that must FAIL, one that must PASS
   $LAB_PROG serve [--bind ADDR]  serve the tree on a real address, for the author-run d-i half
+  $LAB_PROG preflight            name every precondition this machine does NOT meet
   $LAB_PROG status               what exists, and what it is bound to
   $LAB_PROG paths                print the resolved paths this run would use
   $LAB_PROG clean                remove state/ (mirror, key, bootstrapped trees)
@@ -502,6 +503,69 @@ cmd_serve() {
     exec python3 -m http.server "$PORT" --bind "$bind" --directory "$MIRROR_DIR"
 }
 
+# preflight — every precondition this lab has, asked of the machine, in one place.
+#
+# WHY IT IS A VERB AND NOT A LIST IN ci.yml. The workflow first hand-wrote two checks —
+# the debootstrap binary and the subuid range — and reported both as satisfied. There were
+# THREE: an Ubuntu runner's debootstrap Depends on ubuntu-keyring, not the Debian one, so
+# `/usr/share/keyrings/debian-archive-keyring.gpg` was absent and the mirror build refused.
+# A precondition list kept beside the caller is a re-implementation of a requirement the
+# driver already owns, and it drifts the moment the driver grows a fourth. This verb is the
+# shipped answer; CI runs it instead of guessing.
+#
+# It deliberately does NOT touch the network: this asks what the MACHINE can do. Whether
+# upstream is reachable is the mirror build's own business, and it says so by name.
+cmd_preflight() {
+    local missing=0 c
+    for c in debootstrap curl gpg gpgv python3 xz unshare ip; do
+        if command -v "$c" >/dev/null 2>&1; then
+            printf '  ok      %s\n' "$c"
+        else
+            printf '  MISSING %s — install it, or every row below is an UNKNOWN\n' "$c"; missing=$((missing+1))
+        fi
+    done
+
+    if [[ -r "$DEBIAN_KEYRING" ]]; then
+        printf '  ok      %s\n' "$DEBIAN_KEYRING"
+    else
+        printf '  MISSING %s — the upstream fetch is verified against Debian own keyring. On Ubuntu, debootstrap depends on ubuntu-keyring and does NOT pull this in: install debian-archive-keyring\n' "$DEBIAN_KEYRING"
+        missing=$((missing+1))
+    fi
+
+    # debootstrap can be installed and still not know this suite: the per-suite script is a
+    # separate file, and a missing one fails deep inside the run rather than here.
+    if [[ -e "/usr/share/debootstrap/scripts/$SUITE" ]]; then
+        printf '  ok      debootstrap knows the suite %s\n' "$SUITE"
+    else
+        printf '  MISSING /usr/share/debootstrap/scripts/%s — debootstrap is installed but does not know this suite\n' "$SUITE"
+        missing=$((missing+1))
+    fi
+
+    local me; me="$(id -un)"
+    if grep -q "^${me}:" /etc/subuid 2>/dev/null && grep -q "^${me}:" /etc/subgid 2>/dev/null; then
+        printf '  ok      /etc/subuid + /etc/subgid range for %s\n' "$me"
+    else
+        printf '  MISSING /etc/subuid + /etc/subgid range for %s — tar aborts partway through the base system and it looks like a corrupt mirror\n' "$me"
+        missing=$((missing+1))
+    fi
+
+    # The subuid entries can exist and the namespace still be refused (a hardened kernel,
+    # a container without the capability). Asked as the outcome, not as the files.
+    if unshare -rn --map-auto true 2>/dev/null; then
+        printf '  ok      unshare -rn --map-auto (the air gap itself is available)\n'
+    else
+        printf '  MISSING unshare -rn --map-auto failed — there is no namespace to install into, so the whole lab is an UNKNOWN here\n'
+        missing=$((missing+1))
+    fi
+
+    if (( missing != 0 )); then
+        log "$missing precondition(s) unmet — named above. The suite will SKIP rather than fail, which is an UNKNOWN, not a pass"
+        return 1
+    fi
+    log "every precondition met: the air-gapped install can run here"
+    return 0
+}
+
 cmd_status() {
     printf 'suite/arch      %s/%s\n' "$SUITE" "$ARCH"
     printf 'upstream        %s\n' "$UPSTREAM"
@@ -541,6 +605,7 @@ main() {
         install)  cmd_install  "$@" ;;
         controls) cmd_controls "$@" ;;
         serve)    cmd_serve    "$@" ;;
+        preflight) cmd_preflight "$@" ;;
         status)   cmd_status   "$@" ;;
         paths)    cmd_paths    "$@" ;;
         clean)    cmd_clean    "$@" ;;
