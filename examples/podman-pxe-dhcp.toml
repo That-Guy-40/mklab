@@ -41,7 +41,7 @@ image   = "docker.io/library/alpine:latest"
 # NOTE: this bypasses the rootless port restriction — run with sudo.
 network = "host"
 volumes = [
-    "/home/sqs/netboot/tftp:/tftp:ro",
-    "/home/sqs/.config/lab-netboot/dnsmasq-pxe.conf:/etc/dnsmasq.conf:ro",
+    "@NETBOOT@/tftp:/tftp:ro",
+    "@HOME@/.config/lab-netboot/dnsmasq-pxe.conf:/etc/dnsmasq.conf:ro",
 ]
 command = "sh -c 'apk add -q dnsmasq && dnsmasq --no-daemon --log-facility=-'"

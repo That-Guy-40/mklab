@@ -37,6 +37,7 @@ arch    = "x86_64"
 kernel  = "@LAB_DIR@/k"
 initrd  = "@REPO@/micro-linux/out/x86_64/initramfs.cpio.gz"
 pxe_dir = "@NETBOOT@"
+image   = "@HOME@/.local/state/lab-create/x.qcow2"
 SPEC
 
 json="$(LAB_NETBOOT_DIR="$TMP/nb" toml_to_json "$TMP/spec.toml" 2>/dev/null)"
@@ -52,7 +53,10 @@ got_pxe="$(   jq -r '.vm[0].pxe_dir' <<<"$json")"
     || fail "@REPO@ did not expand to the repo root: want '$REPO_ROOT/micro-linux/…', got '$got_initrd'"
 [[ "$got_pxe" == "$TMP/nb" ]] \
     || fail "@NETBOOT@ did not honour \$LAB_NETBOOT_DIR: want '$TMP/nb', got '$got_pxe'. A spec that cannot follow the env override carries a second copy of where the netboot dir lives"
-note "all three placeholders expand: @LAB_DIR@ → the spec's directory, @REPO@ → the repo, @NETBOOT@ → \$LAB_NETBOOT_DIR"
+got_home="$( jq -r '.vm[0].image'   <<<"$json")"
+[[ "$got_home" == "$HOME/.local/state/lab-create/x.qcow2" ]] \
+    || fail "@HOME@ did not expand to \$HOME: want '$HOME/.local/state/…', got '$got_home'"
+note "all four placeholders expand: @LAB_DIR@ → the spec's directory, @REPO@ → the repo, @NETBOOT@ → \$LAB_NETBOOT_DIR"
 
 # @NETBOOT@ must fall back to ~/netboot when the variable is unset — that is the default
 # every existing spec relied on when it wrote /home/<someone>/netboot by hand.
@@ -89,4 +93,4 @@ odd_json="$(LAB_NETBOOT_DIR="$TMP/nb" toml_to_json "$odd/spec.toml" 2>/dev/null)
     || fail "a directory containing '&' was mangled by the substitution: want '$odd/k', got '$(jq -r '.vm[0].kernel' <<<"$odd_json")' — the awk replacement is not being escaped"
 note "control: a directory containing '&' survives the substitution intact"
 
-pass "lab-vm.sh expands @LAB_DIR@, @REPO@ and @NETBOOT@ (honouring \$LAB_NETBOOT_DIR, falling back to ~/netboot) into the JSON the driver reads, leaves a spec with no placeholder byte-identical, and survives a path containing the one character awk's gsub replacement treats specially"
+pass "lab-vm.sh expands @LAB_DIR@, @REPO@, @NETBOOT@ and @HOME@ (honouring \$LAB_NETBOOT_DIR, falling back to ~/netboot) into the JSON the driver reads, leaves a spec with no placeholder byte-identical, and survives a path containing the one character awk's gsub replacement treats specially"

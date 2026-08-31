@@ -54,7 +54,7 @@ name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
-volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+volumes = ["@NETBOOT@:/usr/share/nginx/html:ro"]
 
 # ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
 # SeaBIOS tries the blank target disk (bootindex=0) → falls to the NIC's option

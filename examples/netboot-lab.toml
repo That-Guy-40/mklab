@@ -65,8 +65,8 @@ volumes = [
 # @NETBOOT@ ($LAB_NETBOOT_DIR, or ~/netboot). The phase-2 driver substitutes them
 # when it parses this file, so nothing here names one machine (TODO 15.10).
     # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
-    "/home/sqs/netboot:/usr/share/nginx/html:ro",
-    "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
+    "@NETBOOT@:/usr/share/nginx/html:ro",
+    "@HOME@/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
 ]
 
 # ─── Phase 2: QEMU direct-boot using -kernel/-initrd (no iPXE needed) ────────

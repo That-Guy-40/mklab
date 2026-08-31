@@ -4007,16 +4007,49 @@ work items, and are deliberately not checkboxes here.
       it is replaced by the placeholder note, because a doc that tells you to do the thing
       the driver now does for you is worse than one that says nothing.
 
-- [ ] **15.11 — `volumes` still names a machine, in 19 files (23 paths).** phase3/4/5 do not
-      expand placeholders, so those specs' *"edit this"* instruction is still **true** and
-      failing them would punish a document for being honest. `check-spec-paths.sh` counts
-      and names them on every run rather than excluding them — an exclusion is how the
-      phase-2 set reached nineteen unnoticed. Closing it means the same `_expand_spec_paths`
-      in `lab-podman.sh`/`lab-lxd.sh`/`lab-docker.sh`, which are three more copies of a
-      function that already exists in three near-identical variants — so the real decision
-      is whether the drivers finally share one, and that is worth deciding rather than
-      quietly duplicating a fourth time. `examples/local-registry/` renders its own spec for
-      the same reason and would be simplified by it.
+- [x] **15.11 — `volumes` named a machine in 20 files (24 paths).** ✅ **DONE 2026-08-30**,
+      and the open question in it — share one implementation, or duplicate a fourth time —
+      is answered by the repo's own stated architecture rather than by taste:
+
+      > `phase4-podman/lab-podman.sh:23` — *"Self-contained per the per-phase rule: helpers
+      > are duplicated inline."* And `CLAUDE.md` opens with *"each a self-contained driver"*.
+
+      **No phase driver sources any shell file** — measured, not assumed — so a shared
+      library would have made the first driver in this repo unable to be copied out on its
+      own. That is a bigger change than the one being made, and it belongs to whoever
+      decides to make it deliberately.
+
+      **So: duplicate, and BIND.** `_expand_spec_paths` is byte-identical in all four
+      drivers that read path-bearing specs, and
+      [`tools/check-driver-helper-parity.sh`](tools/check-driver-helper-parity.sh) fails if
+      the copies ever drift. The argument is this repo's own history: three near-identical
+      `toml_to_json` bodies already existed, and nobody could have told you which two were
+      the same (podman and lxd) without hashing them. The parsers around the helper are
+      deliberately **not** compared — phase 3 carries a `python3`/`tomllib` branch the
+      others lack, and a checker that punishes a real difference teaches people to delete it.
+
+      A fourth placeholder joined the set: **`@HOME@`**, for the per-user directories a lab
+      genuinely needs (`~/.config/lab-netboot/…`, `~/.local/state/lab-create/…`). The
+      vocabulary is closed at four on purpose — something a reader can hold in their head,
+      not an expression language.
+
+      **PARITY IS NOT WIRING, and that distinction is measured rather than argued.** Each of
+      phases 3/4/5 gained its own `tests/test-spec-placeholders.sh`, because the parity
+      check proves the four copies are the same function and says nothing about whether a
+      given driver *calls* it. Control: with `lab-podman.sh`'s call removed but the helper
+      left in place, **parity still passes** while the wiring test fails with
+      *"a placeholder survived into the parsed spec"*.
+
+      `check-spec-paths.sh` §2 flipped from **counted** to **gated** — the exception went
+      when its reason did — and `examples/local-registry/` lost the private `render` step it
+      only had because phase 4 could not expand. Two mechanisms for one problem is the thing
+      this repo argues against everywhere else.
+
+      **Removing that step also removed a check, and the lab's own control caught it inside
+      a minute:** `spec-check` had compared the *resolved* volume lines against what the
+      driver needs, and dropping `render` dropped the comparison. It is back, asking the
+      phase-4 parser — and its "could not parse" branch now **refuses** instead of warning
+      and returning 0, because an unchecked thing must not read as a checked one.
 
 - [ ] **15.9 — should `push` become a verb in phases 4 and 5?** *(split out of 15.6 on
       2026-08-30, once there was something to push to.)* 15.6 said a registry would

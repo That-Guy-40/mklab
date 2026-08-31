@@ -26,10 +26,12 @@
 set -uo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-REPO="$(cd -- "$HERE/../.." && pwd)"
+# Overridable so a test can copy this lab elsewhere and still reach the real driver;
+# without that the resolved-path check below silently degrades to a warning, which is
+# how a control stops controlling anything.
+REPO="${REPO:-$(cd -- "$HERE/../.." && pwd)}"
 LAB_CA="$REPO/examples/lab-ca"
-SPEC="$HERE/local-registry.toml"            # the TEMPLATE: portable, tracked
-RENDERED=""                                  # set by render(); gitignored, derived
+SPEC="$HERE/local-registry.toml"            # portable: @LAB_DIR@, resolved by the driver
 STATE="$HERE/state"
 CERTS="$STATE/certs"
 DATA="$STATE/data"
@@ -57,9 +59,8 @@ Usage: registry-lab.sh <verb>
   status    is it listening, and does its certificate chain to the shared root
   down      stop and remove the container
   paths     print the absolute volume lines this checkout needs
-  render    substitute @LAB_DIR@ and write state/local-registry.rendered.toml
-  spec-check  render, then check the result names this lab (and that the TRACKED
-            template stayed portable)
+  spec-check  check the TRACKED spec stayed portable (@LAB_DIR@, no absolute
+            host path) — the driver resolves it at parse time
 
 The registry is loopback-only and unauthenticated on purpose; see the header.
 USAGE
@@ -67,49 +68,48 @@ USAGE
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 
-# ── DERIVE THE PATH; DO NOT CACHE IT ────────────────────────────────────────────────────
-# podman needs absolute host paths for a bind mount. Five other specs in this repo answer
-# that by hard-coding one checkout's path — a cached fact about a machine, in a tracked
-# file, which is how TODO 15.7's sibling came to name `/home/user/…` (absolute, and nobody's
-# home) for months.
+# ── THE DRIVER EXPANDS THE PLACEHOLDER NOW (TODO 15.11) ─────────────────────────────────
+# podman needs absolute host paths for a bind mount, so this lab's spec used to carry one —
+# and this driver rendered @LAB_DIR@ into a gitignored copy because phase 4 could not.
 #
-# THE FIRST DRAFT OF THIS LAB MADE THE SAME TRADE AND ADDED A CHECKER: derive the right
-# path, compare, refuse by name. CI answered within the hour — its checkout is
-# `/home/runner/work/mklab/mklab`, so the check fired, correctly, on a design that was
-# still wrong. A value that is false everywhere except one machine is not rescued by
-# checking it; it must not be written down. The tracked spec now carries @LAB_DIR@ and the
-# absolute paths exist only in a rendered copy nobody commits.
+# It can, since 15.11: all four phase drivers carry a byte-identical _expand_spec_paths and
+# resolve @LAB_DIR@ / @REPO@ / @NETBOOT@ / @HOME@ when they parse a spec. So the rendering
+# step is gone — one mechanism, in the driver, rather than a private one per lab. The spec
+# is handed to lab-podman.sh exactly as it is tracked.
 want_paths() { printf '%s\n%s\n' "$CERTS:/certs:ro,Z" "$DATA:/var/lib/registry:Z"; }
-render() {
-    [[ -r "$SPEC" ]] || die "no spec template at $SPEC"
-    grep -qF '@LAB_DIR@' "$SPEC" \
-        || die "the spec template has no @LAB_DIR@ placeholder left in it.
-  Someone has substituted a real path into the TRACKED file, which makes it true on one
-  machine and false on every other — the defect this placeholder exists to prevent."
-    mkdir -p "$STATE"
-    RENDERED="$STATE/local-registry.rendered.toml"
-    # The lab path can contain characters sed would read as delimiters, so substitute with
-    # awk on a literal string rather than building a regex out of a path.
-    awk -v d="$HERE" '{ gsub(/@LAB_DIR@/, d); print }' "$SPEC" > "$RENDERED" \
-        || die "could not render the spec into $RENDERED"
-    printf '%s' "$RENDERED"
-}
 spec_check() {
-    local r missing=0 w
-    r="$(render)"
-    while IFS= read -r w; do
-        grep -qF -- "$w" "$r" || { printf '  MISSING from the rendered spec:\n    %s\n' "$w" >&2; missing=1; }
-    done < <(want_paths)
-    (( missing == 0 )) \
-        || die "rendering local-registry.toml did not produce the volume lines this lab needs.
-  The template's @LAB_DIR@ lines and want_paths() have drifted apart, so the container would
-  mount something other than this lab's state directory."
-    # The TRACKED file must stay portable: no absolute path to any home or checkout.
+    [[ -r "$SPEC" ]] || die "no spec at $SPEC"
+    grep -qF '@LAB_DIR@' "$SPEC" \
+        || die "the spec has no @LAB_DIR@ placeholder left in it.
+  Someone has substituted a real path into the TRACKED file, which makes it true on one
+  machine and false on every other — the defect the placeholder exists to prevent."
     if grep -nE '"(/[A-Za-z0-9._-]+)+/state/' "$SPEC" >&2; then
         die "the TRACKED spec contains an absolute host path. That is the 15.7 shape: true on
   one machine, false on every other, and unrescuable by any amount of checking."
     fi
-    log "spec renders to this lab: ${CERTS#"$REPO"/} and ${DATA#"$REPO"/}"
+    # …and it must resolve to THIS lab's directories. Dropping `render` also dropped this
+    # comparison, and the lab's own control caught it within the minute: without it a
+    # volume line could drift from what the driver mounts and nothing would say so. Ask
+    # the phase-4 parser, which is the thing that will actually do it.
+    local json missing=0 w
+    json="$(bash -c 'source "$1" >/dev/null 2>&1; toml_to_json "$2"' _ \
+              "$REPO/phase4-podman/lab-podman.sh" "$SPEC" 2>/dev/null)"
+    if [[ -z "$json" ]]; then
+        # NOT a silent pass. Either the driver is unreachable or no TOML parser is
+        # installed; both mean the resolved paths are an UNKNOWN, and an unchecked thing
+        # must not read as a checked one.
+        die "cannot ask $REPO/phase4-podman/lab-podman.sh what this spec resolves to — the
+  driver is missing, or no TOML parser (tomlq/yq/dasel) is installed. The volume paths were
+  NOT checked, which is not the same as their being right."
+    fi
+    while IFS= read -r w; do
+        grep -qF -- "$w" <<<"$json" || { printf '  MISSING from what the driver resolves:\n    %s\n' "$w" >&2; missing=1; }
+    done < <(want_paths)
+    (( missing == 0 )) \
+        || die "the phase-4 driver does not resolve this spec to the volume lines this lab needs.
+  Either @LAB_DIR@ is not being expanded, or the spec and want_paths() have drifted apart,
+  and the container would mount something other than this lab's state directory."
+    log "spec is portable, and the driver resolves it to ${CERTS#"$REPO"/} and ${DATA#"$REPO"/}"
 }
 
 cmd_certs() {
@@ -144,8 +144,7 @@ cmd_up() {
         die "127.0.0.1:${HOSTPORT##*:} is already in use — $(ss -lntp 2>/dev/null | grep -E "127\\.0\\.0\\.1:${HOSTPORT##*:}[[:space:]]" | head -1)"
     fi
     log "starting via the phase-4 driver (no one-off podman run)"
-    local r; r="$(render)"
-    "$REPO/phase4-podman/lab-podman.sh" up --config "$r" >&2 || die "lab-podman.sh up failed"
+    "$REPO/phase4-podman/lab-podman.sh" up --config "$SPEC" >&2 || die "lab-podman.sh up failed"
     cmd_status
 }
 
@@ -215,8 +214,7 @@ cmd_demo() {
 
 cmd_down() {
     need podman
-    local r; r="$(render)"
-    "$REPO/phase4-podman/lab-podman.sh" down --config "$r" >&2 || true
+    "$REPO/phase4-podman/lab-podman.sh" down --config "$SPEC" >&2 || true
     log "down"
 }
 
@@ -227,7 +225,6 @@ case "${1:-}" in
     status)     cmd_status ;;
     down)       cmd_down ;;
     paths)      want_paths ;;
-    render)     render; printf '\n' ;;
     spec-check) spec_check ;;
     -h|--help|help) usage; exit 0 ;;
     "")         usage >&2; exit 1 ;;

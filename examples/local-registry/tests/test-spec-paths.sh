@@ -32,24 +32,24 @@ abs="$(grep -nE '"(/[A-Za-z0-9._-]+)+/state/' "$SPEC" || true)"
     || fail "REGRESSION: the TRACKED spec contains an absolute host path — $abs. That path is false on every machine but one, and no amount of checking rescues it; render it instead"
 note "the tracked template is portable: @LAB_DIR@, no absolute host path"
 
-# ── 2. rendering produces what this lab needs ───────────────────────────────────────────
-# The driver owns both halves (what the paths are, and how they are substituted), so they
-# are asked of it rather than re-implemented here — the repo's "extract the shipped thing".
+# ── 2. the driver resolves it to what this lab needs ────────────────────────────────────
+# Since TODO 15.11 the phase-4 driver expands @LAB_DIR@ itself, so there is no rendered
+# copy to inspect: the question is what lab-podman.sh SEES. Ask its parser, which is the
+# shipped thing, rather than re-implementing the substitution here.
 mapfile -t want < <("$DRIVER" paths)
 (( ${#want[@]} == 2 )) \
     || fail "registry-lab.sh paths printed ${#want[@]} line(s), expected 2 — the driver and this test disagree about what a volume line is, so nothing below is checking anything"
-rendered="$("$DRIVER" render | tail -1)"
-[[ -r "$rendered" ]] || fail "registry-lab.sh render did not produce a readable file (got '$rendered')"
+json="$(bash -c 'source "$1" >/dev/null 2>&1; toml_to_json "$2"' _ "$LAB_DIR/../../phase4-podman/lab-podman.sh" "$SPEC" 2>/dev/null)"
+[[ -n "$json" ]] || skip "phase4-podman/lab-podman.sh could not parse the spec here (no TOML parser?) — the expansion cannot be observed"
 for w in "${want[@]}"; do
-    grep -qF -- "$w" "$rendered" \
-        || fail "the rendered spec is missing the volume line this lab needs:
+    grep -qF -- "$w" <<<"$json" \
+        || fail "the phase-4 driver does not resolve the spec to the volume line this lab needs:
       want: $w
-    The template's @LAB_DIR@ lines and the driver's idea of the paths have drifted apart,
-    so the container would mount something other than this lab's state directory."
+    Either @LAB_DIR@ is not being expanded, or the spec and the driver have drifted apart."
 done
-grep -qF '@LAB_DIR@' "$rendered" \
-    && fail "the rendered spec still contains @LAB_DIR@ — the substitution did not happen, and podman would be handed a literal placeholder as a host path"
-note "rendered: both volume lines name this lab, and no placeholder survives"
+grep -qF '@LAB_DIR@' <<<"$json" \
+    && fail "the driver left @LAB_DIR@ unexpanded — podman would be handed a literal placeholder as a host path"
+note "the phase-4 driver resolves both volume lines to this lab, with no placeholder surviving"
 
 # ── 3. the controls: each half must be able to fail ─────────────────────────────────────
 tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
@@ -58,7 +58,7 @@ rm -rf "$tmp/lab/state"
 
 # (a) a template with the placeholder already substituted — the 15.7 defect, re-injected
 awk -v d="/somewhere/else" '{ gsub(/@LAB_DIR@/, d); print }' "$SPEC" > "$tmp/lab/local-registry.toml"
-if ( cd "$tmp/lab" && ./registry-lab.sh spec-check ) >/dev/null 2>&1; then
+if ( cd "$tmp/lab" && REPO="$LAB_DIR/../.." ./registry-lab.sh spec-check ) >/dev/null 2>&1; then
     fail "CONTROL DID NOT FIRE: spec-check accepted a template whose @LAB_DIR@ had been replaced by a real absolute path — exactly the defect that shipped in the first draft"
 fi
 note "control: a template carrying a hard-coded absolute path is refused"
@@ -66,7 +66,7 @@ note "control: a template carrying a hard-coded absolute path is refused"
 # (b) a template whose mount target drifted from what the driver expects
 cp -a "$LAB_DIR/local-registry.toml" "$tmp/lab/local-registry.toml"
 sed -i 's#/certs:ro,Z#/certs-WRONG:ro,Z#' "$tmp/lab/local-registry.toml"
-if ( cd "$tmp/lab" && ./registry-lab.sh spec-check ) >/dev/null 2>&1; then
+if ( cd "$tmp/lab" && REPO="$LAB_DIR/../.." ./registry-lab.sh spec-check ) >/dev/null 2>&1; then
     fail "CONTROL DID NOT FIRE: spec-check accepted a spec whose volume line no longer matches the driver — the two would mount different things and nothing would say so"
 fi
 note "control: a drifted volume line is refused"
