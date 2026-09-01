@@ -53,6 +53,7 @@ tracks=(
     test-smoke-diagnostics.sh
     test-smoke-dict-identity.sh
     test-smoke-elf-methods.sh
+    test-smoke-file-writer.sh
     test-smoke-flash-writer.sh
     test-smoke-floppy.sh
     test-smoke-mmio-writer.sh

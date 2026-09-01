@@ -42,6 +42,9 @@ TRACK (default multiboot):
                               store is a command, not data (TODO 16)
   mmio-writer                 stores into the VGA aperture, seen by QEMU's
                               screendump — an observer outside the firmware
+  file-writer                 the hosted firmware AUTHORS a runnable ELF and the
+                              HOST runs it (write-file, dsl/elf-write.fth,
+                              ELFkickers as oracle) — REVIEW G6 (TODO 20)
   struct-layer                REVIEW G2: a TYPE layer (dsl/struct.fth) over
                               the firmware's own struct/field, pointed at a
                               real ELF64 header
@@ -4130,5 +4133,139 @@ PYX
     note "stdin=0x$USTDIN stdout=0x$USTDOUT start-mem=0x$UMEM — all inside four bytes, which is what encode-int is handed"
     pass "the firmware as a plain Unix process reaches its prompt again (TODO §18, patch 50): initialisation completes, '3 4 + .' answers 7 and 'bye' reaches Farewell!. The assertion is the PROPERTY that used to fail, not the boot — /chosen's stdin and stdout are read back from the prompt and must fit in FOUR BYTES, because that is what IEEE 1275 gives an integer (5.3.5.1) and an ihandle here IS a host pointer (pointer2cell is a plain cast at run time). glibc placed the Forth arena above 4 GiB and encode-int refused, CORRECTLY; arch/unix/unix.c now maps the arena and the dictionary below it, where every other target has always been — the QEMU firmwares live at 0x400000 and 0x4000000 — and patch 26's gate is untouched, because the refusal was never the bug. The named regression row returns the day that drifts back"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|unix]" >&2; exit 1 ;;
+  file-writer)
+    # TODO §20: the hosted firmware AUTHORS a file and the HOST runs it.
+    #
+    # THE GAP THIS CLOSES. Every other seam this lab drives is a READ or a write
+    # to something the firmware still owns -- the pmem-writer/flash-writer/mmio-
+    # writer tracks write to storage inside the running machine. `openbios-unix`
+    # could read its dictionary and a disk image (O_RDONLY) and could persist
+    # NOTHING: `write_dictionary` is #if 0, `blk` has no write-blocks, arch/unix
+    # has no nvram backend. So a structure dsl/struct.fth or dsl/elf.fth built in
+    # the arena evaporated when the process exited. That is REVIEW-preboot-forth-
+    # as-a-poke-engine.md §G6's "the reader is still ahead of the writer", exactly.
+    #
+    # `write-file` (arch/unix/unix.c, bound HOSTED-ONLY in arch_init) is the fix,
+    # and dsl/elf-write.fth is the writer half of the poke story: it hand-authors
+    # a 132-byte static x86-64 ELF -- the ELFkickers teensy-ELF model, oracle/
+    # elfkickers/ -- whose only act is exit(code), and saves it.
+    #
+    # WHY EXECUTION IS THE ASSERTION AND THE RETURN VALUE IS NOT. write-file
+    # returning 132 proves the firmware THINKS it wrote 132 bytes; a decoder
+    # agreeing it is an ELF proves the bytes parse. Only the KERNEL running the
+    # file and exiting with the authored code proves it is a real program the
+    # firmware really wrote -- a file that runs is not a file the firmware merely
+    # claims (CLAUDE.md, "assert the outcome, not the mechanism"). Two different
+    # codes are authored so a harness that hardcoded one would fail the other.
+    UBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    UDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    DSL="$HERE/dsl/elf-write.fth"
+    [[ -x "$UBIN"  ]] || skip "missing $UBIN — run ./build-openbios.sh unix first"
+    [[ -f "$UDICT" ]] || skip "missing $UDICT — run ./build-openbios.sh unix first"
+    [[ -f "$DSL"   ]] || fail "missing $DSL — this track stages the SHIPPED authoring file, it does not re-implement it"
+
+    FWD="$WORKDIR/file-writer"; rm -rf "$FWD"; mkdir -p "$FWD"
+    # Every firmware invocation runs with CWD=$FWD so the Forth can name its
+    # output with a BARE filename: the unix target reads stdin through an
+    # 80-column line editor that truncates past ~82, and a full absolute path in
+    # an `s" ..."` would push the rest of the line (the verb, the `.`) off the
+    # end. Measured 2026-09-01: 81 cols survive, 83 are cut. UBIN/UDICT/DSL are
+    # absolute, so cd does not disturb them.
+    run_fw() {  # run_fw <forth-driver-line>  -> firmware stdout, CR-stripped
+      { cat "$DSL"; printf '\n%s\nbye\n' "$1"; } \
+        | ( cd "$FWD" && "$UBIN" "$UDICT" ) 2>&1 | tr -d '\r'
+    }
+
+    # ── ROW A: the primitive itself, on NO dsl at all ───────────────────────
+    # Isolate write-file from the authoring layer: le-l! and write-file are both
+    # firmware builtins, so this needs nothing staged. Author 4 bytes "OK!\n"
+    # (0x0a214b4f stored little-endian) at HERE and persist them.
+    [[ -e "$FWD/ok.bin" ]] && fail "file-writer: $FWD/ok.bin existed before the run — a stale file would let a broken write 'pass' by finding it"
+    AOUT="$( { printf '0a214b4f here le-l!  here 4 s" ok.bin" write-file ." WROTE=" . cr\nbye\n'; } \
+             | ( cd "$FWD" && "$UBIN" "$UDICT" ) 2>&1 | tr -d '\r' )"
+    [[ -f "$FWD/ok.bin" ]] \
+      || fail "file-writer: the primitive wrote no file — write-file created nothing at $FWD/ok.bin. Firmware said: $(printf '%s' "$AOUT" | tail -3 | tr '\n' '|')"
+    ASZ=$(wc -c < "$FWD/ok.bin")
+    [[ "$ASZ" -eq 4 ]] \
+      || fail "file-writer: ok.bin is $ASZ bytes, not 4 — write-file wrote a short or long file"
+    [[ "$(od -An -c "$FWD/ok.bin" | tr -s ' ')" == " O K ! \n" ]] \
+      || fail "file-writer: ok.bin does not contain the authored bytes 'OK!\\n' — the wrong memory reached the file"
+    grep -q 'WROTE=4' <<<"$AOUT" \
+      || fail "file-writer: write-file did not report 4 bytes written (expected WROTE=4) — its return value disagrees with the 4 bytes on disk: $(printf '%s' "$AOUT" | tail -2 | tr '\n' '|')"
+    note "primitive: 4 authored bytes reached ok.bin, and write-file returned 4"
+
+    # ── ROW B: author a RUNNABLE ELF and grade by EXECUTION ─────────────────
+    ELF="$FWD/prog.elf"
+    for CODE in 7 2a; do
+      rm -f "$ELF"
+      OUT="$(run_fw "$CODE s\" prog.elf\" save-exit-elf . cr")"
+      [[ -f "$ELF" ]] \
+        || fail "file-writer: authoring exit(0x$CODE) produced no file at $ELF — firmware: $(printf '%s' "$OUT" | tail -3 | tr '\n' '|')"
+      ESZ=$(wc -c < "$ELF")
+      [[ "$ESZ" -eq 132 ]] \
+        || fail "file-writer: the authored ELF is $ESZ bytes, not 132 — the layout in dsl/elf-write.fth changed size, which desynchronises p_filesz/e_phoff"
+      chmod +x "$ELF"
+      # THE UN-FAKEABLE GRADER. The kernel loads and runs it; its exit status
+      # must equal the value the Forth wrote into `mov edi, imm32`.
+      "$ELF"; GOT=$?
+      WANT=$((16#$CODE))
+      [[ "$GOT" -eq "$WANT" ]] \
+        || fail "file-writer: the firmware-authored ELF ran but exited $GOT, not $WANT (0x$CODE) — the value authored in Forth did not survive to the kernel's exit status. This is the assertion the whole track exists for"
+      note "authored exit(0x$CODE) → the kernel ran the file and it exited $GOT"
+    done
+
+    # ── ROW C: independent decoders must agree it is a valid ELF64 ──────────
+    # dsl/elf.fth is THIS repo's reader; grade against decoders that are not it.
+    if command -v file >/dev/null 2>&1; then
+      file -b "$ELF" | grep -qE 'ELF 64-bit LSB executable, x86-64' \
+        || fail "file-writer: host 'file' does not see a valid x86-64 ELF64 executable in the authored file: $(file -b "$ELF")"
+      note "host 'file' agrees: $(file -b "$ELF" | cut -c1-52)"
+    fi
+    if command -v readelf >/dev/null 2>&1; then
+      readelf -h "$ELF" 2>/dev/null | grep -qE 'Entry point address:[[:space:]]+0x400078' \
+        || fail "file-writer: readelf does not report the authored entry point 0x400078 — the e_entry the Forth wrote is not what the header says"
+      note "readelf agrees: entry point 0x400078, the vaddr the Forth authored"
+    fi
+
+    # ── ROW D: the ELFkickers differential oracle (elfls), if buildable ─────
+    # A SECOND decoder, by a different author (oracle/elfkickers/). Built into
+    # $WORKDIR so the tracked source stays clean; a bonus row, not load-bearing
+    # — execution above is the proof, so no cc here is a NOTE, not a failure.
+    ELFK_SRC="$HERE/oracle/elfkickers"
+    CCBIN="$(command -v cc || command -v gcc || true)"
+    if [[ -n "$CCBIN" && -d "$ELFK_SRC" ]]; then
+      ELFK="$FWD/elfkickers"; rm -rf "$ELFK"; cp -r "$ELFK_SRC" "$ELFK"
+      if make -s -C "$ELFK/elfrw" CC="$CCBIN" >/dev/null 2>&1 \
+         && make -s -C "$ELFK/elfls" CC="$CCBIN" >/dev/null 2>&1 \
+         && [[ -x "$ELFK/elfls/elfls" ]]; then
+        LS="$("$ELFK/elfls/elfls" "$ELF" 2>&1)"
+        grep -q 'Intel x86-64' <<<"$LS" \
+          || fail "file-writer: the ELFkickers oracle (elfls) does not read the authored file as Intel x86-64 — three decoders must agree. elfls said: $(printf '%s' "$LS" | head -1)"
+        grep -qE '^ 0 .* 00400000' <<<"$LS" \
+          || fail "file-writer: elfls does not report the PT_LOAD segment at vaddr 0x400000 the Forth authored: $(printf '%s' "$LS" | tr '\n' '|')"
+        note "ELFkickers elfls agrees (independent decoder): x86-64, one PT_LOAD at 0x400000"
+      else
+        note "SKIPPED the ELFkickers oracle row: elfls did not build here — execution above is the load-bearing grader, so this is UNKNOWN, not a fail"
+      fi
+    else
+      note "SKIPPED the ELFkickers oracle row: no cc/gcc — execution above is the load-bearing grader"
+    fi
+
+    # ── ROW E: the NEGATIVE CONTROL — write-file must REFUSE and say so ──────
+    # Break the subject: aim it at a path whose directory does not exist. It must
+    # return -1, create nothing, and name the path. A write primitive that
+    # 'succeeds' at writing nowhere is the silent liar this repo hunts.
+    NEG="$FWD/no-such-dir/deep/x.bin"
+    NOUT="$(run_fw "here 4 s\" no-such-dir/deep/x.bin\" write-file . cr")"
+    [[ ! -e "$NEG" ]] \
+      || fail "file-writer: write-file created $NEG despite its directory not existing — it cannot have opened that path"
+    grep -qE 'cannot open|-1' <<<"$NOUT" \
+      || fail "file-writer: write-file failed SILENTLY on an unopenable path — no -1 return and no 'cannot open' message. It must name the failure: $(printf '%s' "$NOUT" | tail -3 | tr '\n' '|')"
+    grep -qi 'no-such-dir' <<<"$NOUT" \
+      || fail "file-writer: the refusal did not NAME the path it could not open — a nameless failure is undebuggable: $(printf '%s' "$NOUT" | tail -2 | tr '\n' '|')"
+    note "negative control: an unopenable path returns -1, names itself, and creates nothing"
+
+    pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|unix]" >&2; exit 1 ;;
 esac

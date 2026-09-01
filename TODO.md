@@ -5225,3 +5225,87 @@ it reports `ALIVE` and fails by name.
 already carries `tools/drive-pty-repl.py` for precisely this reason — a socket is
 not a terminal — and it did not occur to me to reach for it until a user hit the
 gap.
+
+
+## 20. `openbios-unix`: the firmware AUTHORS a file the host runs — CLOSED (2026-09-01)
+
+The design notes ([`DESIGN-NOTES-preboot-forth-binary-structures.md`](DESIGN-NOTES-preboot-forth-binary-structures.md))
+and their review ([`REVIEW-preboot-forth-as-a-poke-engine.md`](REVIEW-preboot-forth-as-a-poke-engine.md))
+proposed a poke-like binary-structure toolkit on the preboot Forth. §G6 recorded
+the honest state of it: **"the reader is still ahead of the writer."** `dsl/elf.fth`
+reads and inspects an ELF; nothing could persist one. This closes that, on the
+one target where a persisted file has somewhere to go — the hosted process.
+
+### The gap was real, and measured before it was filled
+
+`openbios-unix` could **read** a host file and **write nothing that outlives the
+process**. All three seams were off:
+
+| seam | state |
+|---|---|
+| `write_dictionary()` (`arch/unix/unix.c`) | `#if 0` — the read side (`read_dictionary`) is live, the write side compiled out |
+| `-f` disk emulation | `open(…, O_RDONLY)`; the `blk` package has `read-blocks` and **no** `write-blocks` |
+| NVRAM | `arch/unix` has **no** `arch_nvram_get/put` — only the QEMU-bootable arches do |
+
+No `write-file`/`save-file` word existed anywhere in `forth/`, `libopenbios/`, or
+the lab's `dsl/`. The QEMU targets persist NVRAM via `pmem` (an NVDIMM QEMU maps
+to a host file); the hosted process has no QEMU, so nowhere to write. So a
+structure `dsl/struct.fth`/`dsl/elf.fth` built in the arena evaporated at exit.
+
+### The fix ([patch 54](examples/openbios-the-rival-that-shipped/patches/54-unix-write-file-authors-a-host-file.patch))
+
+`bind_func("write-file", forth_write_file)` in `arch/unix`'s `arch_init()` —
+**hosted-only on purpose**, not in the common `libopenbios/init.c` beside
+`le-l!`, because only a hosted firmware has a host filesystem to write to.
+
+    write-file ( data-adr data-len fname-adr fname-len -- actual-len )
+
+It returns the bytes actually written (−1 if it never opened the file) and
+**names every failure** with the path and the operation — a firmware word that
+writes nothing and reports success is the silent liar this repo hunts. It cannot
+carry `strerror(errno)`: `config.h` `#define`s `errno` to the firmware's own
+`errno_int` (declared only `#if __APPLE__`), which host `open()`/`write()` never
+touch — so it names the path instead. (Cousin of the repo's `type <cmd>`
+lesson — a name resolving to something other than the binary you expect; here a
+macro shadows the name.)
+
+### The demo, and why the grader is un-fakeable
+
+[`dsl/elf-write.fth`](examples/openbios-the-rival-that-shipped/dsl/elf-write.fth)
+hand-authors a 132-byte static x86-64 ELF (exit(code)) with `le8`/`le16`/`le32`/
+`le64` — the **ELFkickers teensy-ELF model**, made operational — and
+`save-exit-elf` persists it. `smoke-openbios.sh file-writer` grades on a ladder
+whose top rung the firmware cannot fake:
+
+1. **the primitive** — 4 authored bytes round-trip to disk, return value == 4;
+2. **execution** — the host `chmod +x`'s the file and **the kernel runs it**; the
+   exit status must equal the code authored into `mov edi, imm32`. Proven for two
+   distinct codes (0x7→7, 0x2a→42), so a harness that hardcoded one would fail the
+   other. Watched to bite: authoring the wrong code → "exited 0, not 7"; a
+   corrupt magic → the kernel refuses, "exited 126, not 7";
+3. **independent decoders** — `file`, `readelf`, and **ELFkickers `elfls`** (a
+   decoder that is not this repo's `dsl/elf.fth`) all read it as a valid x86-64
+   ELF64 entering at the authored `0x400078`;
+4. **the negative control** — an unopenable path returns −1, names itself, and
+   creates nothing.
+
+ELFkickers is vendored as the differential oracle: a minimal byte-exact subset
+(`oracle/elfkickers/{elfrw,elfls,COPYING}` + provenance README, GPL-2+, commit
+`0aa73da`), the rest of the kit cited not mirrored. `elfls` is a bonus row that
+SKIPs cleanly with no `cc`; **execution is the load-bearing grader**.
+
+### What it cost, worth keeping
+
+- **The unix target reads stdin through an 80-column line editor** — a piped
+  source line truncates past ~82 (measured: 81 survive, 83 cut). That is why the
+  133-col `dsl/elf.fth` cannot be piped to the unix target (the QEMU tracks stage
+  it via ISO + `load`), and why every line of `dsl/elf-write.fth` is ≤80.
+
+### Natural sequel (not done)
+
+A symmetric **`read-file`/`load-file`** host word. The unix target still cannot
+read a host file back *in-firmware* — the in-firmware read-back cross-check
+(author with the writer, validate with `dsl/elf.fth`'s reader in one session) is
+blocked both by that and by the stdin limit above, so the read-back here is
+external (elfls/readelf). A `read-file` word would also let `elftoc`-style
+round-tripping happen at the prompt. Parked until a lab needs it.

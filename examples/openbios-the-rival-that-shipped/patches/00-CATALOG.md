@@ -124,6 +124,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`51-unix-exit-status-reports-the-forth.patch`](51-unix-exit-status-reports-the-forth.patch) | `DIVERGENCE` | shared | **main() returned 0 whatever the Forth had done**, so a firmware that aborted during initialisation reported SUCCESS to the shell — the LIED rung. Three obvious signals cannot discriminate (`enterforth()`'s return, `interruptforth`'s STOP bit, `exception()`), and the reason is that `bye` and an uncaught `throw` unwind **identically** — `0 rdepth!` either way. So the flag sits on the DELIBERATE path: `bye` sets `of-left-cleanly` and `arch/unix` reads it through `feval()`. A missing flag is **UNKNOWN**, not a failure. Shared Forth, so all three arches rebuilt and driven; see TODO §18(b) |
 | [`52-unix-missing-dict-eof-spin-and-a-false-alarm.patch`](52-unix-missing-dict-eof-spin-and-a-false-alarm.patch) | `UPSTREAM-BUG` | shared | **Three defects out of one user session that just tried to get a prompt.** A **missing dictionary** was neither named nor fatal — `read_dictionary()` returns 0 on `stat()` failure and the caller ignored it, so an empty dictionary produced two baffling `fword:` lines and **exit 0**. **End of input spun a core at 100% forever** — `key()` was `while (!availchar());`, a busy-wait nothing could interrupt; it took BOTH halves (the console says `FORTH_INTSTAT_STOP`, the waiter listens), and EOF now reads as end-of-LINE rather than a `0xff` byte to echo. And **every clean exit printed `feval: … threw -4`** because `cmdline.c` reset only the return stack before its `feval`, where its own comment says "Reset stack". Covered by `smoke-openbios.sh unix` |
 | [`53-unix-ctrl-d-is-not-eof-on-a-raw-tty.patch`](53-unix-ctrl-d-is-not-eof-on-a-raw-tty.patch) | `UPSTREAM-BUG` | arch-local | **Patch 52 finished.** 52 stopped the end-of-input spin — for **pipes only**, so the case a person hits stayed broken. `init_terminal()` clears `ICANON`, so a tty never turns `^D` into EOF; it arrives as the byte `0x04` and was silently swallowed, reading as input that will not flush. **Ctrl-D is one keystroke and means leave now**; **pipe EOF latches**, so there the first finishes a trailing line and the second leaves. A green suite could not see it because every unix test drives a pipe — the track now drives a **real pty** and the assertion was watched to bite. TODO §19(d) |
+| [`54-unix-write-file-authors-a-host-file.patch`](54-unix-write-file-authors-a-host-file.patch) | `FEATURE` | arch-local | **The hosted firmware could READ from a host file and never WRITE to one** — `write_dictionary()` is `#if 0`, `blk` has no `write-blocks`, `arch/unix` has no NVRAM backend — so a structure the Forth built in the arena evaporated at exit. This binds `write-file ( data-adr data-len fname-adr fname-len -- actual-len )`, hosted-only (in `arch_init`, not the common `init.c`), closing REVIEW §G6's "the reader is still ahead of the writer". It names every failure and returns the bytes actually written; it cannot carry `strerror(errno)` because `config.h` `#define`s `errno` to a shim host syscalls never touch. `dsl/elf-write.fth` authors a 132-byte static x86-64 ELF and the `file-writer` track has the **kernel run it** — the exit status must equal the authored code. TODO §20 |
 
 ## What the sort says
 
@@ -131,7 +132,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 |---|---|---|
 | `UPSTREAM-BUG` | 26 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
-| `FEATURE` | 10 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, and a build that can be made reproducible on request |
+| `FEATURE` | 11 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 3 | patch 15 (the Forth loader), patch 50 (the unix arena below 4 GiB), and patch 51 (the unix exit status) |
 | `RECORD` | 1 | bookkeeping |
@@ -141,7 +142,7 @@ And by where a future rebase will hurt:
 | scope | count | |
 |---|---|---|
 | shared | 30 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
-| arch-local | 23 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
+| arch-local | 24 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only the `DIVERGENCE` rows are divergences in the sense of "we want different
 behaviour."** Everything else is something upstream would arguably want and is
