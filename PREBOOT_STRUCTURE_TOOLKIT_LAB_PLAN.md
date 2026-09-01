@@ -473,3 +473,11 @@ motivated by [`dsl/POKE-ELF-GLEANINGS.md`](examples/openbios-the-rival-that-ship
 §8; enabled by TODO §20's `write-file`. TCG PCClient Platform Firmware Profile and
 coreboot CBFS are followed as upstream specs/source — cite, don't mirror — with a
 retrieved-as-of date captured when the code is written.*
+
+*Reviewed 2026-09-01 in
+[`REVIEW-preboot-structure-toolkit-plan.md`](REVIEW-preboot-structure-toolkit-plan.md)
+— completeness, feasibility, extensibility, and the components already in the
+repo that this plan does not yet reuse. Its two largest corrections: §12's
+"missing cell" exists (`examples/linuxboot-uefi-kexec/` Tier A), and the
+four-arch matrix in §4 is a two-arch artifact until a delivery spike lands the
+type layer on `ppc` and `unix`.*
