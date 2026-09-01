@@ -394,6 +394,76 @@ expectation" discipline** — a direction the lab could serve, flagged so it is 
 lost, not a claim that the chain is closed. (If pursued, it is its own item, and
 the trust boundary gets named there the way §2 names it here.)
 
+## 12. The payload-substitution matrix — where Spikes 2–3 go live, and the cell that's missing
+
+The coreboot/OpenBIOS/Linux chains in this repo are not four boot demos. They are
+a **payload-substitution matrix**: coreboot is a ROM that carries *a* payload,
+OpenBIOS is one payload among possible others, and the target OS is reached by
+one thesis or another. Seen that way, **this toolkit is the single instrument
+pointed at the whole matrix** — dissect the CBFS to see *which* payload a ROM
+carries, replay the event log to see *what got measured* — so the payload is the
+variable and the toolkit is the constant. That is the through-line that ties the
+firmware-replacement work to Spikes 1–2.
+
+### The matrix as it stands
+
+| delivery mechanism | payload | target | present? |
+|---|---|---|---|
+| QEMU multiboot (`-kernel`) | OpenBIOS | `0 >` prompt | ✅ `multiboot` track |
+| **coreboot ROM** (`CONFIG_PAYLOAD_ELF`) | **OpenBIOS** (x86 + amd64) | `0 >` prompt | ✅ `coreboot`/`coreboot-amd64` — OpenBIOS *is the payload*, its LinuxBIOS birthplace |
+| bare-metal amd64 (`-kernel` long-mode) | OpenBIOS | `0 >` prompt | ✅ `amd64` track |
+| OpenBIOS | modern Linux + initrd | u-root | ✅ `amd64-linux` + `showcase-rival-boots-linux.sh` |
+| coreboot → OpenBIOS | modern Linux | u-root | ✅ the showcase's `coreboot` flavor — the full **3-stage** chain |
+| UEFI | u-root / LinuxBoot | kexec → Linux | ✅ but in a **separate lab** (`examples/linuxboot-uefi-kexec/`), hanging off **UEFI, not coreboot** |
+
+**AND THE CELL THAT IS NOT PRESENT — call it out plainly:**
+
+> **coreboot → modern Linux, directly ❌ — NOT PRESENT.** coreboot here only ever
+> carries **OpenBIOS**. The repo *has* the Linux-as-firmware half —
+> [`examples/linuxboot-uefi-kexec/`](examples/linuxboot-uefi-kexec/), a u-root
+> `init` that `kexec`s — **but it hangs off UEFI, not coreboot.** So the two
+> halves exist and were never joined. **That gap is the interesting part.**
+
+### Two things the matrix affords this toolkit uniquely
+
+- **Delivery-mechanism × arch is a correctness control for the firmware itself.**
+  Same OpenBIOS, loaded three ways that relocate differently — and it has already
+  caught real bugs (the `client-forth` track found the x86 stale-dictionary bug
+  precisely because the coreboot-payload path relocates where multiboot does not,
+  and amd64, which does not relocate, could not show it). This is the endianness
+  matrix of §4 one level up: *how the firmware arrives* is as much a control as
+  *how it reads bytes*.
+- **coreboot → OpenBIOS is the LIVE substrate for Spikes 2–3.** OpenBIOS already
+  parses coreboot's `LB_TAG` tables (`libopenbios/linuxbios_info.c`) for its
+  memory map, so it runs with the ROM mapped and already reads coreboot's own
+  structures. That gives the CBFS work a uniquely-licensed live form: **a Forth
+  prompt that walks the CBFS of the very ROM that delivered it** — the firmware
+  dissecting its own container from *inside*, on the real flash window, before any
+  OS exists. No hosted `cbfstool` can be "inside the ROM it booted from." Spike 2
+  (CBFS) and Spike 3 (real device memory) collapse into one demo here.
+
+### What to build from this (in order — but NOT YET its own lab plan)
+
+1. **The "firmware reads its own ROM" demo** — OpenBIOS-as-coreboot-payload
+   walking its own CBFS at the `0 >` prompt. It is Spike 2 + Spike 3 made vivid,
+   and it needs **nothing not already on disk**: a `coreboot.rom`, the Spike-2
+   CBFS reader, and the `LB_TAG` parser already in-tree. This is the single most
+   "uniquely afforded" thing in the whole cluster, and the natural first target of
+   the CBFS reader's *live* (not file-only) form.
+2. **coreboot → u-root — the missing matrix cell** (coreboot carrying a u-root
+   Linux payload instead of OpenBIOS), then a small **comparison bench**: the same
+   target Linux reached by **three firmware substrates** (coreboot+OpenBIOS+OFW
+   boot, coreboot+u-root, UEFI+u-root). This is exactly where the **event-log half
+   (Spike 1) earns its keep** — measured coreboot with *different payloads*
+   produces *different measurements from the same ROM boot-block*, so "replay the
+   log, see what differs" becomes a **comparison** rather than a single reading.
+
+**Hold off on treating this as its own lab plan until B.3's Spike 0 lands** —
+both items lean on the CBFS reader, which does not exist until the primitives do.
+This section is the note that keeps the direction from being lost: Spikes 2–3 have
+a *live* form under the coreboot-payload combination, and **coreboot → u-root is
+the cell that turns the attestation half from one reading into a comparison.**
+
 ---
 
 *Provenance: extends

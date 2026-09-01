@@ -516,6 +516,24 @@ requires of any other cached fact.
       TPM, stopping honestly at the quote) and coreboot CBFS. Extends
       `examples/openbios-the-rival-that-shipped/`; enabled by §20's `write-file`, mapped
       by §21's gleanings.
+    - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
+      The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
+      pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
+      the event log to see what got measured. What exists: coreboot→OpenBIOS (OpenBIOS
+      *is* the payload; not the inverse), OpenBIOS→Linux, coreboot→OpenBIOS→Linux, and —
+      in a *separate* lab — UEFI→u-root(LinuxBoot)→kexec→Linux. **The missing cell:
+      `coreboot → modern Linux directly` ❌ — coreboot here only ever carries OpenBIOS;
+      the Linux-as-firmware half (`examples/linuxboot-uefi-kexec/`) hangs off UEFI, not
+      coreboot, so the two halves exist and were never joined.** Two cheap items this
+      affords, in order (both lean on the CBFS reader, so **not before Spike 0**):
+      **(1)** the *"firmware reads its own ROM"* demo — OpenBIOS-as-coreboot-payload
+      walking the CBFS of the very ROM that delivered it at the `0 >` prompt (Spike 2 +
+      Spike 3 collapsed and made live; needs nothing not on disk — the `LB_TAG` parser is
+      already in `libopenbios/linuxbios_info.c`); **(2)** `coreboot → u-root` (the missing
+      cell) + a comparison bench of the same Linux via three firmware substrates, where
+      the event-log half becomes a *comparison* (same ROM boot-block, different payloads →
+      different measurements) rather than a single reading. Its own lab plan only once
+      Spike 0 lands.
 
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 
