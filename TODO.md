@@ -507,6 +507,15 @@ requires of any other cached fact.
       **BUILD-READY** as of 2026-08-08, all four §9 decisions resolved including the
       charter boundary and the directory name (`examples/security-range/`). First
       increment: the spine + S2.
+- [ ] **B.3 — build [`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)** —
+      v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
+      `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
+      dissect). A preboot TLV toolkit over the four OpenBIOS arches as an
+      endianness×width control. **Spike 0 is the gate** (`vfield:`/`alignto` + the
+      static-offset-vs-cursor decision); then the TCG event log (attestation without a
+      TPM, stopping honestly at the quote) and coreboot CBFS. Extends
+      `examples/openbios-the-rival-that-shipped/`; enabled by §20's `write-file`, mapped
+      by §21's gleanings.
 
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 
