@@ -647,6 +647,48 @@ boot-file                 ""
 image prints `nvram error detected, zapping pram` once — that is it formatting
 an empty store, not a failure.
 
+## 7. The firmware AUTHORS a file the host runs (write-file, TODO §20)
+
+The hosted `openbios-unix` could read a host file and never write one. `write-file`
+([patch 54](patches/54-unix-write-file-authors-a-host-file.patch), bound
+hosted-only in `arch/unix`) is the writer half of this lab's poke story, and
+[`dsl/elf-write.fth`](dsl/elf-write.fth) uses it to hand-author a runnable ELF.
+The verdict is not that the firmware *claims* it wrote an ELF — it is that the
+**kernel runs the file** and exits with the code the Forth authored.
+
+```console
+$ ./smoke-openbios.sh file-writer
+  - primitive: 4 authored bytes reached ok.bin, and write-file returned 4
+  - authored exit(0x7) → the kernel ran the file and it exited 7
+  - authored exit(0x2a) → the kernel ran the file and it exited 42
+  - host 'file' agrees: ELF 64-bit LSB executable, x86-64, version 1 (SYSV),
+  - readelf agrees: entry point 0x400078, the vaddr the Forth authored
+  - ELFkickers elfls agrees (independent decoder): x86-64, one PT_LOAD at 0x400000
+  - negative control: an unopenable path returns -1, names itself, and creates nothing
+PASS: TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it …
+```
+
+By hand, so you can see the whole loop (run from a scratch dir; keep the line short):
+
+```console
+$ cd /tmp/authortest
+$ { cat .../dsl/elf-write.fth; printf '\n42 s" a.out" save-exit-elf . cr\nbye\n'; } \
+    | ~/openbios-lab/openbios/obj-amd64/openbios-unix \
+      ~/openbios-lab/openbios/obj-amd64/openbios-unix.dict
+   … 0 > … save-exit-elf . cr 84  ok      # 0x84 = 132 bytes written
+   0 > bye  Farewell!
+$ chmod +x a.out && ./a.out; echo "exit=$?"
+exit=42                                    # the value authored in Forth, run by the kernel
+$ oracle/elfkickers/elfls/elfls a.out      # a decoder that is not this repo's
+a.out* (Intel x86-64)
+ 0 B r-s     0    84 00400000
+```
+
+The differential oracle builds from the vendored subset —
+`make -C oracle/elfkickers/elfrw && make -C oracle/elfkickers/elfls` — and its
+provenance (commit, license, per-file sha256) is in
+[`oracle/elfkickers/README.md`](oracle/elfkickers/README.md).
+
 ## Reproducer notes (the sharp edges)
 
 - **The prompt is `0 > `** (the number is the stack DEPTH), banner "Welcome to
@@ -659,6 +701,12 @@ an empty store, not a failure.
   unix:` socket — use `tools/drive-pty-repl.py` (this lab's extracted tool).
 - **Device paths:** `:\file` (backslash) is a filename; `:/file` is a node
   path. `genisoimage -r` lowercases (`VMLINUZ`→`vmlinuz`).
+- **`openbios-unix` reads stdin through an 80-column line editor** — a piped
+  source line truncates past ~82 (measured 2026-09-01: 81 survive, 83 cut), which
+  is why the 133-col `dsl/elf.fth` is staged via ISO on the QEMU targets and
+  cannot be fed to the unix target, and why every line of `dsl/elf-write.fth` is
+  ≤80. A long absolute path inside an `s" …"` pushes the verb off the end; run
+  the firmware from the target's directory and name the file with a bare name.
 - **Boot line ≤ ~80 chars** — the firmware input buffer drops the tail
   silently. The showcase line is **75** characters (measured 2026-08-24; this
   and POC-4 both said "exactly 78", a copied integer nobody re-counted).

@@ -222,6 +222,11 @@ TESTED_TREE_MARKERS=(
     "kernel/forth.c:FORTH_INTSTAT_STOP));"
     # -- TODO 19(d): Ctrl-D is not EOF on a raw terminal (patch 53) --
     "arch/unix/unix.c:if (c == 0x04) {"
+    # -- TODO 20: write-file, the hosted firmware authors a host file (patch 54) --
+    # The BODY, not the name: `write-file` also appears in a comment; the C
+    # function forth_write_file exists only in this divergence (A3b fetches the
+    # pinned file and requires it ABSENT there).
+    "arch/unix/unix.c:static void forth_write_file(void)"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

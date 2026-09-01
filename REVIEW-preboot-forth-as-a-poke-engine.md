@@ -816,6 +816,20 @@ transition is over.
 If one application is going to justify the engine, it is more likely to be this
 than authoring.
 
+**UPDATE 2026-09-01 — the writer caught up, on the hosted target (TODO §20).**
+The title of this section was literally true: `dsl/elf.fth` could read and
+inspect an ELF, and nothing could persist one. `openbios-unix` had no way to
+write a host file at all — `write_dictionary()` is `#if 0`, `blk` has no
+`write-blocks`, `arch/unix` has no NVRAM backend. [Patch
+54](examples/openbios-the-rival-that-shipped/patches/54-unix-write-file-authors-a-host-file.patch)
+binds `write-file` (hosted-only), and
+[`dsl/elf-write.fth`](examples/openbios-the-rival-that-shipped/dsl/elf-write.fth)
+hand-authors a runnable ELF the `file-writer` track grades by **having the kernel
+run it**. Authoring is now a proven application, not only a possible one — though
+G6's point stands that *diffing physical memory across a boot transition* remains
+the uniquely-licensed one. The two are complementary: this closes the writer gap;
+that names the reader's structural edge.
+
 ---
 
 ## G7 — ~~Reading a *file* from Forth is reachable and unproven — UNKNOWN~~ — RESOLVED 2026-08-29: it works
