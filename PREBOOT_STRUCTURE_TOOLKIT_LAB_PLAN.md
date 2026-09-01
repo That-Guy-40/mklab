@@ -306,6 +306,96 @@ new firmware patch) stay green at every step.
 
 ---
 
+## 10. Addendum — grading CBFS surgery against the coreboot team's `cbfstool`
+
+The oracle for the CBFS work is **`cbfstool`, coreboot's own reference
+implementation**, built from the same tree that produced the ROM. This is worth
+spelling out because CBFS is a format we would otherwise be grading against *our
+own reading of a spec header* — the "written by analogy" trap this family already
+paid for. The discipline is **bidirectional and covers surgery, not just reads**:
+
+- **Read direction.** `cbfstool <rom> print` is ground truth for the walk: our
+  Forth listing (name, type, size, offset of every file) must match it entry for
+  entry, on all four arches. `cbfstool extract` gives ground-truth *bytes* for the
+  payload-hash check.
+- **Write / surgery direction — the one that actually matters.** When our Forth
+  **authors or patches** a CBFS entry (via `write-file`), the test is **not** that
+  our own reader accepts it — a parser and a writer wrong the same way agree with
+  each other. The test is that **`cbfstool` accepts the whole ROM afterward**:
+  `cbfstool print` still lists a coherent archive, the master-header and
+  per-file fields still validate, and `cbfstool extract` returns our bytes
+  unchanged. A patch our reader loves and `cbfstool` rejects is a **silent
+  corruption**, and catching it is the entire reason the oracle is the coreboot
+  team's tool and not ours.
+- **Round-trip, both origins.** A ROM `cbfstool` *built* must survive our
+  walk → author → `cbfstool` read unchanged; a structure *we* built must survive
+  `cbfstool` extract → re-`add` unchanged. Either direction failing is a finding.
+- **When they disagree, suspect us first — but check both.** `cbfstool` is the
+  reference, so a mismatch is our bug until proven otherwise. It is *not*
+  infallible (it is software, and "the control is where the bugs are"), so a
+  genuine `cbfstool`-side surprise gets filed, not papered over.
+- **Bind the oracle to the subject (derive, don't cache).** `cbfstool` is
+  **versioned with coreboot** and its metadata handling has eras (legacy master
+  header vs. FMAP-only). Grading a ROM with a `cbfstool` from a *different*
+  coreboot than built it is exactly this repo's stale-record bug in oracle form.
+  So the vendored/built `cbfstool` is **pinned to the same coreboot commit as the
+  `coreboot.rom` under test**, and the track records both — a version string is
+  not an identity; the commit is.
+
+Same pattern as the ELF work grading against ELFkickers `elfls`, but with a
+sharper edge: here we don't just *inspect* with the foreign tool, we hand it
+something **we surgically altered** and require it to still call the patient
+healthy.
+
+## 11. Adjacency — the full-source bootstrap (NixOS / Guix stage0)
+
+Worth naming, and worth naming *honestly* — it is an **adjacency and a possible
+future connection, not a dependency**. Nothing in Spikes 0–3 needs it.
+
+**What it is.** The bootstrappable-builds effort (NixOS and Guix) shrinks the
+opaque **binary seed** of a system to a tiny auditable one — `hex0` and a few
+hundred bytes upward to a full toolchain — so userspace is built from inspectable
+source rather than trusted blobs. Its thesis is the reduction of *unauditable
+trusted surface*.
+
+**Where it genuinely connects — two hooks, one real, one aspirational:**
+
+- **The real one: reproducible artifact + runtime attestation are complementary
+  halves of one trust question, and this lab owns the seam between them.** A
+  full-source bootstrap proves *the artifact is what its source says* (provenance
+  / reproducibility). Measured boot (Spike 1) proves *the machine is running that
+  artifact* (runtime attestation). The connective tissue is a single rule this
+  repo already lives by: **derive the PCR / event-log expectation from a
+  source-bootstrapped, reproducible build — do not cache a captured golden
+  value.** That is `DESIGN-NOTES` §1's *derive the fact, don't cache it* and the
+  metal-as-a-service `pcrs.expected`-bound-to-build-sha lesson, pointed at a
+  bootstrap whose outputs are reproducible *by construction*. If the expected
+  measurement is computed from a bit-reproducible source build, the event-log
+  replay in Spike 1 becomes a check against a value nobody had to trust, only to
+  recompute.
+- **The aspirational one: firmware is the layer stage0 does not cover.** stage0
+  bootstraps userspace and the toolchain from a seed; the firmware underneath is,
+  on most hardware, still a blob. This lab family builds **OpenBIOS/coreboot from
+  source** and boots it — the firmware-layer complement to stage0's userspace
+  chain. So a source-built firmware (here) plus a source-bootstrapped userspace
+  (stage0) is, in principle, an auditable chain from close to the reset vector up,
+  and the CBFS + event-log toolkit is exactly what would let you **verify each
+  seam**: walk the CBFS to confirm every payload is a source-built artifact,
+  replay the event log to confirm the machine measured precisely those.
+
+**The honest caveat (frame the trust chain, don't oversell it).** A reproducible
+artifact does **not** supply the missing hardware root of trust — the AK-signed
+quote is still **UNKNOWN** here (§2's boundary), and a bit-reproducible build makes
+the *expectation* honest, not the *attestation* complete. And OpenBIOS-on-QEMU is
+a software-firmware demonstration, not the SPI-flash reality of production
+hardware. So the connection to draw is: **this toolkit could give the
+full-source-bootstrap chain its firmware-layer verifier and its "derive the
+expectation" discipline** — a direction the lab could serve, flagged so it is not
+lost, not a claim that the chain is closed. (If pursued, it is its own item, and
+the trust boundary gets named there the way §2 names it here.)
+
+---
+
 *Provenance: extends
 [`examples/openbios-the-rival-that-shipped/`](examples/openbios-the-rival-that-shipped/);
 motivated by [`dsl/POKE-ELF-GLEANINGS.md`](examples/openbios-the-rival-that-shipped/dsl/POKE-ELF-GLEANINGS.md)
