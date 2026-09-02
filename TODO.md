@@ -529,19 +529,21 @@ requires of any other cached fact.
       re-measured: `cbfstool extract` **works** with `-m ARCH` (the 2026-08-27
       "cannot extract at all" was a missing-flag run — corrected in
       `tools/openbios-rom-provenance.sh`).
-    - **Spike 0 (the gate) — LANDED 2026-09-02.** Model decision = option B (a parallel
-      cursor vocabulary — `type:`/`>rec`/`alignto`/`t@+`/`vfield:` — beside the static
-      layer, `field:` untouched, because `t@` is already offset-agnostic). Shipped as a
-      new cursor section of `dsl/struct.fth` + a `tlv-primitives` smoke track (wrapper,
-      run-all.sh, tier-b `DEFAULT_TRACKS`, and `unix` added to the CI build). Walks a
-      length-prefixed record byte-identically on all four arches; the ppc negative control
-      is a bare `l@` that slips a *host-native* access in (byte-swaps only on BE), not a
-      mislabelled `le-field:` (which all four read wrong identically — caught by the oracle,
-      not the arch). Also fixed here: `struct.fth`'s `load-base-phys` picked its constant
-      by cell width and handed ppc x86's `0x400000`; now endianness-aware
-      (x86 relocates → 400000; ppc/amd64/unix identity → 4000000), asserted per arch by the
-      track. STILL OPEN before Spike 0 is *complete*: the real `Elf_Note` positive case
-      (oracle `readelf -n`) and the per-arch write-file/pmem author paths. Then coreboot CBFS
+    - **Spike 0 (the gate) — COMPLETE 2026-09-02.** Model decision = option B (a parallel
+      cursor vocabulary — `type:`/`>rec`/`alignto`/`t@+`/`t!+`/`vbytes`/`vfield:` — beside
+      the static layer, `field:` untouched, because `t@` is already offset-agnostic).
+      Shipped as a new cursor section of `dsl/struct.fth` + a `tlv-primitives` smoke track
+      (wrapper, run-all.sh, tier-b `DEFAULT_TRACKS`, and `unix` added to the CI build). Walks
+      length-prefixed records byte-identically on all four arches — proven on BOTH a
+      synthetic record AND a **real `Elf_Note`** (`.note.gnu.build-id` of a firmware ELF,
+      graded against `readelf -n`). Three controls: the ppc negative control is a bare `l@`
+      that slips a *host-native* access in (byte-swaps only on BE); `load-base-phys` reads
+      `0x400000` only on relocating x86 (a cell-width bug fixed here — it had handed ppc
+      x86's value); and the **author path is verified by an observer OUTSIDE the firmware
+      per arch** — x86/ppc print raw bytes, unix `write-file`→host file, amd64 typed-cursor
+      author→NVDIMM backing file. That amd64 control caught a real `t!+` stack-order bug
+      (it wrote a dictionary pointer, not the value; the synthetic path only used `t@+`, so
+      nothing had exercised `t!+`). Then coreboot CBFS
       (Spike 2, before the event log) and the TCG event log (Spike 1 — attestation
       without a TPM, stopping honestly at the quote; its subject is a swtpm guest's
       `binary_bios_measurements`, since no ROM here measures anything).

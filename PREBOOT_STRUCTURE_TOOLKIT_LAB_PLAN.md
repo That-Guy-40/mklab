@@ -218,7 +218,7 @@ track arms + CI wiring (§8), so the measurement cannot rot as a one-off.
 
 ---
 
-### Spike 0 — the two `struct.fth` primitives, and the model decision (THE GATE) — DECISION: **(B)**; PRIMITIVES **GREEN on 4/4**, 2026-09-01
+### Spike 0 — the two `struct.fth` primitives, and the model decision (THE GATE) — DECISION: **(B)**; **COMPLETE on 4/4**, 2026-09-02
 
 **Deliverable:** `vfield:` (a length-prefixed byte field — an array whose count is
 a *runtime* value from a prior field) and `alignto` (advance a cursor to the next
@@ -248,14 +248,16 @@ unchanged** and leaves `field:`/`array:`/`(tfield)` untouched. This also answers
 review E3: `vfield:` **is** the cursor-mode `file:` (a member whose extent is read
 from an earlier member), built, not beside a second thing.
 
-**Landed (2026-09-02).** The primitives ship as a new **cursor section of
+**COMPLETE (2026-09-02).** The primitives ship as a new **cursor section of
 `dsl/struct.fth`** (`type:`/`>rec`/`rec@`/`+rec`/`rec-off`/`alignto`/`t@+`/`t!+`/
-`vfield:`) — `field:`/`array:`/`(tfield)` untouched, still option (B) — behind a
-`tlv-primitives` smoke track that runs the walk on all four arches, wrapped
+`vbytes`/`vfield:`) — `field:`/`array:`/`(tfield)` untouched, still option (B) —
+behind a `tlv-primitives` smoke track that runs on all four arches, wrapped
 (`tests/test-smoke-tlv-primitives.sh`), listed in `run-all.sh`, and in the
 tier-b CI `DEFAULT_TRACKS` (which now also builds the `unix` target so the
-workbench arm runs in CI, per review F10). The track asserts the four-arch
-agreement and both controls below on every run.
+workbench arm runs in CI, per review F10). The track proves the vocabulary on
+**both** a synthetic record **and a real `Elf_Note`** graded against `readelf -n`,
+and verifies the author path by an **observer outside the firmware per arch**
+(below). It asserts the four-arch agreement and three controls on every run.
 
 **Measured result — the synthetic record `{ len:u32le, name[len], pad-to-4,
 body:u16le }` authored in-arena and walked back through `vfield:`/`alignto`, all
@@ -276,11 +278,27 @@ exactly as [review F9](REVIEW-preboot-structure-toolkit-plan.md#f9--the-ppc-cont
 predicted — a bare `l@` that slipped a host-native access into a byte-order-
 explicit parser is invisible on the three LE arches and caught only by the BE row.
 
-**Still open before this spike is *complete* (vs. its primitives landed and under
-CI):** the real `Elf_Note` positive case + `readelf -n` oracle (subject below);
-and the per-arch `write-file`/`pmem`/in-arena author paths (the track authors the
-synthetic record in-arena on every arch today). The `load-base-phys` cell-width
-bug §4 flagged is **fixed** and asserted per-arch by the track.
+**Done, so the spike is complete:**
+
+- **The real `Elf_Note` positive case + `readelf -n` oracle.** The track walks a
+  genuine `.note.gnu.build-id` in a firmware ELF (`openbios-unix`, guaranteed
+  present, its `desc` a real content hash) with the cursor vocabulary and
+  reproduces `namesz`/`descsz`/`type`/`name` and the 20-byte build-id **matching
+  `readelf -n`** on all four arches. `vbytes` (grab N bytes at the cursor, the
+  length-already-known complement to `vfield:`) is what a note needs, since its
+  lengths are read three fields before the bytes. Ground truth is derived from
+  the staged subject and cross-checked python-vs-`readelf` before use.
+- **The per-arch author paths, each verified by an observer OUTSIDE the
+  firmware.** x86/ppc print the raw authored bytes for the host to compare;
+  `unix` persists the record with `write-file` to a host file `od` reads back;
+  `amd64` authors it **through the typed cursor** (`author-rec-at`, `t!+`) into
+  an NVDIMM whose host **backing file holds the record after QEMU exits** — the
+  pmem seam. That amd64 control immediately earned its place: it caught a real
+  bug in `t!+` (it fed `t!` its three args in the wrong order and wrote a
+  dictionary pointer to storage — the synthetic path never used `t!+`, only
+  `t@+`, so nothing had exercised it; the external observer is what surfaced it).
+- The `load-base-phys` cell-width bug §4 flagged is **fixed** and asserted
+  per-arch by the track.
 
 **The subject ([review F7](REVIEW-preboot-structure-toolkit-plan.md#f7--spike-0s-synthetic-record-is-weaker-than-the-real-subject-already-on-disk)):
 the positive case is a REAL record, `Elf_Note`** — `namesz, descsz, type,

@@ -369,6 +369,13 @@ variable (be-probe)
 \ Not poke-derived; poke gives you this for free and a bare `0 >` prompt does
 \ not. 16 bytes a line, address first, printable ASCII on the right.
 : .hexbyte ( c -- )  dup 10 < if ." 0" then u. ;
+
+\ CONTIGUOUS 2-hex, no trailing space — `.hexbyte` uses u. which appends one, so a
+\ byte string it prints cannot be compared against a foreign hex digest (readelf's
+\ Build ID, sha256sum) without the host normalising spaces. .hx2 prints exactly two
+\ hex chars so `<n> 0 do a i + c@ .hx2 loop` is a digest a host can diff verbatim.
+: .hex1 ( n -- )  dup a < if 30 + else 57 + then emit ;   \ 0-9a-f, base HEX
+: .hx2  ( c -- )  dup 4 rshift .hex1  f and .hex1 ;
 : .ascii   ( adr n -- )
   0 do dup i + c@ dup 20 7f within if emit else drop 2e emit then loop drop ;
 : dump ( adr len -- )
@@ -421,7 +428,12 @@ variable rec-cur
 \ through the width/endian-aware path, never a raw fetch (the property the ppc
 \ negative control defends: a bare l@ there would byte-swap and only ppc notices).
 : t@+ ( tid -- u )  rec@ over t@  swap t-width +rec ;
-: t!+ ( u tid -- )  rec@ over t!  swap t-width +rec ;
+\ t!+ is NOT the mirror of t@+: t! takes THREE items ( u adr tid ) where t@ takes
+\ two ( adr tid ), so the `rec@ over` shape that works for t@+ mis-orders t!'s args
+\ (it fed t! the tid as the value and wrote a dictionary pointer to storage — found
+\ 2026-09-02 by the amd64 NVDIMM control, the first user of t!+). Save the tid for
+\ the width, then present exactly ( u adr tid ).
+: t!+ ( u tid -- )  dup >r  rec@ swap  t!  r> t-width +rec ;
 
 \ vfield: a length-PREFIXED byte field -- poke's cursor-mode `file:` in one line
 \ (a member whose extent is read from an earlier member). `<prefix-tid> vfield:
@@ -432,3 +444,9 @@ variable rec-cur
 : vfield: ( ptid "name" -- )
   create ,
   does>  ( -- adr len )  @ t@+  ( len )  rec@ over +rec  swap ;
+
+\ vbytes ( len -- adr ) — the length-ALREADY-KNOWN complement to vfield:. Where
+\ vfield: reads a prefix immediately before its bytes, vbytes takes a length read
+\ EARLIER (Elf_Note reads namesz and descsz up front, three fields before name)
+\ and hands back the current cursor, advancing past the len bytes.
+: vbytes ( len -- adr )  rec@ swap +rec ;
