@@ -558,6 +558,29 @@ requires of any other cached fact.
       Then the TCG event log (Spike 1 — attestation without a TPM, stopping honestly at
       the quote; its subject is a swtpm guest's `binary_bios_measurements`, since no ROM
       here measures anything).
+    - [ ] **⏭ NEXT STEP — Spike 2, the rest** (read direction merged; each item below is a
+      natural next increment, in order):
+        1. **The WRITE / surgery direction (§10) — the harder and more interesting half.**
+           Author or patch a **raw** CBFS entry with `write-file`, then require **coreboot's
+           own `cbfstool` to still accept the WHOLE ROM afterward** — `print` lists a
+           coherent archive, the master-header and per-file fields still validate, and
+           `extract` returns our bytes unchanged. The test is NOT that our own reader
+           accepts it: a parser and a writer wrong the same way agree with each other, so
+           the oracle must be `cbfstool`, not `dsl/cbfs.fth`. Scope byte-compares to **raw**
+           entries — the SELF payload's `extract` is a *reconstituted* ELF (review F2). A
+           patch our reader loves and `cbfstool` rejects is a silent corruption, and
+           catching it is the whole point.
+        2. **The other three ROMs**, telling payload kinds apart by what they carry under
+           `fallback/payload`: `build/coreboot.rom` (LinuxBoot kernel+u-root),
+           `build-ofw/coreboot.rom` (Firmworks), `build-openbios-amd64/coreboot.rom`
+           (OpenBIOS SELF). §12's thesis — the payload is the variable, the toolkit the
+           constant — has its subject set on disk.
+        3. **The live form (§12(1)) — the uniquely-afforded demo.** OpenBIOS-as-coreboot-
+           payload walking the CBFS of the **very ROM that delivered it**, at the `0 >`
+           prompt, on the mapped flash window (`flash-writer` already reads that window
+           through `>virt`) — Spike 2 (CBFS) and Spike 3 (real device memory) collapsed
+           into one. No hosted `cbfstool` can be *inside the ROM it booted from*. Observer
+           outside the firmware: the ROM file on the host, `cmp`'d, plus QEMU monitor `xp`.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
