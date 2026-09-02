@@ -63,6 +63,10 @@ TRACK (default multiboot):
                               (vfield:/alignto/type:/t@+) walks a length-prefixed
                               record byte-identically on ALL FOUR arches, the
                               ppc row catching a host-native read (review F9)
+  cbfs                        B.3 Spike 2: dsl/cbfs.fth walks the coreboot ROM's
+                              CBFS (big-endian 'ORBC'/'LARCHIVE') and lists its
+                              files matching cbfstool, on ALL FOUR arches — ppc
+                              reads the BE metadata native (needs the coreboot ROM)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -3211,6 +3215,159 @@ PY
 
     pass "B.3 Spike 0 COMPLETE: the cursor vocabulary (type:/>rec/alignto/t@+/vbytes/vfield:) walks length-prefixed records byte-identically on unix, amd64, x86 AND ppc — proven on BOTH a synthetic record { len:u32le, name[len], pad-to-4, body:u16le } (name='ELF', body=0xbeef) AND a REAL Elf_Note: the .note.gnu.build-id of a firmware ELF, whose namesz/descsz/type/name and 20-byte content-hash desc the walk reproduces MATCHING readelf -n (the foreign oracle) on all four arches. The model decision was option B (a parallel cursor beside the static layer, field:/array: untouched): t@ is already offset-agnostic, so the walk needs only a running cursor and a bare type: tid. Three controls make the four-arch agreement mean something: a bare host-native l@ read of a length AGREES (3) on the LE arches and DIVERGES (3000000) on big-endian ppc (review F9); load-base-phys reads 0x400000 only on relocating x86 and 0x4000000 elsewhere (the 2026-09-02 cell-width fix); and the AUTHOR PATH is verified by an observer OUTSIDE the firmware per arch — x86/ppc print the raw authored bytes, unix persists them with write-file to a host file od reads back, and amd64 authors the record through the typed cursor into an NVDIMM whose host backing file holds the bytes after QEMU exits. Byte order is a property of the field declaration, not the CPU, which is why a firmware-hosted structure toolkit can be MORE trustworthy about it than a single-machine tool"
     ;;
+  cbfs)
+    # B.3 Spike 2 (read direction): a Forth CBFS reader (dsl/cbfs.fth) walks the
+    # coreboot ROM this lab builds and lists its files — graded ENTRY FOR ENTRY
+    # against coreboot's own cbfstool, on all four arches.
+    #
+    # WHY THIS IS THE ARCH MATRIX EARNING ITS KEEP. CBFS metadata is BIG-ENDIAN
+    # (cbfs_serialized.h: CBFS_HEADER_MAGIC 0x4F524243 /* BE 'ORBC' */), so ppc
+    # reads len/type/offset natively while the LE arches byte-swap them through
+    # l@-be. A hidden little-endian assumption in the reader would give ppc one
+    # listing and the LE arches another; grading all four against the SAME
+    # cbfstool is what makes "the walk is correct" mean the byte order is too.
+    #
+    # THE ORACLE IS DERIVED, NOT VENDORED (review F2): $OBJDIR/cbfstool is built
+    # by the same coreboot tree that built $OBJDIR/coreboot.rom, so it is pinned
+    # to that ROM's commit by construction — a separately vendored copy is the
+    # drift this repo's stale-record rule warns against.
+    #
+    # UNIX READS A WINDOW, THE QEMU ARCHES READ THE WHOLE ROM. openbios-unix's
+    # arena is 4 MiB total (MEMORY_SIZE), so a 4 MiB ROM will not fit; unix loads
+    # the ROM's first 256 KiB — every named file up to the giant `(empty)`
+    # free-space entry — while x86/amd64/ppc (512/128 MiB RAM) load all 4 MiB and
+    # additionally see `bootblock` at the very top. Both are graded against the
+    # cbfstool entries they should have seen.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    ROM="$CB/build-openbios/coreboot.rom"
+    CBT="$CB/build-openbios/cbfstool"
+    [[ -f "$ROM" ]] || skip "no ROM at $ROM — run ./build-coreboot-openbios.sh first"
+    [[ -x "$CBT" ]] || skip "no cbfstool at $CBT — it is built by the coreboot tree that built the ROM (the derived oracle); build the ROM first"
+    CAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    CADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    CXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    CXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    CUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    CUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    CPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$CAMB" "$CADI" "$CXMB" "$CXDI" "$CUBIN" "$CUDICT" "$CPELF"; do
+      [[ -e "$f" ]] || skip "missing $f — run ./build-openbios.sh all first (this track needs all four arches)"
+    done
+    CSTRUCT="$HERE/dsl/struct.fth"; CCBFS="$HERE/dsl/cbfs.fth"
+    for f in "$CSTRUCT" "$CCBFS"; do
+      [[ -f "$f" ]] || fail "the reader is missing at $f — this track stages the SHIPPED file, it does not re-implement it"
+    done
+
+    # WHERE THE CBFS REGION IS, derived from the ROM's FMAP rather than assumed —
+    # a different board puts COREBOOT elsewhere; cbfstool's own offsets are
+    # relative to it, and so is dsl/cbfs.fth's `cbfs-off`.
+    CRGN="$("$CBT" "$ROM" layout 2>/dev/null | sed -n "s/.*'COREBOOT'.*offset \([0-9]*\).*/\1/p" | head -1)"
+    [[ -n "$CRGN" ]] || fail "could not read the COREBOOT region offset from $ROM via cbfstool layout"
+    CRGNHEX="$(printf '%x' "$CRGN")"
+
+    # EXPECTED LISTING from cbfstool: offset(region-relative) -> name|size, the
+    # ground truth every arch's walk is graded against. The size is the first
+    # bare integer after the 0x offset (the type column has one or two words).
+    declare -A CEXPNAME CEXPSZ
+    while read -r cnm coff csz; do
+      [[ "$coff" == 0x* ]] || continue
+      co="$(printf '%08x' "$coff")"; cs="$(printf '%08x' "$csz")"
+      [[ "$cnm" == "(empty)" ]] && cnm=""   # the empty file has no name; the walk prints none
+      CEXPNAME["$co"]="$cnm"; CEXPSZ["$co"]="$cs"
+    done < <("$CBT" "$ROM" print 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^0x/){off=$i; for(j=i+1;j<=NF;j++) if($j ~ /^[0-9]+$/){print $1, off, $j; break}; break}}')
+    (( ${#CEXPNAME[@]} >= 11 )) \
+      || fail "cbfstool print yielded only ${#CEXPNAME[@]} entries for $ROM — the oracle itself looks wrong, so grading against it would be meaningless"
+    note "oracle: cbfstool lists ${#CEXPNAME[@]} entries; COREBOOT region at file offset 0x$CRGNHEX"
+
+    CST="$WORKDIR/cbfs-stage"; rm -rf "$CST"; mkdir -p "$CST"
+    cp "$CSTRUCT" "$CST/STRUCT.FTH"; cp "$CCBFS" "$CST/CBFS.FTH"
+    cp "$ROM" "$CST/ROM.BIN"                                   # full ROM, for the QEMU arches
+    head -c 262144 "$ROM" > "$CST/ROM256.BIN"                  # 256 KiB window, for unix
+    genisoimage -quiet -o "$WORKDIR/cbfs-rj.iso"    -V CBFS -r -J "$CST"
+    genisoimage -quiet -o "$WORKDIR/cbfs-plain.iso" -V CBFS       "$CST"
+
+    # ── unix: -f iso + grubfs, load-base into a 0x50000 arena, 256 KiB window ──
+    printf '%s\n' \
+      '50000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\CBFS.FTH'   'load-base load-size evaluate' \
+      'load hd:\ROM256.BIN' \
+      "load-base $CRGNHEX + 20 cbfs-list" 'bye' \
+      | "$CUBIN" -f "$WORKDIR/cbfs-plain.iso" "$CUDICT" 2>&1 | tr -d '\r' \
+      > "$WORKDIR/cbfs-unix.log"
+
+    # ── amd64 + x86: -cdrom, serial; load the WHOLE ROM ───────────────────────
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$CAMB"; DI="$CADI"; else MB="$CXMB"; DI="$CXDI"; fi
+      CSOCK="$WORKDIR/cbfs-$A.sock"; CLOG="$WORKDIR/cbfs-$A.log"; rm -f "$CSOCK" "$CLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/cbfs-rj.iso" -display none -serial "unix:$CSOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      CQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$CSOCK" "$CLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CBFS.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ROM.BIN\r' --expect "0 > " \
+        --send "load-base $CRGNHEX + 20 cbfs-list\r" --expect "CBFS-END"
+      CRC=$?
+      kill "$CQ" 2>/dev/null   # by PID, never by pattern
+      [[ $CRC -eq 0 ]] \
+        || fail "cbfs on $A: the walk did not complete (rc=$CRC) — see $CLOG"
+    done
+
+    # ── ppc: -cdrom (plain iso9660), pty, echo-gate; the BIG-ENDIAN truth-teller ─
+    CPLOG="$WORKDIR/cbfs-ppc.log"; rm -f "$CPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$CPLOG" --timeout 600 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " \
+      --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\CBFS.FTH;1\r' --expect "> " \
+      --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\ROM.BIN;1\r' --expect "> " \
+      --send "load-base $CRGNHEX + 20 cbfs-list\r" --expect "CBFS-END" \
+      -- qemu-system-ppc -bios "$CPELF" -nographic -vga none -cdrom "$WORKDIR/cbfs-plain.iso"
+    CPRC=$?
+    [[ $CPRC -eq 0 ]] \
+      || fail "cbfs on ppc: the walk did not complete (rc=$CPRC) — see $CPLOG"
+
+    # ── grade every arch's listing against cbfstool, entry for entry ──────────
+    for A in unix amd64 x86 ppc; do
+      CL="$WORKDIR/cbfs-$A.log"
+      CG="$(tr -d '\r' < "$CL")"
+      cmatched=0; csaw_payload=0; csaw_bootblock=0
+      while IFS= read -r cline; do
+        [[ "$cline" == *"cbfs| "* ]] || continue
+        co="$(sed -n 's/.*off=\([0-9a-f]\{8\}\).*/\1/p' <<<"$cline")"
+        cl="$(sed -n 's/.*len=\([0-9a-f]\{8\}\).*/\1/p' <<<"$cline")"
+        cn="$(sed -n 's/.*name=\(.*\)$/\1/p' <<<"$cline")"
+        [[ -n "${CEXPNAME[$co]+x}" ]] \
+          || fail "cbfs on $A: the walk lists an entry at region offset 0x$co that cbfstool does not — the reader mis-stepped (a wrong length/offset or a byte-order slip) — see $CL"
+        [[ "$cn" == "${CEXPNAME[$co]}" ]] \
+          || fail "cbfs on $A: entry at 0x$co is named '${cn:-<empty>}' but cbfstool calls it '${CEXPNAME[$co]:-<empty>}' — see $CL"
+        [[ "$cl" == "${CEXPSZ[$co]}" ]] \
+          || fail "cbfs on $A: entry '${cn:-<empty>}' at 0x$co has len 0x$cl but cbfstool reports size 0x${CEXPSZ[$co]} — a big-endian len read gone wrong reads a plausible-but-wrong length, which is exactly what the ppc row is here to catch — see $CL"
+        cmatched=$((cmatched+1))
+        [[ "$cn" == "fallback/payload" ]] && csaw_payload=1
+        [[ "$cn" == "bootblock" ]] && csaw_bootblock=1
+      done <<<"$CG"
+      (( cmatched >= 11 )) \
+        || fail "cbfs on $A: only $cmatched entries matched cbfstool (expected >= 11) — the walk stopped early — see $CL"
+      (( csaw_payload )) \
+        || fail "cbfs on $A: the walk never reached fallback/payload (the OpenBIOS SELF payload) — see $CL"
+      if [[ "$A" != unix ]]; then
+        (( csaw_bootblock )) \
+          || fail "cbfs on $A: the full-ROM walk never reached bootblock at the top of the image — see $CL"
+      fi
+      note "$A: $cmatched entries match cbfstool (payload seen$( [[ "$A" != unix ]] && printf ', bootblock seen'))"
+    done
+    unset CEXPNAME CEXPSZ
+    pass "B.3 Spike 2 (read): dsl/cbfs.fth walks the real coreboot ROM's CBFS and lists every file — offset, type, size and name — MATCHING coreboot's own cbfstool entry for entry, on unix, amd64, x86 AND ppc. The reader is the Spike 0 cursor vocabulary (type:/>rec/t@+/vbytes) plus one big-endian u32be type and nothing else, which is the point: CBFS metadata is big-endian ('ORBC'/'LARCHIVE'), so ppc reads len/type/offset natively while the LE arches byte-swap them through l@-be, and all four reproduce cbfstool's listing — so 'the walk is correct' means the byte order is correct too, the negative control a single-machine tool (cbfstool, poke) structurally cannot run. The oracle is DERIVED — the cbfstool the ROM's own build tree produced, pinned to its commit by construction (review F2), not vendored. unix reads the ROM's first 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file through (empty); the QEMU arches load the whole ROM and additionally reach bootblock. STILL TO DO for Spike 2: the WRITE/surgery direction — author or patch a raw CBFS entry with write-file and require cbfstool to still accept the whole ROM (§10), and the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -4605,5 +4762,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|unix]" >&2; exit 1 ;;
 esac
