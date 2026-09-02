@@ -387,13 +387,29 @@ present on every run.
 
 ---
 
-### Spike 2 — coreboot CBFS (the firmware-native image you already ship into)
+### Spike 2 — coreboot CBFS (the firmware-native image you already ship into) — READ direction **DONE 2026-09-02**
 
 **Deliverable:** a Forth CBFS reader over the lab's **own** `coreboot.rom` — walk
 the CBFS (`'ORBC'` master header → `(magic 'LARCHIVE', len, type, checksum,
 offset, name)` file entries, **all big-endian**), list the files, and **verify a
 payload's declared size/hash against its bytes**. Then **author/patch** a small
 CBFS entry with `write-file` and confirm `cbfstool` reads it.
+
+**READ direction — done and under a track (`dsl/cbfs.fth`, `cbfs` smoke track).**
+The walk is the Spike 0 cursor vocabulary (`type:`/`>rec`/`t@+`/`vbytes`) plus a
+single big-endian `u32be` type and nothing else — a CBFS entry is exactly the
+sequential, length-carrying record the cursor was built for. It lists every file
+of `build-openbios/coreboot.rom` — offset, type, size, name — **matching
+coreboot's own `cbfstool` entry for entry on unix, amd64, x86 AND ppc**. Two
+things the arch matrix earned here: the big-endian reads are proven (all four
+reproduce the same listing, so a hidden LE assumption would have shown as a ppc
+disagreement); and the reader's `align_up` is **region-relative, not
+absolute** — a bug the `unix` row caught precisely because its `alloc-mem`
+load-base is not 64-aligned, where the QEMU arches' aligned load-base would have
+hidden it (the misaligned buffer is the control). `unix` reads the ROM's first
+256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file
+through `(empty)`; the QEMU arches load the whole ROM and reach `bootblock`.
+**Still to do:** the WRITE/surgery direction (below) and the other three ROMs.
 
 **Why it converges with Spike 1:** coreboot is *where measured boot happens* — its
 vboot extends PCRs and writes the very event-log format Spike 1 handles. And CBFS

@@ -543,10 +543,21 @@ requires of any other cached fact.
       per arch** — x86/ppc print raw bytes, unix `write-file`→host file, amd64 typed-cursor
       author→NVDIMM backing file. That amd64 control caught a real `t!+` stack-order bug
       (it wrote a dictionary pointer, not the value; the synthetic path only used `t@+`, so
-      nothing had exercised `t!+`). Then coreboot CBFS
-      (Spike 2, before the event log) and the TCG event log (Spike 1 — attestation
-      without a TPM, stopping honestly at the quote; its subject is a swtpm guest's
-      `binary_bios_measurements`, since no ROM here measures anything).
+      nothing had exercised `t!+`).
+    - **Spike 2 (coreboot CBFS) — READ direction DONE 2026-09-02.** `dsl/cbfs.fth` +
+      a `cbfs` smoke track: the reader is the Spike 0 cursor vocabulary plus one
+      `u32be` type, and it walks the real `coreboot.rom`'s CBFS listing every file
+      (offset/type/size/name) **matching coreboot's own `cbfstool` entry for entry on
+      all four arches** — ppc reads the big-endian `'ORBC'`/`'LARCHIVE'` metadata native
+      while the LE arches byte-swap via `l@-be`. The oracle is DERIVED (`cbfstool` from
+      the ROM's own build tree, review F2), not vendored. The `unix` row (256 KiB window,
+      un-aligned `alloc-mem` load-base) caught a region-relative-vs-absolute `align_up`
+      bug the aligned QEMU arches would have hidden. STILL TO DO for Spike 2: the
+      WRITE/surgery direction (author/patch a raw entry, require `cbfstool` to still
+      accept the whole ROM — §10), the other three ROMs, and the live form (§12(1)).
+      Then the TCG event log (Spike 1 — attestation without a TPM, stopping honestly at
+      the quote; its subject is a swtpm guest's `binary_bios_measurements`, since no ROM
+      here measures anything).
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

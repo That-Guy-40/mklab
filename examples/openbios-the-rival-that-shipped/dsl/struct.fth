@@ -376,6 +376,10 @@ variable (be-probe)
 \ hex chars so `<n> 0 do a i + c@ .hx2 loop` is a digest a host can diff verbatim.
 : .hex1 ( n -- )  dup a < if 30 + else 57 + then emit ;   \ 0-9a-f, base HEX
 : .hx2  ( c -- )  dup 4 rshift .hex1  f and .hex1 ;
+\ .hx8 ( u -- ) the low 32 bits as 8 fixed hex digits, MSB first, no space -- a
+\ u32 field a host can diff against a formatter's column. Width-agnostic: it reads
+\ nibbles by shifting the value RIGHT, so it works on a 32- and a 64-bit cell alike.
+: .hx8  ( u -- )  8 0 do  dup  1c i 4 * -  rshift  f and  .hex1  loop  drop ;
 : .ascii   ( adr n -- )
   0 do dup i + c@ dup 20 7f within if emit else drop 2e emit then loop drop ;
 : dump ( adr len -- )
