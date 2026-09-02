@@ -218,15 +218,36 @@ hex
 \ value moves whenever the image size does. It is a fact to DERIVE, never one
 \ to write down -- which is exactly why this computes it every time.
 \
-\ THE ONE CACHED FACT, said out loud: LOAD_BASE_PHYS itself is read from C
-\ (arch/x86/openbios.c:32 = 400000; forth/admin/nvram.fs's amd64 arm = 4000000)
-\ and is selected here by cell width. Nothing in the device tree publishes it.
-\ Publishing virt_offset -- or implementing 1275's `map-in` -- would remove this
-\ last constant; until then the pair below is checked by `smoke-openbios.sh
+\ THE ONE CACHED FACT, said out loud: LOAD_BASE_PHYS itself is read from C and
+\ selected here per arch. Nothing in the device tree publishes it. Publishing
+\ virt_offset -- or implementing 1275's `map-in` -- would remove this last
+\ constant; until then the pair below is checked by `smoke-openbios.sh
 \ struct-device`, which paints through it and reads PHYSICAL memory back from
 \ outside the firmware.
+\
+\ SELECTING IT BY CELL WIDTH ALONE WAS A BUG (fixed 2026-09-02, B.3 Spike 0).
+\ `/n 8 =` reads as "amd64/unix : x86", but ppc is ALSO 32-bit and its
+\ LOAD_BASE_PHYS is 0x4000000, not x86's 0x400000 -- so a 32-bit cell silently
+\ handed ppc x86's value and >virt/>phys were wrong-by-construction there. The
+\ real discriminator is RELOCATION, and only x86 relocates: arch/x86/segment.c
+\ reassigns virt_offset, while arch/{amd64,ppc,unix} set it to 0 and never touch
+\ it (source-confirmed), so their load-base == load-base-phys (identity) and the
+\ constant is 0x4000000. x86 is the 32-bit LITTLE-endian target; ppc is 32-bit
+\ BIG-endian -- so among 32-bit arches the NATIVE CPU byte order tells them
+\ apart, and byte order is exactly what makes a physical access differ, so it is
+\ the property to measure rather than a proxy for it. Measured on all four
+\ (B.3 Spike 0): amd64/unix lbp=4000000, ppc lbp=4000000 (nbe=-1), x86 lbp=400000
+\ (nbe=0). x86/amd64 values are UNCHANGED by this rewrite; only ppc moves.
 
-: load-base-phys ( -- p )  /n 8 = if 4000000 else 400000 then ;
+\ native-be? ( -- flag )  true if the CPU is big-endian, measured by a NATIVE
+\ 32-bit store read back a byte at a time (l! is native order; le-l! is not).
+variable (be-probe)
+: native-be? ( -- flag )  12345678 (be-probe) l!  (be-probe) c@ 12 = ;
+
+: load-base-phys ( -- p )
+  /n 8 = if 4000000 else                    \ 64-bit: amd64/unix, identity
+    native-be? if 4000000 else 400000 then  \ 32-bit: ppc (BE) : x86 (LE)
+  then ;
 : >virt ( phys -- adr )    load-base-phys - load-base + ;
 : >phys ( adr -- phys )    load-base - load-base-phys + ;
 
@@ -359,3 +380,55 @@ hex
     loop
     ."  |" i 10 .ascii ." |" cr
   10 +loop ;
+
+\ ── the CURSOR: length-prefixed / TLV records (B.3 Spike 0) ─────────
+\ The static layer above (field:/array:) bakes every offset at COMPILE time --
+\ `base field: → adr` -- which is exactly right for a fixed header (ELF, a CBFS
+\ master header) and CANNOT express a record whose later offsets depend on a
+\ length read at RUNTIME (a TCG event-log entry, an ELF note, a CBFS file name).
+\
+\ THE MODEL DECISION (Spike 0, option A vs B), decided by building it: this is
+\ OPTION B -- a PARALLEL cursor vocabulary, `field:`/`array:`/`(tfield)` left
+\ UNTOUCHED. Why not A (a cursor mode inside the field word): `t@ ( adr tid -- u )`
+\ is ALREADY offset-agnostic -- it reads width/order/space from the tid and takes
+\ the address from the caller; the offset is added by the FIELD WORD's `does>`,
+\ never by `t@`. So a length-prefixed walk needs no change to `field:` at all,
+\ only (i) a running cursor to feed `t@` and (ii) a BARE tid per element. Baking a
+\ cursor into the field word would contaminate the static-offset path the headers
+\ rely on, for nothing. Proven byte-identical on unix/amd64/x86/ppc, 2026-09-02.
+
+\ type: a BARE type id (no baked offset), for the cursor. `field:` yields
+\ ( base -- adr tid ); a walk has no static base, so `type:` builds the same
+\ 4-cell tid t@/t! already understand (+0 off, +1 width, +2 order, +3 space) but
+\ the created word yields ( -- tid ): its own pfa. `<width> <order> <space> type:`.
+: type: ( width order space "name" -- )  create 0 , rot , swap , , ;
+
+\ the cursor. A record is walked by a running address; rec-base anchors alignment
+\ (TLV padding is relative to the record start, not the absolute address).
+variable rec-base
+variable rec-cur
+: >rec    ( adr -- )  dup rec-base ! rec-cur ! ;
+: rec@    ( -- adr )  rec-cur @ ;
+: +rec    ( n -- )    rec-cur +! ;
+: rec-off ( -- n )    rec-cur @ rec-base @ - ;
+
+\ alignto ( n -- ) advance the cursor so (cur-base) is the next multiple of n.
+\ aligned = (off + n - 1) / n * n ; cur = base + aligned.
+: alignto ( n -- )  dup rec-off + 1- over / * rec-base @ + rec-cur ! ;
+
+\ read/store a fixed field AT the cursor, then advance by its width -- composing
+\ with the SAME t@/t! machinery as every header field, so a length prefix is read
+\ through the width/endian-aware path, never a raw fetch (the property the ppc
+\ negative control defends: a bare l@ there would byte-swap and only ppc notices).
+: t@+ ( tid -- u )  rec@ over t@  swap t-width +rec ;
+: t!+ ( u tid -- )  rec@ over t!  swap t-width +rec ;
+
+\ vfield: a length-PREFIXED byte field -- poke's cursor-mode `file:` in one line
+\ (a member whose extent is read from an earlier member). `<prefix-tid> vfield:
+\ NAME` makes NAME ( -- adr len ): read the length through the prefix tid
+\ (advancing past it), then hand back the bytes and advance past them. The count
+\ is a RUNTIME value -- what the static-offset model cannot express, and the
+\ whole reason this section exists.
+: vfield: ( ptid "name" -- )
+  create ,
+  does>  ( -- adr len )  @ t@+  ( len )  rec@ over +rec  swap ;

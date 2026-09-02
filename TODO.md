@@ -511,29 +511,55 @@ requires of any other cached fact.
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
       dissect). A preboot TLV toolkit over the four OpenBIOS arches as an
-      endianness×width control. **Spike 0 is the gate** (`vfield:`/`alignto` + the
-      static-offset-vs-cursor decision); then the TCG event log (attestation without a
-      TPM, stopping honestly at the quote) and coreboot CBFS. Extends
-      `examples/openbios-the-rival-that-shipped/`; enabled by §20's `write-file`, mapped
-      by §21's gleanings.
+      endianness×width control. **Reviewed 2026-09-01**
+      ([`REVIEW-preboot-structure-toolkit-plan.md`](REVIEW-preboot-structure-toolkit-plan.md));
+      the review's corrections are folded into the plan. **Sequence: Spike −1 →
+      Spike 0 → Spike 2 (before 1) → Spike 1.**
+    - **Spike −1 (delivery) — ✅ GREEN 2026-09-01.** The review's F3 found the four-arch
+      matrix was a two-arch artifact (no `dsl/*.fth` had ever run on `ppc`/`unix`); the
+      delivery spike closed it. Both "missing" doors existed in the shipped builds — no
+      reflow, no dictionary bake, no new C: **ppc** loads from a plain ISO via
+      `load cd:\FILE.FTH;1` (the native iso9660 driver needs the `;1` suffix and rejects
+      the `cd:,` comma — two path-parse quirks read out of `fs/iso9660/`); **unix** loads
+      via `-f door.iso` + grubfs (which strips `;1`) after re-pointing `load-base` into
+      an `alloc-mem` buffer with `$setenv` (nothing is mapped at the default 0x4000000, so
+      `load` segfaults otherwise). The `struct-layer` G2 controls then ran on all four:
+      **ppc≡x86 and unix≡amd64, 34/34 markers each** (incl. every `T-ERR` refusal firing
+      by name). Byte order is a property of the field *declaration*, not the CPU. Also
+      re-measured: `cbfstool extract` **works** with `-m ARCH` (the 2026-08-27
+      "cannot extract at all" was a missing-flag run — corrected in
+      `tools/openbios-rom-provenance.sh`).
+    - **Spike 0 (the gate) — LANDED 2026-09-02.** Model decision = option B (a parallel
+      cursor vocabulary — `type:`/`>rec`/`alignto`/`t@+`/`vfield:` — beside the static
+      layer, `field:` untouched, because `t@` is already offset-agnostic). Shipped as a
+      new cursor section of `dsl/struct.fth` + a `tlv-primitives` smoke track (wrapper,
+      run-all.sh, tier-b `DEFAULT_TRACKS`, and `unix` added to the CI build). Walks a
+      length-prefixed record byte-identically on all four arches; the ppc negative control
+      is a bare `l@` that slips a *host-native* access in (byte-swaps only on BE), not a
+      mislabelled `le-field:` (which all four read wrong identically — caught by the oracle,
+      not the arch). Also fixed here: `struct.fth`'s `load-base-phys` picked its constant
+      by cell width and handed ppc x86's `0x400000`; now endianness-aware
+      (x86 relocates → 400000; ppc/amd64/unix identity → 4000000), asserted per arch by the
+      track. STILL OPEN before Spike 0 is *complete*: the real `Elf_Note` positive case
+      (oracle `readelf -n`) and the per-arch write-file/pmem author paths. Then coreboot CBFS
+      (Spike 2, before the event log) and the TCG event log (Spike 1 — attestation
+      without a TPM, stopping honestly at the quote; its subject is a swtpm guest's
+      `binary_bios_measurements`, since no ROM here measures anything).
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
-      the event log to see what got measured. What exists: coreboot→OpenBIOS (OpenBIOS
-      *is* the payload; not the inverse), OpenBIOS→Linux, coreboot→OpenBIOS→Linux, and —
-      in a *separate* lab — UEFI→u-root(LinuxBoot)→kexec→Linux. **The missing cell:
-      `coreboot → modern Linux directly` ❌ — coreboot here only ever carries OpenBIOS;
-      the Linux-as-firmware half (`examples/linuxboot-uefi-kexec/`) hangs off UEFI, not
-      coreboot, so the two halves exist and were never joined.** Two cheap items this
-      affords, in order (both lean on the CBFS reader, so **not before Spike 0**):
-      **(1)** the *"firmware reads its own ROM"* demo — OpenBIOS-as-coreboot-payload
-      walking the CBFS of the very ROM that delivered it at the `0 >` prompt (Spike 2 +
-      Spike 3 collapsed and made live; needs nothing not on disk — the `LB_TAG` parser is
-      already in `libopenbios/linuxbios_info.c`); **(2)** `coreboot → u-root` (the missing
-      cell) + a comparison bench of the same Linux via three firmware substrates, where
-      the event-log half becomes a *comparison* (same ROM boot-block, different payloads →
-      different measurements) rather than a single reading. Its own lab plan only once
-      Spike 0 lands.
+      the event log to see what got measured. **CORRECTION (review F1):** the cell this
+      entry previously called missing — `coreboot → modern Linux directly` — **is present**:
+      it is **Tier A of `examples/linuxboot-uefi-kexec/`** (a coreboot ROM carrying
+      linux-6.3 + u-root, ✅-verified to an AlmaLinux install). The host has **four**
+      coreboot ROMs with three payload kinds, so the "which payload" subject set is on disk
+      today. What is *not* built is the **comparison bench** (same Linux via three
+      substrates) — and its measured-boot leg needs a coreboot build with
+      `CONFIG_VBOOT` + a TPM (today's ROMs measure nothing; review F4). Two items, both
+      after Spike 0: **(1)** the *"firmware reads its own ROM"* demo (Spike 2 + Spike 3
+      collapsed and made live — the `LB_TAG` parser is already in
+      `libopenbios/linuxbios_info.c`); **(2)** the bench. Its own lab plan only once Spike
+      0 lands.
 
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 

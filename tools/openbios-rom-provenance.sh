@@ -19,10 +19,15 @@
 #
 # WHY A CACHED PAIRING RATHER THAN A DERIVATION. The honest first choice is to
 # derive: extract the payload from the ROM and compare it against the ELF. coreboot
-# TRANSFORMS an ELF into its own segment format on the way in (1,162,128 bytes of
-# ELF became a 75,851-byte `simple elf` CBFS file here), so a byte-compare is
-# meaningless, and this tree's cbfstool cannot `extract` a payload at all — it fails
-# with "Failed while operating on 'COREBOOT' region". So the pairing is recorded at
+# TRANSFORMS an ELF into its own segment format on the way in (1,163,888 bytes of
+# ELF became a 79,144-byte `simple elf` CBFS file here), so a byte-compare is
+# meaningless: `cbfstool extract` DOES work on a payload — the 2026-08-27 note here
+# that it "cannot extract a payload at all" was a run missing the `-m ARCH` flag the
+# error's own first line asks for (re-measured 2026-09-01: `extract -n
+# fallback/payload -m x86` exits 0) — but what comes out is an ELF RECONSTITUTED
+# from the SELF segments (sections and symbols gone; different size, different
+# sha256 than the input), so deriving the pairing from bytes is still impossible.
+# So the pairing is recorded at
 # build time, which CLAUDE.md permits precisely here: "if it must be cached, bind it
 # to its subject's identity and refuse a mismatch by name." Both ends are re-derived
 # at check time; only the PAIRING is stored, because only the pairing is what cannot

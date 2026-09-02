@@ -59,6 +59,10 @@ TRACK (default multiboot):
   rmw-fields                  read-modify-write bits in a typed field
                               (t-set/t-clr/t-tog) — mudge's register idiom,
                               generalized; preserves neighbours where t! clobbers
+  tlv-primitives              B.3 Spike 0: the CURSOR half of struct.fth
+                              (vfield:/alignto/type:/t@+) walks a length-prefixed
+                              record byte-identically on ALL FOUR arches, the
+                              ppc row catching a host-native read (review F9)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -2873,6 +2877,206 @@ PY
     done
     pass "REVIEW G2: a TYPE layer over OpenBIOS Forth, both checkpoints met on BOTH arches. The definer was NOT the work — bootstrap.fs:1570 already ships 'struct'/'field' and it works untouched, which the review had wrong; what was missing is width and byte order, and dsl/struct.fth adds exactly that in ~60 lines over accessors that were already there. Checkpoint 1: a named field reads back deadbeef/cafebabe written by int! and le-l!, words that know nothing about the layer. Checkpoint 2: a typed store puts 11223344 into memory as 44 33 22 11 and a BARE le-l! through the field's own address is equally the write — no map/modify/poke-back, because a field yields the bytes rather than a copy of them (§P1). The controls are what make those mean anything: each field read through the OTHER byte order comes back exactly reversed (so 'it round-tripped' is not one accessor being its own inverse), the raw bytes are asserted beside every store, a poison byte past the layout is still ff, and THREE refusals fire by name — an unimplemented width, big-endian 64, and an 8-byte field on x86's 32-bit cell, where truncating would have been the LIED rung. Finally the layer is pointed at a real ELF64 — the amd64 firmware's own boot image, loaded off ISO9660 — and re-derives magic/class/type/machine/entry/size matching ground truth unpacked from the same bytes on the host, with e_entry read BOTH as two 4-byte halves and as one 8-byte field, agreeing"
     ;;
+  tlv-primitives)
+    # B.3 Spike 0: the CURSOR half of dsl/struct.fth — vfield:/alignto/type:/t@+ —
+    # over a LENGTH-PREFIXED record, on ALL FOUR arches.
+    #
+    # WHAT THIS PROVES THAT struct-layer DOES NOT. struct-layer exercises the
+    # STATIC-offset layer (field:/array:), whose every offset is baked at compile
+    # time — right for a fixed header, and unable to express a record whose later
+    # offsets depend on a length read at RUNTIME (a TCG event-log entry, an ELF
+    # note, a CBFS file name). Spike 0 added the cursor vocabulary for exactly that
+    # and decided its model by building it (option B: a parallel cursor beside the
+    # static layer, `field:` UNTOUCHED — see dsl/struct.fth's cursor section for
+    # why A was rejected). This track is that decision under a standing assertion.
+    #
+    # WHY ALL FOUR ARCHES, AND WHY THAT IS THE POINT. A structure toolkit's hardest
+    # property is width×endianness; a hosted tool (poke) runs on one machine and
+    # cannot control either. Here the record is authored once and walked on unix
+    # (64-bit LE), amd64 (64-bit LE), x86 (32-bit LE) and ppc (32-bit BE), and the
+    # eight positive markers must be IDENTICAL — because byte order is a property
+    # of the field DECLARATION, not the CPU (every accessor is bytewise). The two
+    # controls are what make that mean something:
+    #   * NEG (review F9): the same length read with a bare host-native `l@` must
+    #     AGREE (3) on the three LE arches and DIVERGE (3000000) on ppc — the one
+    #     thing the big-endian row uniquely catches, a native access that slipped
+    #     into a byte-order-explicit parser. A green single-arch run proves none of
+    #     this, which is the "written by analogy" trap this family keeps paying.
+    #   * LBP: load-base-phys must be 0x400000 on x86 (it relocates) and 0x4000000
+    #     everywhere else. That guards the 2026-09-02 fix — the cell-width heuristic
+    #     used to hand ppc x86's value — so if it regresses, ppc prints 400000 here.
+    #
+    # DELIVERY IS PER-ARCH (measured in B.3 Spike −1, and there is no shortcut):
+    # the shipped struct.fth has 83-column lines, so it cannot be typed at the
+    # 80-col line editor — it is delivered by `load` off media on every arch.
+    #   amd64/x86: -cdrom (grubfs, -r -J), load /ide@1/cdrom@0:\STRUCT.FTH
+    #   unix:      -f iso (grubfs), load hd:\STRUCT.FTH, AFTER re-pointing load-base
+    #              into an alloc-mem buffer ($setenv) — nothing is mapped at the
+    #              default 0x4000000 so `load` would segfault otherwise
+    #   ppc:       -cdrom (native iso9660, plain), load cd:\STRUCT.FTH;1 — the
+    #              native driver needs the ;1 version suffix and rejects the comma
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    TAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    TADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    TXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    TXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    TUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    TUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    TPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$TAMB" "$TADI" "$TXMB" "$TXDI" "$TUBIN" "$TUDICT" "$TPELF"; do
+      [[ -e "$f" ]] || skip "missing $f — run ./build-openbios.sh all first (this track needs all four arches; a missing one is an UNKNOWN, not a pass)"
+    done
+    TSRC="$HERE/dsl/struct.fth"
+    [[ -f "$TSRC" ]] || fail "the type layer is missing at $TSRC — this track stages the SHIPPED file, it does not re-implement it"
+
+    TST="$WORKDIR/tlv-stage"; rm -rf "$TST"; mkdir -p "$TST"
+    cp "$TSRC" "$TST/STRUCT.FTH"          # the shipped engine, copied not re-typed
+    # The checkpoint. Authors the synthetic length-prefixed record
+    #   { len:u32le, name[len], pad-to-4, body:u16le }   name="ELF", body=beef
+    # in the arena, walks it back through vfield:/alignto/t@+, and prints an arch
+    # fingerprint (load-base-phys, native byte order). It declares its own bare
+    # types with `type:` — struct.fth ships the definer, the format states the
+    # layout, exactly as elf.fth does with field:.
+    cat > "$TST/S0CHK.FTH" <<'FTH'
+\ B.3 Spike 0 checkpoints. Base HEX. struct.fth must already be evaluated.
+hex
+." S0-START" cr
+
+\ bare types for the cursor (struct.fth ships `type:`; the format declares these)
+4 1 0 type: u32le
+2 1 0 type: u16le
+
+\ the synthetic record, authored in the arena. Poison ff one byte PAST the record
+\ (offset a) so an over-long store is caught; ff first so an inherited zero cannot
+\ pass for a written byte.
+20 alloc-mem value rbuf
+: author-rec
+  ff rbuf a + c!
+  03 rbuf 0 + c!  00 rbuf 1 + c!  00 rbuf 2 + c!  00 rbuf 3 + c!
+  45 rbuf 4 + c!  4c rbuf 5 + c!  46 rbuf 6 + c!
+  00 rbuf 7 + c!
+  ef rbuf 8 + c!  be rbuf 9 + c! ;
+author-rec
+
+\ the record described with the cursor vocabulary. r-name reads the u32le length
+\ prefix AND the name bytes; the fixed body is read with t@+ after aligning to 4.
+u32le vfield: r-name
+
+: s0
+  rbuf >rec
+  r-name                          ( adr len )
+  ." s0-namelen=" dup . cr        ( adr len )
+  ." s0-name=" type cr
+  ." s0-afteroff=" rec-off . cr
+  4 alignto
+  ." s0-alignoff=" rec-off . cr
+  u16le t@+
+  ." s0-body=" u. cr
+  ." s0-endoff=" rec-off . cr
+  ." s0-poison=" rbuf a + c@ u. cr
+  ." S0-END" cr ;
+
+\ NEG (review F9): the SAME length prefix read with a bare host-native l@ instead
+\ of the width/endian-aware u32le. Agrees (3) on LE, byte-swaps (3000000) on ppc.
+: s0-neg
+  rbuf >rec
+  ." s0-neg-good=" rbuf u32le t@ u. cr
+  ." s0-neg-native=" rbuf l@ u. cr
+  ." S0NEG-END" cr ;
+
+\ arch fingerprint: load-base-phys must be 400000 only on x86, 4000000 elsewhere.
+: s0-arch
+  ." s0-lbp=" load-base-phys u. cr
+  ." s0-nbe=" native-be? . cr
+  ." S0ARCH-END" cr ;
+
+." S0-DEFS-OK" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/tlv-rj.iso"    -V TLV -r -J "$TST"  # amd64/x86 (grubfs)
+    genisoimage -quiet -o "$WORKDIR/tlv-plain.iso" -V TLV       "$TST"  # unix/ppc
+
+    # ── unix: -f iso + grubfs, load-base re-pointed into the arena ───────────
+    printf '%s\n' \
+      '20000 alloc-mem value tlvbuf' \
+      'tlvbuf (u.) s" load-base" $setenv' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\S0CHK.FTH'  'load-base load-size evaluate' \
+      's0' 's0-neg' 's0-arch' 'bye' \
+      | "$TUBIN" -f "$WORKDIR/tlv-plain.iso" "$TUDICT" 2>&1 | tr -d '\r' \
+      > "$WORKDIR/tlv-unix.log"
+
+    # ── amd64 + x86: -cdrom, driven over the serial prompt ───────────────────
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$TAMB"; DI="$TADI"; else MB="$TXMB"; DI="$TXDI"; fi
+      TSOCK="$WORKDIR/tlv-$A.sock"; TLOG="$WORKDIR/tlv-$A.log"; rm -f "$TSOCK" "$TLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/tlv-rj.iso" -display none -serial "unix:$TSOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      TQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$TSOCK" "$TLOG" --timeout 180 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\S0CHK.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "S0-DEFS-OK" \
+        --send 's0\r' --expect "S0-END" \
+        --send 's0-neg\r' --expect "S0NEG-END" \
+        --send 's0-arch\r' --expect "S0ARCH-END"
+      TRC=$?
+      kill "$TQ" 2>/dev/null   # by PID, never by pattern
+      [[ $TRC -eq 0 ]] \
+        || fail "tlv-primitives on $A: the cursor probe did not complete (rc=$TRC) — see $TLOG"
+    done
+
+    # ── ppc: -cdrom (plain iso9660), driven over the pty with echo-gating ────
+    TPLOG="$WORKDIR/tlv-ppc.log"; rm -f "$TPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$TPLOG" --timeout 500 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " \
+      --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\S0CHK.FTH;1\r' --expect "> " \
+      --send 'load-base load-size evaluate\r' --expect "S0-DEFS-OK" \
+      --send 's0\r' --expect "S0-END" \
+      --send 's0-neg\r' --expect "S0NEG-END" \
+      --send 's0-arch\r' --expect "S0ARCH-END" \
+      -- qemu-system-ppc -bios "$TPELF" -nographic -vga none -cdrom "$WORKDIR/tlv-plain.iso"
+    TPRC=$?
+    [[ $TPRC -eq 0 ]] \
+      || fail "tlv-primitives on ppc: the cursor probe did not complete (rc=$TPRC) — see $TPLOG"
+
+    # ── assert: eight positive markers IDENTICAL across all four; the two
+    #    controls diverge exactly where they must ────────────────────────────
+    for A in unix amd64 x86 ppc; do
+      TL="$WORKDIR/tlv-$A.log"
+      TG="$(tr -d '\r' < "$TL")"
+      # UNANCHORED on purpose: the console echoes the invoking word, so a marker
+      # can continue an echoed line. The class covers hex, the ELF name, 3000000
+      # and a signed -1. head -1 takes the OUTPUT (the echo of `s0` carries no `=`).
+      tv() { grep -aoE "$1=[-0-9a-zA-Z]+" <<<"$TG" | head -1 | cut -d= -f2; }
+      for kv in namelen:3 afteroff:7 alignoff:8 body:beef endoff:a poison:ff neg-good:3; do
+        TN="${kv%%:*}"; TW="${kv##*:}"; TGOT="$(tv "s0-$TN")"
+        [[ "$TGOT" == "$TW" ]] \
+          || fail "tlv-primitives on $A: s0-$TN=${TGOT:-absent}, expected $TW — the length-prefixed walk read the wrong bytes (or a marker never printed) — see $TL"
+      done
+      TNM="$(tv s0-name)"
+      [[ "$TNM" == ELF ]] \
+        || fail "tlv-primitives on $A: vfield: recovered name='${TNM:-absent}', not 'ELF' — the length prefix or the byte span is wrong — see $TL"
+      # NEG control — the whole reason the ppc row exists.
+      TEXPN=3; [[ "$A" == ppc ]] && TEXPN=3000000
+      TNEG="$(tv s0-neg-native)"
+      [[ "$TNEG" == "$TEXPN" ]] \
+        || fail "tlv-primitives on $A: a host-native l@ read of the length is ${TNEG:-absent}, expected $TEXPN — the width/endian-aware read (3) and the bare l@ must AGREE on LE and DIVERGE on ppc; if $A is a LE arch showing anything but 3, or ppc not byte-swapping, the byte-order-explicit property is broken — see $TL"
+      # LBP — the load-base-phys cell-width fix (2026-09-02).
+      TEXPL=4000000; [[ "$A" == x86 ]] && TEXPL=400000
+      TLBP="$(tv s0-lbp)"
+      [[ "$TLBP" == "$TEXPL" ]] \
+        || fail "tlv-primitives on $A: load-base-phys=${TLBP:-absent}, expected $TEXPL — only x86 relocates (0x400000); every other arch is identity (0x4000000). A cell-width heuristic would hand ppc 0x400000, which is the bug this asserts against — see $TL"
+      note "$A: name/len ELF/3, off 7→8, body beef, poison ff; neg good=3 native=$TNEG; load-base-phys=$TLBP"
+    done
+    pass "B.3 Spike 0: the cursor vocabulary (type:/>rec/alignto/t@+/vfield:) walks a length-prefixed record { len:u32le, name[len], pad-to-4, body:u16le } byte-identically on unix, amd64, x86 AND ppc — name='ELF', body=0xbeef, alignment 7→8, poison-past-end intact — on all four. The MODEL DECISION was option B (a parallel cursor beside the static layer, field:/array: untouched), decided by building it: t@ is already offset-agnostic, so the walk needs only a running cursor and a bare type: tid, no cursor mode inside the field word. The two controls make the four-arch agreement mean something: a bare host-native l@ read of the length AGREES (3) on the three LE arches and DIVERGES (3000000) on big-endian ppc — the one bug the ppc row uniquely catches (review F9); and load-base-phys reads 0x400000 on x86 (the one relocating arch) and 0x4000000 on the other three, guarding the 2026-09-02 fix that stopped the cell-width heuristic handing ppc x86's value. Byte order is a property of the field declaration, not the CPU, which is why a firmware-hosted structure toolkit can be MORE trustworthy about it than a single-machine tool, not less. Still open (plan §5 Spike 0): the real Elf_Note positive case + readelf -n oracle, and the per-arch write-file/pmem author paths"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -4267,5 +4471,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|unix]" >&2; exit 1 ;;
 esac
