@@ -59,6 +59,10 @@ TRACK (default multiboot):
   rmw-fields                  read-modify-write bits in a typed field
                               (t-set/t-clr/t-tog) — mudge's register idiom,
                               generalized; preserves neighbours where t! clobbers
+  tlv-primitives              B.3 Spike 0: the CURSOR half of struct.fth
+                              (vfield:/alignto/type:/t@+) walks a length-prefixed
+                              record byte-identically on ALL FOUR arches, the
+                              ppc row catching a host-native read (review F9)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -2873,6 +2877,340 @@ PY
     done
     pass "REVIEW G2: a TYPE layer over OpenBIOS Forth, both checkpoints met on BOTH arches. The definer was NOT the work — bootstrap.fs:1570 already ships 'struct'/'field' and it works untouched, which the review had wrong; what was missing is width and byte order, and dsl/struct.fth adds exactly that in ~60 lines over accessors that were already there. Checkpoint 1: a named field reads back deadbeef/cafebabe written by int! and le-l!, words that know nothing about the layer. Checkpoint 2: a typed store puts 11223344 into memory as 44 33 22 11 and a BARE le-l! through the field's own address is equally the write — no map/modify/poke-back, because a field yields the bytes rather than a copy of them (§P1). The controls are what make those mean anything: each field read through the OTHER byte order comes back exactly reversed (so 'it round-tripped' is not one accessor being its own inverse), the raw bytes are asserted beside every store, a poison byte past the layout is still ff, and THREE refusals fire by name — an unimplemented width, big-endian 64, and an 8-byte field on x86's 32-bit cell, where truncating would have been the LIED rung. Finally the layer is pointed at a real ELF64 — the amd64 firmware's own boot image, loaded off ISO9660 — and re-derives magic/class/type/machine/entry/size matching ground truth unpacked from the same bytes on the host, with e_entry read BOTH as two 4-byte halves and as one 8-byte field, agreeing"
     ;;
+  tlv-primitives)
+    # B.3 Spike 0: the CURSOR half of dsl/struct.fth — vfield:/alignto/type:/t@+ —
+    # over a LENGTH-PREFIXED record, on ALL FOUR arches.
+    #
+    # WHAT THIS PROVES THAT struct-layer DOES NOT. struct-layer exercises the
+    # STATIC-offset layer (field:/array:), whose every offset is baked at compile
+    # time — right for a fixed header, and unable to express a record whose later
+    # offsets depend on a length read at RUNTIME (a TCG event-log entry, an ELF
+    # note, a CBFS file name). Spike 0 added the cursor vocabulary for exactly that
+    # and decided its model by building it (option B: a parallel cursor beside the
+    # static layer, `field:` UNTOUCHED — see dsl/struct.fth's cursor section for
+    # why A was rejected). This track is that decision under a standing assertion.
+    #
+    # WHY ALL FOUR ARCHES, AND WHY THAT IS THE POINT. A structure toolkit's hardest
+    # property is width×endianness; a hosted tool (poke) runs on one machine and
+    # cannot control either. Here the record is authored once and walked on unix
+    # (64-bit LE), amd64 (64-bit LE), x86 (32-bit LE) and ppc (32-bit BE), and the
+    # eight positive markers must be IDENTICAL — because byte order is a property
+    # of the field DECLARATION, not the CPU (every accessor is bytewise). The two
+    # controls are what make that mean something:
+    #   * NEG (review F9): the same length read with a bare host-native `l@` must
+    #     AGREE (3) on the three LE arches and DIVERGE (3000000) on ppc — the one
+    #     thing the big-endian row uniquely catches, a native access that slipped
+    #     into a byte-order-explicit parser. A green single-arch run proves none of
+    #     this, which is the "written by analogy" trap this family keeps paying.
+    #   * LBP: load-base-phys must be 0x400000 on x86 (it relocates) and 0x4000000
+    #     everywhere else. That guards the 2026-09-02 fix — the cell-width heuristic
+    #     used to hand ppc x86's value — so if it regresses, ppc prints 400000 here.
+    #
+    # DELIVERY IS PER-ARCH (measured in B.3 Spike −1, and there is no shortcut):
+    # the shipped struct.fth has 83-column lines, so it cannot be typed at the
+    # 80-col line editor — it is delivered by `load` off media on every arch.
+    #   amd64/x86: -cdrom (grubfs, -r -J), load /ide@1/cdrom@0:\STRUCT.FTH
+    #   unix:      -f iso (grubfs), load hd:\STRUCT.FTH, AFTER re-pointing load-base
+    #              into an alloc-mem buffer ($setenv) — nothing is mapped at the
+    #              default 0x4000000 so `load` would segfault otherwise
+    #   ppc:       -cdrom (native iso9660, plain), load cd:\STRUCT.FTH;1 — the
+    #              native driver needs the ;1 version suffix and rejects the comma
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    TAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    TADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    TXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    TXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    TUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    TUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    TPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$TAMB" "$TADI" "$TXMB" "$TXDI" "$TUBIN" "$TUDICT" "$TPELF"; do
+      [[ -e "$f" ]] || skip "missing $f — run ./build-openbios.sh all first (this track needs all four arches; a missing one is an UNKNOWN, not a pass)"
+    done
+    TSRC="$HERE/dsl/struct.fth"
+    [[ -f "$TSRC" ]] || fail "the type layer is missing at $TSRC — this track stages the SHIPPED file, it does not re-implement it"
+
+    TST="$WORKDIR/tlv-stage"; rm -rf "$TST"; mkdir -p "$TST"
+    cp "$TSRC" "$TST/STRUCT.FTH"          # the shipped engine, copied not re-typed
+    # The checkpoint. Authors the synthetic length-prefixed record
+    #   { len:u32le, name[len], pad-to-4, body:u16le }   name="ELF", body=beef
+    # in the arena, walks it back through vfield:/alignto/t@+, and prints an arch
+    # fingerprint (load-base-phys, native byte order). It declares its own bare
+    # types with `type:` — struct.fth ships the definer, the format states the
+    # layout, exactly as elf.fth does with field:.
+    cat > "$TST/S0CHK.FTH" <<'FTH'
+\ B.3 Spike 0 checkpoints. Base HEX. struct.fth must already be evaluated.
+hex
+." S0-START" cr
+
+\ bare types for the cursor (struct.fth ships `type:`; the format declares these)
+4 1 0 type: u32le
+2 1 0 type: u16le
+
+\ the synthetic record, authored in the arena. Poison ff one byte PAST the record
+\ (offset a) so an over-long store is caught; ff first so an inherited zero cannot
+\ pass for a written byte.
+20 alloc-mem value rbuf
+: author-rec
+  ff rbuf a + c!
+  03 rbuf 0 + c!  00 rbuf 1 + c!  00 rbuf 2 + c!  00 rbuf 3 + c!
+  45 rbuf 4 + c!  4c rbuf 5 + c!  46 rbuf 6 + c!
+  00 rbuf 7 + c!
+  ef rbuf 8 + c!  be rbuf 9 + c! ;
+author-rec
+
+\ the record described with the cursor vocabulary. r-name reads the u32le length
+\ prefix AND the name bytes; the fixed body is read with t@+ after aligning to 4.
+u32le vfield: r-name
+
+: s0
+  rbuf >rec
+  r-name                          ( adr len )
+  ." s0-namelen=" dup . cr        ( adr len )
+  ." s0-name=" type cr
+  ." s0-afteroff=" rec-off . cr
+  4 alignto
+  ." s0-alignoff=" rec-off . cr
+  u16le t@+
+  ." s0-body=" u. cr
+  ." s0-endoff=" rec-off . cr
+  ." s0-poison=" rbuf a + c@ u. cr
+  ." S0-END" cr ;
+
+\ NEG (review F9): the SAME length prefix read with a bare host-native l@ instead
+\ of the width/endian-aware u32le. Agrees (3) on LE, byte-swaps (3000000) on ppc.
+: s0-neg
+  rbuf >rec
+  ." s0-neg-good=" rbuf u32le t@ u. cr
+  ." s0-neg-native=" rbuf l@ u. cr
+  ." S0NEG-END" cr ;
+
+\ arch fingerprint: load-base-phys must be 400000 only on x86, 4000000 elsewhere.
+: s0-arch
+  ." s0-lbp=" load-base-phys u. cr
+  ." s0-nbe=" native-be? . cr
+  ." S0ARCH-END" cr ;
+
+\ AUTHOR PATH, external observer: print the authored record's raw bytes so the
+\ HOST — not the firmware's own reader — confirms them (x86/ppc author path).
+\ Contiguous hex, so the host diffs it verbatim.
+: s0-bytes  ." s0-bytes=" a 0 do rbuf i + c@ .hx2 loop cr ." S0BYTES-END" cr ;
+
+\ author the SAME record via the typed cursor at an arbitrary base — used to write
+\ it into an NVDIMM the firmware does not own (amd64 author path). len and body go
+\ through t!+ (u32le/u16le); the name bytes and pad are literal.
+: author-rec-at ( base -- )
+  >rec
+  3 u32le t!+
+  45 rec@ c!  4c rec@ 1+ c!  46 rec@ 2 + c!  3 +rec
+  0 rec@ c!  1 +rec
+  beef u16le t!+ ;
+
+\ THE REAL POSITIVE CASE (review F7): a genuine Elf_Note, walked with the cursor.
+\ namesz/descsz/type are read up front, THEN name[namesz] pad-to-4 desc[descsz] —
+\ so the name/desc use vbytes (length already known), not vfield: (prefix+bytes).
+\ The subject is a real firmware ELF's .note.gnu.build-id; its desc is a content
+\ hash the host cross-checks with `readelf -n`.
+variable nz  variable dz
+: elf-note ( -- )
+  u32le t@+ nz !
+  u32le t@+ dz !
+  u32le t@+
+  ." note-type=" dup u. cr drop
+  ." note-namesz=" nz @ u. cr
+  ." note-descsz=" dz @ u. cr
+  ." note-name=" nz @ vbytes cstr type cr
+  4 alignto
+  dz @ vbytes ." note-desc="
+  dz @ 0 do dup i + c@ .hx2 loop drop cr
+  ." NOTE-END" cr ;
+
+." S0-DEFS-OK" cr
+FTH
+    # The Elf_Note positive case's subject: a real firmware ELF with a
+    # .note.gnu.build-id. openbios-unix is required by this track anyway and its
+    # desc is a genuine content hash, so it is both guaranteed-present and thematic.
+    command -v readelf >/dev/null || skip "readelf not installed — it is the Elf_Note foreign oracle"
+    cp "$TUBIN" "$TST/NOTE.ELF"
+    genisoimage -quiet -o "$WORKDIR/tlv-rj.iso"    -V TLV -r -J "$TST"  # amd64/x86 (grubfs)
+    genisoimage -quiet -o "$WORKDIR/tlv-plain.iso" -V TLV       "$TST"  # unix/ppc
+
+    # GROUND TRUTH for the note, computed from the STAGED subject (derive, don't
+    # cache): its file offset (fed to the firmware) and the fields the walk must
+    # reproduce. The build-id is ALSO read from `readelf -n` as the foreign oracle,
+    # and the two must agree before either is trusted as ground truth.
+    read -r NOFF NNZ NDZ NTYPE NNAME NID < <(
+      python3 - "$TST/NOTE.ELF" <<'PY'
+import struct,sys
+f=open(sys.argv[1],'rb').read()
+shoff=struct.unpack_from('<Q',f,0x28)[0]; shent=struct.unpack_from('<H',f,0x3a)[0]
+shnum=struct.unpack_from('<H',f,0x3c)[0]; shstrndx=struct.unpack_from('<H',f,0x3e)[0]
+def sh(i): return struct.unpack_from('<IIQQQQ',f,shoff+i*shent)  # name,type,flags,addr,off,size
+stroff=sh(shstrndx)[4]
+for i in range(shnum):
+    name,typ,flags,addr,off,size=sh(i)
+    nm=f[stroff+name:f.index(b'\0',stroff+name)].decode()
+    if nm=='.note.gnu.build-id':
+        namesz,descsz,ntype=struct.unpack_from('<III',f,off)
+        base=off+12; dstart=base+((namesz+3)&~3)
+        name_s=f[base:f.index(b'\0',base)].decode()
+        desc=f[dstart:dstart+descsz]
+        print("%x %x %x %x %s %s"%(off,namesz,descsz,ntype,name_s,desc.hex()))
+        break
+PY
+    )
+    [[ -n "$NOFF" && -n "$NID" ]] \
+      || fail "tlv-primitives: could not locate a .note.gnu.build-id in $TST/NOTE.ELF — the Elf_Note positive case has no subject"
+    NID_ORACLE="$(readelf -n "$TST/NOTE.ELF" 2>/dev/null | grep -aoiE 'Build ID: [0-9a-f]+' | head -1 | awk '{print $3}')"
+    [[ "$NID" == "$NID_ORACLE" ]] \
+      || fail "tlv-primitives: python and readelf -n disagree on the build-id ($NID vs $NID_ORACLE) — the ground truth is not trustworthy, so the note assertion would be meaningless"
+    note "note subject: build-id ${NID} at file offset 0x${NOFF} (namesz=$NNZ descsz=$NDZ type=$NTYPE name=$NNAME), python == readelf -n"
+
+    # ── unix: -f iso + grubfs, load-base re-pointed into the arena. Author path:
+    #    write-file persists the record to a real host file that od reads back
+    #    after the process exits. Runs in a fresh CWD so a bare filename (the
+    #    80-col line editor cannot hold an absolute path) lands where the host
+    #    controls. Buffer is 0x80000, not 0x20000: NOTE.ELF loads into load-base
+    #    and is larger than the synthetic record needed.
+    TUD="$WORKDIR/tlv-unix-cwd"; rm -rf "$TUD"; mkdir -p "$TUD"
+    ( cd "$TUD" && printf '%s\n' \
+      '80000 alloc-mem value tlvbuf' \
+      'tlvbuf (u.) s" load-base" $setenv' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\S0CHK.FTH'  'load-base load-size evaluate' \
+      's0' 's0-neg' 's0-arch' 's0-bytes' \
+      'rbuf a s" rec.bin" write-file drop' \
+      'load hd:\NOTE.ELF' \
+      "load-base $NOFF + >rec" 'elf-note' 'bye' \
+      | "$TUBIN" -f "$WORKDIR/tlv-plain.iso" "$TUDICT" 2>&1 | tr -d '\r' ) \
+      > "$WORKDIR/tlv-unix.log"
+
+    # amd64's author path is an NVDIMM at 0x100000000 backed by a host file (the
+    # pmem-writer seam). The before-control: a fresh sparse file is zeros, so the
+    # record cannot already be there.
+    TNV="$WORKDIR/tlv-amd64-pmem.img"; rm -f "$TNV"; truncate -s 64M "$TNV"
+    TNVOFF=$((0x400000)); TNVWANT="03 00 00 00 45 4c 46 00 ef be"
+    TNVHAD="$(od -An -tx1 -j "$TNVOFF" -N 10 "$TNV" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$TNVHAD" != "$TNVWANT" ]] \
+      || fail "tlv-primitives: the record was already at offset $TNVOFF in a fresh NVDIMM file — finding it after the author would prove nothing"
+
+    # ── amd64 + x86: -cdrom, driven over the serial prompt. amd64 also authors the
+    #    record into the NVDIMM (author path); both add s0-bytes and the note walk.
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$TAMB"; DI="$TADI"; else MB="$TXMB"; DI="$TXDI"; fi
+      TSOCK="$WORKDIR/tlv-$A.sock"; TLOG="$WORKDIR/tlv-$A.log"; rm -f "$TSOCK" "$TLOG"
+      QARGS=(qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI"
+             -cdrom "$WORKDIR/tlv-rj.iso" -display none -serial "unix:$TSOCK,server=on" -no-reboot)
+      if [[ "$A" == amd64 ]]; then
+        QARGS=(qemu-system-x86_64 -M "pc,accel=$ACCEL,nvdimm=on" -m "512,slots=2,maxmem=2G"
+               -kernel "$MB" -initrd "$DI"
+               -object "memory-backend-file,id=nv,share=on,mem-path=$TNV,size=64M"
+               -device "nvdimm,id=nv1,memdev=nv"
+               -cdrom "$WORKDIR/tlv-rj.iso" -display none -serial "unix:$TSOCK,server=on" -no-reboot)
+      fi
+      "${QARGS[@]}" >/dev/null 2>&1 &
+      TQ=$!
+      DARGS=(python3 "$REPO/tools/drive-serial-repl.py" "$TSOCK" "$TLOG" --timeout 180
+             --expect "0 > "
+             --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > "
+             --send 'load-base load-size evaluate\r' --expect "0 > "
+             --send 'load /ide@1/cdrom@0:\\S0CHK.FTH\r' --expect "0 > "
+             --send 'load-base load-size evaluate\r' --expect "S0-DEFS-OK"
+             --send 's0\r' --expect "S0-END"
+             --send 's0-neg\r' --expect "S0NEG-END"
+             --send 's0-arch\r' --expect "S0ARCH-END"
+             --send 's0-bytes\r' --expect "S0BYTES-END")
+      [[ "$A" == amd64 ]] && DARGS+=(--send '100400000 author-rec-at\r' --expect "0 > ")
+      DARGS+=(--send 'load /ide@1/cdrom@0:\\NOTE.ELF\r' --expect "0 > "
+              --send "load-base $NOFF + >rec\r" --expect "0 > "
+              --send 'elf-note\r' --expect "NOTE-END")
+      "${DARGS[@]}"
+      TRC=$?
+      kill "$TQ" 2>/dev/null   # by PID, never by pattern
+      [[ $TRC -eq 0 ]] \
+        || fail "tlv-primitives on $A: the cursor probe did not complete (rc=$TRC) — see $TLOG"
+    done
+
+    # ── ppc: -cdrom (plain iso9660), driven over the pty with echo-gating ────
+    TPLOG="$WORKDIR/tlv-ppc.log"; rm -f "$TPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$TPLOG" --timeout 600 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " \
+      --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\S0CHK.FTH;1\r' --expect "> " \
+      --send 'load-base load-size evaluate\r' --expect "S0-DEFS-OK" \
+      --send 's0\r' --expect "S0-END" \
+      --send 's0-neg\r' --expect "S0NEG-END" \
+      --send 's0-arch\r' --expect "S0ARCH-END" \
+      --send 's0-bytes\r' --expect "S0BYTES-END" \
+      --send 'load cd:\\NOTE.ELF;1\r' --expect "> " \
+      --send "load-base $NOFF + >rec\r" --expect "> " \
+      --send 'elf-note\r' --expect "NOTE-END" \
+      -- qemu-system-ppc -bios "$TPELF" -nographic -vga none -cdrom "$WORKDIR/tlv-plain.iso"
+    TPRC=$?
+    [[ $TPRC -eq 0 ]] \
+      || fail "tlv-primitives on ppc: the cursor probe did not complete (rc=$TPRC) — see $TPLOG"
+
+    # ── assert: eight positive markers IDENTICAL across all four; the two
+    #    controls diverge exactly where they must ────────────────────────────
+    for A in unix amd64 x86 ppc; do
+      TL="$WORKDIR/tlv-$A.log"
+      TG="$(tr -d '\r' < "$TL")"
+      # UNANCHORED on purpose: the console echoes the invoking word, so a marker
+      # can continue an echoed line. The class covers hex, the ELF name, 3000000
+      # and a signed -1. head -1 takes the OUTPUT (the echo of `s0` carries no `=`).
+      tv() { grep -aoE "$1=[-0-9a-zA-Z]+" <<<"$TG" | head -1 | cut -d= -f2; }
+      for kv in namelen:3 afteroff:7 alignoff:8 body:beef endoff:a poison:ff neg-good:3; do
+        TN="${kv%%:*}"; TW="${kv##*:}"; TGOT="$(tv "s0-$TN")"
+        [[ "$TGOT" == "$TW" ]] \
+          || fail "tlv-primitives on $A: s0-$TN=${TGOT:-absent}, expected $TW — the length-prefixed walk read the wrong bytes (or a marker never printed) — see $TL"
+      done
+      TNM="$(tv s0-name)"
+      [[ "$TNM" == ELF ]] \
+        || fail "tlv-primitives on $A: vfield: recovered name='${TNM:-absent}', not 'ELF' — the length prefix or the byte span is wrong — see $TL"
+      # NEG control — the whole reason the ppc row exists.
+      TEXPN=3; [[ "$A" == ppc ]] && TEXPN=3000000
+      TNEG="$(tv s0-neg-native)"
+      [[ "$TNEG" == "$TEXPN" ]] \
+        || fail "tlv-primitives on $A: a host-native l@ read of the length is ${TNEG:-absent}, expected $TEXPN — the width/endian-aware read (3) and the bare l@ must AGREE on LE and DIVERGE on ppc; if $A is a LE arch showing anything but 3, or ppc not byte-swapping, the byte-order-explicit property is broken — see $TL"
+      # LBP — the load-base-phys cell-width fix (2026-09-02).
+      TEXPL=4000000; [[ "$A" == x86 ]] && TEXPL=400000
+      TLBP="$(tv s0-lbp)"
+      [[ "$TLBP" == "$TEXPL" ]] \
+        || fail "tlv-primitives on $A: load-base-phys=${TLBP:-absent}, expected $TEXPL — only x86 relocates (0x400000); every other arch is identity (0x4000000). A cell-width heuristic would hand ppc 0x400000, which is the bug this asserts against — see $TL"
+      # AUTHOR PATH, in-arena external view (x86/ppc): the host reads the record's
+      # raw bytes as the firmware printed them, not through the firmware's reader.
+      TSB="$(tv s0-bytes)"
+      [[ "$TSB" == "03000000454c4600efbe" ]] \
+        || fail "tlv-primitives on $A: the authored record bytes are ${TSB:-absent}, not 03000000454c4600efbe — s0-bytes is the host-visible view of what author-rec wrote — see $TL"
+      # THE REAL ELF_NOTE (review F7), graded against ground truth read from the
+      # subject by readelf -n / python — a foreign oracle, not the firmware itself.
+      for kv in "type:$NTYPE" "namesz:$NNZ" "descsz:$NDZ" "name:$NNAME" "desc:$NID"; do
+        NN="${kv%%:*}"; NW="${kv##*:}"; NG="$(tv "note-$NN")"
+        [[ "$NG" == "$NW" ]] \
+          || fail "tlv-primitives on $A: the Elf_Note's $NN walked as '${NG:-absent}', but readelf/python read '$NW' from the same bytes — the cursor walk of a REAL note disagrees with the foreign oracle — see $TL"
+      done
+      note "$A: name/len ELF/3, off 7→8, body beef, poison ff; neg good=3 native=$TNEG; load-base-phys=$TLBP; s0-bytes ok; Elf_Note build-id $NID == readelf"
+    done
+
+    # AUTHOR PATH — unix write-file: the host reads the file the firmware persisted.
+    [[ -f "$TUD/rec.bin" ]] \
+      || fail "tlv-primitives unix author path: write-file created no $TUD/rec.bin — the firmware persisted nothing to a host file"
+    TUGOT="$(od -An -tx1 -N 10 "$TUD/rec.bin" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$TUGOT" == "$TNVWANT" ]] \
+      || fail "tlv-primitives unix author path: rec.bin holds [$TUGOT], not [$TNVWANT] — the authored record did not survive write-file to a host file"
+    # AUTHOR PATH — amd64 pmem: QEMU is gone; the host reads its own NVDIMM backing.
+    # This is the outcome the firmware's own reader cannot vouch for (assert the
+    # outcome, not the mechanism): only a reader that is not the firmware can say
+    # the typed stores reached storage the firmware does not own.
+    TNVGOT="$(od -An -tx1 -j "$TNVOFF" -N 10 "$TNV" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$TNVGOT" == "$TNVWANT" ]] \
+      || fail "tlv-primitives amd64 author path: the NVDIMM backing holds [$TNVGOT] at offset $TNVOFF, not [$TNVWANT] — author-rec-at wrote the record through the typed cursor (u32le/u16le t!+) but the bytes did not reach storage outside the firmware — see $WORKDIR/tlv-amd64.log"
+    note "author paths: x86/ppc in-arena bytes printed; unix write-file → rec.bin [$TUGOT]; amd64 t!+ → NVDIMM [$TNVGOT] — both external reads == the record"
+
+    pass "B.3 Spike 0 COMPLETE: the cursor vocabulary (type:/>rec/alignto/t@+/vbytes/vfield:) walks length-prefixed records byte-identically on unix, amd64, x86 AND ppc — proven on BOTH a synthetic record { len:u32le, name[len], pad-to-4, body:u16le } (name='ELF', body=0xbeef) AND a REAL Elf_Note: the .note.gnu.build-id of a firmware ELF, whose namesz/descsz/type/name and 20-byte content-hash desc the walk reproduces MATCHING readelf -n (the foreign oracle) on all four arches. The model decision was option B (a parallel cursor beside the static layer, field:/array: untouched): t@ is already offset-agnostic, so the walk needs only a running cursor and a bare type: tid. Three controls make the four-arch agreement mean something: a bare host-native l@ read of a length AGREES (3) on the LE arches and DIVERGES (3000000) on big-endian ppc (review F9); load-base-phys reads 0x400000 only on relocating x86 and 0x4000000 elsewhere (the 2026-09-02 cell-width fix); and the AUTHOR PATH is verified by an observer OUTSIDE the firmware per arch — x86/ppc print the raw authored bytes, unix persists them with write-file to a host file od reads back, and amd64 authors the record through the typed cursor into an NVDIMM whose host backing file holds the bytes after QEMU exits. Byte order is a property of the field declaration, not the CPU, which is why a firmware-hosted structure toolkit can be MORE trustworthy about it than a single-machine tool"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -4267,5 +4605,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|unix]" >&2; exit 1 ;;
 esac

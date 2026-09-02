@@ -61,7 +61,7 @@ env:
   # (three boots and a screendump) and is here anyway, because it carries the
   # regression guard for patch 49 — the six 1275 device-register words that
   # shipped EMPTY, whose failure mode is a silent stack shift in an FCode driver.
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.
@@ -155,7 +155,12 @@ jobs:
           set -u
           cd examples/openbios-the-rival-that-shipped
           : > /tmp/tierb-times
-          for a in x86 amd64 ppc; do
+          # unix BEFORE amd64: both build into obj-amd64 (unix-amd64 and amd64 are
+          # separate switch-arch targets sharing the dir), and build-openbios.sh's
+          # `all` proves the unix→amd64 order leaves BOTH openbios-unix and
+          # openbios.multiboot present. The reverse order is untested, so don't use
+          # it. unix is here for the tlv-primitives track's four-arch matrix (F10).
+          for a in x86 ppc unix amd64; do
             s=$(date +%s)
             rc=0
             if ! timeout 3000 ./build-openbios.sh "$a" > "/tmp/build-$a.log" 2>&1; then
@@ -194,6 +199,7 @@ jobs:
           missing=()
           for f in obj-x86/openbios.multiboot obj-x86/openbios-x86.dict \
                    obj-amd64/openbios.multiboot obj-amd64/openbios-amd64.dict \
+                   obj-amd64/openbios-unix obj-amd64/openbios-unix.dict \
                    obj-ppc/openbios-qemu.elf; do
             [[ -f "$W/$f" ]] || missing+=("$f")
           done
