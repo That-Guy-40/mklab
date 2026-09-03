@@ -365,6 +365,16 @@ Split deliberately, because only half needs crypto:
   independent oracle), plus a self-consistency pass (every `eventSize` lands on
   the next entry; `count` digests present).
 
+  **1a — DONE 2026-09-02 (`dsl/eventlog.fth`, `event-log` track, unix).** The
+  firmware authors a `Spec ID Event03` header (declaring SHA-256) + `TCG_PCR_EVENT2`
+  entries through the Spike-0 cursor (little-endian — ppc byte-swaps here where it
+  read CBFS native); `write-file` persists it; **`tpm2_eventlog` parses it entry for
+  entry** (SpecID + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR). The firmware's own
+  reader round-trips it to `EVLOG-END`, and the negative control — one `eventSize`
+  stored **big-endian** — makes `tpm2_eventlog` refuse the whole log. 1a's digests
+  are placeholder fills (structure, not crypto), so `tpm2_eventlog` warns they are
+  not SHA-256 of the payload — expected, not a failure; 1b makes them real.
+
 - **1b — the replay (the payoff, needs SHA-256).** Compute each PCR by replaying
   its extends, `PCR = SHA256(PCR ‖ digest)`, and **verify the replayed value
   equals a claimed final PCR.** This is the attestation result you can get with no
