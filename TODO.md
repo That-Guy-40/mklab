@@ -589,12 +589,25 @@ requires of any other cached fact.
       holds every payload's segment table even for the 16 MiB `build` ROM (the table is at
       the payload's start). §12's thesis — the payload is the variable, the toolkit the
       constant — proven on disk.
-    - [ ] **⏭ NEXT STEP — Spike 2, the live form (§12(1)) — the uniquely-afforded demo.**
-      OpenBIOS-as-coreboot-payload walking the CBFS of the **very ROM that delivered it**, at
-      the `0 >` prompt, on the mapped flash window (`flash-writer` already reads that window
-      through `>virt`) — Spike 2 (CBFS) and Spike 3 (real device memory) collapsed into one.
-      No hosted `cbfstool` can be *inside the ROM it booted from*. Observer outside the
-      firmware: the ROM file on the host, `cmp`'d, plus QEMU monitor `xp`.
+    - **Spike 2 (coreboot CBFS) — the LIVE FORM (§12(1)) DONE 2026-09-02. Spike 2 is now
+      COMPLETE (read + write + payloads + live).** `cbfs-live` track: OpenBIOS booted AS the
+      **amd64 coreboot payload** walks the CBFS of the **very ROM that delivered it**, in its
+      mapped flash window — the one thing a hosted `cbfstool` structurally cannot do (it cannot
+      run inside the ROM it booted from). amd64 does not relocate (virt_offset=0), so the Forth
+      address `0xffc01000` (= 4 GiB − romsize + COREBOOT region offset, derived) IS the
+      guest-physical flash; `dsl/cbfs.fth` (delivered over CD, UNCHANGED from the read track)
+      lists all 12 files of its own container. Spike 2 (CBFS) + Spike 3 (real device memory)
+      collapsed into one. THREE observers, none trusting the firmware alone: (1) the firmware's
+      listing == coreboot's `cbfstool print` of the host ROM file entry for entry; (2) QEMU
+      monitor `xp` reads the same guest-physical bytes from OUTSIDE and they equal the ROM file
+      at the region offset (the mapped window IS the ROM, not a CD copy); (3) the walk reaches
+      `fallback/payload` — the SELF payload that IS this running firmware — and `bootblock`.
+    - [ ] **⏭ NEXT STEP — Spike 1 (the TCG event log)** — attestation without a TPM, stopping
+      honestly at the quote (the AK-signed quote stays UNKNOWN, §2's boundary). Its subject is a
+      swtpm guest's `binary_bios_measurements`, since no ROM here measures anything (review F4:
+      nothing sets `CONFIG_VBOOT`/`CONFIG_TPM*`). Replay the log, recompute the PCR extends, and
+      say plainly what is proven (the log is self-consistent) and what is not (that the machine
+      really measured those, without a hardware root of trust).
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

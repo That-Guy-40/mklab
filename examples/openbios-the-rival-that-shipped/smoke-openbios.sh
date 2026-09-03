@@ -77,6 +77,10 @@ TRACK (default multiboot):
                               cbfs_payload_segment table) to tell the four ROMs'
                               payloads apart, graded vs readelf; build-openbios on
                               all four arches proves the BE reads (needs 4 ROMs)
+  cbfs-live                   B.3 Spike 2 (§12(1)): OpenBIOS booted AS the coreboot
+                              payload walks the CBFS of the VERY ROM that delivered
+                              it, in its mapped flash window — graded vs cbfstool
+                              and a QEMU-monitor xp observer (needs the amd64 ROM)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -3729,7 +3733,139 @@ PY
     note "ppc: the big-endian row's segment table is byte-identical to unix (BE reads confirmed)"
     unset SIG
 
-    pass "B.3 Spike 2 (payloads): dsl/cbfs-payload.fth dissects the coreboot SELF payload inside fallback/payload — the cbfs_payload_segment array (big-endian CODE/DATA/BSS/ENTR with load addresses and an entry point) that tells payload KINDS apart, since all four ROMs carry CBFS type 'simple elf' and only the segment table distinguishes them. Told apart on unix, each graded against readelf of the reconstituted ELF (the foreign oracle: every loadable segment's load/mem == a PT_LOAD's VirtAddr/MemSiz, the ENTR load == e_entry): build (Linux+u-root, 5 segs, entry 0x40000), build-ofw (Firmworks, entry 0x19800a0), build-openbios (OpenBIOS ppc, entry 0x101e68), build-openbios-amd64 (OpenBIOS amd64, entry 0x101bf0) — four DISTINCT signatures, so the toolkit is the constant and the payload is the variable (§12). And the segment table is big-endian, so build-openbios walked on x86, amd64 AND ppc is byte-identical to unix — the ppc row proving the BE reads (and the u64 load split) are right where a hidden-LE bug would show as a ppc-only disagreement, the read cbfs track's control one structural layer deeper. STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    pass "B.3 Spike 2 (payloads): dsl/cbfs-payload.fth dissects the coreboot SELF payload inside fallback/payload — the cbfs_payload_segment array (big-endian CODE/DATA/BSS/ENTR with load addresses and an entry point) that tells payload KINDS apart, since all four ROMs carry CBFS type 'simple elf' and only the segment table distinguishes them. Told apart on unix, each graded against readelf of the reconstituted ELF (the foreign oracle: every loadable segment's load/mem == a PT_LOAD's VirtAddr/MemSiz, the ENTR load == e_entry): build (Linux+u-root, 5 segs, entry 0x40000), build-ofw (Firmworks, entry 0x19800a0), build-openbios (OpenBIOS ppc, entry 0x101e68), build-openbios-amd64 (OpenBIOS amd64, entry 0x101bf0) — four DISTINCT signatures, so the toolkit is the constant and the payload is the variable (§12). And the segment table is big-endian, so build-openbios walked on x86, amd64 AND ppc is byte-identical to unix — the ppc row proving the BE reads (and the u64 load split) are right where a hidden-LE bug would show as a ppc-only disagreement, the read cbfs track's control one structural layer deeper. The live form (the firmware walking the CBFS of the ROM that booted it, §12(1)) is the sibling cbfs-live track"
+    ;;
+  cbfs-live)
+    # THE UNIQUELY-AFFORDED DEMO (§12(1)): OpenBIOS booted AS the coreboot payload
+    # walks the CBFS of the very ROM that DELIVERED it, in the mapped flash window.
+    # No hosted cbfstool can be inside the ROM it booted from — Spike 2 (CBFS) and
+    # Spike 3 (real device memory) collapsed into one: the subject is guest-PHYSICAL
+    # flash, not a file handed to the firmware over a CD. QEMU maps a `-bios` ROM
+    # just below 4 GiB (a 4 MiB ROM at 0xffc00000), and amd64 does NOT relocate
+    # (virt_offset=0), so a Forth address IS physical — the reader walks the live
+    # ROM window directly. The DSL comes over CD (the READER is delivered; the ROM
+    # it reads is the firmware's own container).
+    #
+    # THREE OBSERVERS, none trusting the firmware's word alone:
+    #   1. the firmware's own cbfs-list of the flash window, graded ENTRY FOR ENTRY
+    #      against coreboot's cbfstool print of the host ROM file (the derived oracle)
+    #   2. QEMU monitor `xp` reads the same guest-physical bytes from OUTSIDE the
+    #      firmware and they equal the ROM file — the mapped window IS the ROM
+    #   3. the walk must reach fallback/payload — the SELF payload that IS the very
+    #      firmware doing the reading — and bootblock
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v xxd >/dev/null || skip "xxd not installed — the monitor-xp observer compares against the ROM file"
+    LROM="$CB/build-openbios-amd64/coreboot.rom"
+    LCBT="$CB/build-openbios-amd64/cbfstool"
+    [[ -f "$LROM" ]] || skip "no amd64 coreboot ROM at $LROM — run ./build-coreboot-openbios.sh amd64 first"
+    [[ -x "$LCBT" ]] || skip "no cbfstool at $LCBT — the derived oracle; build the ROM first"
+    LSTRUCT="$HERE/dsl/struct.fth"; LCBFS="$HERE/dsl/cbfs.fth"
+    for f in "$LSTRUCT" "$LCBFS"; do
+      [[ -f "$f" ]] || fail "the reader is missing at $f — this track stages the SHIPPED reader, it does not re-implement it"
+    done
+
+    # where the ROM maps: QEMU tops a `-bios` file just under 4 GiB. The CBFS
+    # COREBOOT region is at a file offset cbfstool reports; the mapped window is
+    # (4GiB - romsize) + that offset. Derived, never hardcoded.
+    LROMSZ=$(stat -c%s "$LROM")
+    LMAPBASE=$(( 0x100000000 - LROMSZ ))
+    LRGN="$("$LCBT" "$LROM" layout 2>/dev/null | sed -n "s/.*'COREBOOT'.*offset \([0-9]*\).*/\1/p" | head -1)"
+    [[ -n "$LRGN" ]] || fail "cbfs-live: could not read the COREBOOT region offset via cbfstool layout"
+    LWIN="$(printf '%x' $(( LMAPBASE + LRGN )))"
+    LRGNHEX="$(printf '%x' "$LRGN")"
+    note "amd64 ROM is $LROMSZ bytes → mapped at $(printf '0x%x' "$LMAPBASE"); COREBOOT region +0x$LRGNHEX → flash window 0x$LWIN"
+
+    # expected listing from cbfstool (region-relative offset → name|size), the
+    # SAME parse the read `cbfs` track uses; the firmware prints region-relative offs.
+    declare -A LEXPNAME LEXPSZ
+    while read -r lnm loff lsz; do
+      [[ "$loff" == 0x* ]] || continue
+      lo="$(printf '%08x' "$loff")"; ls_="$(printf '%08x' "$lsz")"
+      [[ "$lnm" == "(empty)" ]] && lnm=""
+      LEXPNAME["$lo"]="$lnm"; LEXPSZ["$lo"]="$ls_"
+    done < <("$LCBT" "$LROM" print 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i ~ /^0x/){off=$i; for(j=i+1;j<=NF;j++) if($j ~ /^[0-9]+$/){print $1, off, $j; break}; break}}')
+    (( ${#LEXPNAME[@]} >= 11 )) \
+      || fail "cbfs-live: cbfstool print yielded only ${#LEXPNAME[@]} entries — the oracle looks wrong, so grading against it would be meaningless"
+
+    LST="$WORKDIR/cbfs-live"; rm -rf "$LST"; mkdir -p "$LST/stage"
+    cp "$LSTRUCT" "$LST/stage/STRUCT.FTH"; cp "$LCBFS" "$LST/stage/CBFS.FTH"
+    genisoimage -quiet -o "$LST/live.iso" -V CBFSLIVE -r -J "$LST/stage" 2>/dev/null \
+      || fail "cbfs-live: genisoimage failed to stage the reader"
+
+    LSER="/tmp/cbfslive-$$.sock"; LMON="/tmp/cbfslive-mon-$$.sock"; LLOG="$LST/live.log"
+    rm -f "$LSER" "$LMON" "$LLOG"
+    # boot the amd64 ROM AS the payload; the reader arrives on CD, the ROM it walks
+    # is the firmware's own mapped flash. A monitor socket is the outside observer.
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -bios "$LROM" \
+      -cdrom "$LST/live.iso" -display none \
+      -serial "unix:$LSER,server=on,wait=off" -monitor "unix:$LMON,server=on,wait=off" \
+      -no-reboot >/dev/null 2>&1 &
+    LQ=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$LSER" "$LLOG" --timeout 200 \
+      --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " \
+      --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\CBFS.FTH\r' --expect "0 > " \
+      --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send "$LWIN 20 cbfs-list\r" --expect "CBFS-END"
+    LRC=$?
+    # OBSERVER 2 (from OUTSIDE): dump the flash window from guest physical memory via
+    # the monitor while the guest is still up, and compare to the ROM file. Inline so
+    # the observer is visible; it trusts nothing the firmware printed.
+    LXP="$(python3 - "$LMON" "0x$LWIN" 16 <<'PY'
+import socket, sys, time, re
+sock, addr, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+s = socket.socket(socket.AF_UNIX)
+for _ in range(20):
+    try: s.connect(sock); break
+    except OSError: time.sleep(0.25)
+else: print("ERR"); sys.exit(0)
+time.sleep(0.3); s.recv(1<<16)
+s.sendall(f"xp /{n}xb {addr}\n".encode()); time.sleep(1.0)
+out = s.recv(1<<20).decode(errors="replace")
+by=[m.lower() for ln in out.splitlines() if ":" in ln for m in re.findall(r'0x([0-9a-fA-F]{2})', ln)]
+print("".join(by[:n]))
+PY
+)"
+    kill "$LQ" 2>/dev/null   # by PID, never by pattern
+    [[ $LRC -eq 0 ]] \
+      || { unset LEXPNAME LEXPSZ; fail "cbfs-live: the firmware's walk of its own ROM did not complete (rc=$LRC) — see $LLOG"; }
+
+    # OBSERVER 2 assertion: the mapped window equals the ROM file at the region offset.
+    LFILE="$(xxd -s "$LRGN" -l 16 -p "$LROM")"
+    [[ -n "$LXP" && "$LXP" == "$LFILE" ]] \
+      || { unset LEXPNAME LEXPSZ; fail "cbfs-live: QEMU monitor xp of the flash window (0x$LWIN → ${LXP:-<none>}) does not equal the ROM file at 0x$LRGNHEX ($LFILE) — the window the firmware read is not the ROM on disk"; }
+    note "observer (QEMU xp, outside the firmware): flash window 0x$LWIN == ROM file 0x$LRGNHEX == $LFILE (LARCHIVE)"
+
+    # OBSERVER 1: grade the firmware's listing against cbfstool, entry for entry.
+    LG="$(tr -d '\r' < "$LLOG")"
+    lmatched=0; lsaw_payload=0; lsaw_bootblock=0
+    while IFS= read -r lline; do
+      [[ "$lline" == *"cbfs| "* ]] || continue
+      lo="$(sed -n 's/.*off=\([0-9a-f]\{8\}\).*/\1/p' <<<"$lline")"
+      ll="$(sed -n 's/.*len=\([0-9a-f]\{8\}\).*/\1/p' <<<"$lline")"
+      ln_="$(sed -n 's/.*name=\(.*\)$/\1/p' <<<"$lline")"
+      [[ -n "${LEXPNAME[$lo]+x}" ]] \
+        || { unset LEXPNAME LEXPSZ; fail "cbfs-live: the firmware listed an entry at region offset 0x$lo that cbfstool does not — it mis-stepped walking its own ROM — see $LLOG"; }
+      [[ "$ln_" == "${LEXPNAME[$lo]}" ]] \
+        || { unset LEXPNAME LEXPSZ; fail "cbfs-live: entry at 0x$lo is '${ln_:-<empty>}' but cbfstool calls it '${LEXPNAME[$lo]:-<empty>}' — see $LLOG"; }
+      [[ "$ll" == "${LEXPSZ[$lo]}" ]] \
+        || { unset LEXPNAME LEXPSZ; fail "cbfs-live: entry '${ln_:-<empty>}' at 0x$lo has len 0x$ll but cbfstool reports 0x${LEXPSZ[$lo]} — see $LLOG"; }
+      lmatched=$((lmatched+1))
+      [[ "$ln_" == "fallback/payload" ]] && lsaw_payload=1
+      [[ "$ln_" == "bootblock" ]] && lsaw_bootblock=1
+    done <<<"$LG"
+    unset LEXPNAME LEXPSZ
+    (( lmatched >= 11 )) \
+      || fail "cbfs-live: only $lmatched entries matched cbfstool (expected >= 11) — the firmware's walk of its own ROM stopped early — see $LLOG"
+    (( lsaw_payload )) \
+      || fail "cbfs-live: the walk never reached fallback/payload — the SELF payload that IS this running firmware — see $LLOG"
+    (( lsaw_bootblock )) \
+      || fail "cbfs-live: the walk never reached bootblock — the full-ROM window was not traversed — see $LLOG"
+    note "firmware: $lmatched entries match cbfstool, incl. fallback/payload (itself) and bootblock"
+
+    pass "B.3 Spike 2 (live, §12(1)): OpenBIOS booted AS the coreboot payload walks the CBFS of the VERY ROM that delivered it, in its mapped flash window — the one thing a hosted cbfstool structurally cannot do, being unable to run inside the ROM it booted from. The amd64 payload does not relocate, so the Forth address 0x$LWIN IS the guest-physical flash the firmware runs from; dsl/cbfs.fth (delivered over CD, unchanged from the read track) lists every file of its own container — $lmatched entries MATCHING coreboot's cbfstool print of the host ROM file entry for entry, including fallback/payload (the SELF payload that IS this firmware) and bootblock. THREE observers, none trusting the firmware alone: its listing == cbfstool (the derived oracle, review F2); QEMU monitor xp read the same guest-physical bytes from OUTSIDE and they equal the ROM file at the region offset (the mapped window IS the ROM, not a CD copy); and the walk reached its own payload. Spike 2 (CBFS) and Spike 3 (real device memory) collapsed into one live demo — the firmware dissecting its own container from inside, before any OS exists"
     ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
@@ -5125,5 +5261,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|unix]" >&2; exit 1 ;;
 esac
