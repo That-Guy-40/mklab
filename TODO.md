@@ -633,17 +633,32 @@ requires of any other cached fact.
       asserts each authored pcr/type/digest-count line and `wc -c == LEN`. Plan gaps: §10's
       "record the commit" — the three CBFS tracks now note the coreboot commit; the Spike 2
       deliverable's "declared hash" half is **N/A and now stated** (no ROM here declares one).
-    - [ ] **⏭ NEXT STEP — Spike 1b (the replay, the payoff — needs SHA-256).** Replay each PCR,
-      `PCR = SHA256(PCR‖digest)`, and verify the replayed value equals a claimed final PCR.
-      **Two independent oracles for the claim, both already available:** `tpm2_eventlog` prints
-      the replayed `pcrs: sha256:` itself, and python `hashlib` recomputes it. Crux dependency:
-      OpenBIOS Forth has no SHA-256 — implement `dsl/sha256.fth` (NIST test vectors as the
-      control) or a hosted-only bound C word; a pure function is the cleanest thing to validate
-      across the matrix. Negative control: flip one digest byte, watch the replay diverge and the
-      check fire. If SHA-256 in Forth is too slow/large for the bare-metal arches, 1b runs on
-      unix and says so (an honest partition). The AK quote stays UNKNOWN (1c).
-      Optional extension: parse a CAPTURED real edk2/swtpm `binary_bios_measurements` (the
-      multi-bank SHA1+SHA256 path) — `swtpm`+OVMF are on this host; 1a's reader is format-ready.
+    - **Spike 1b (the REPLAY) DONE 2026-09-03 — Spike 1 is COMPLETE (1a structure · 1b replay ·
+      1c boundary).** `dsl/sha256.fth` is SHA-256 (FIPS 180-4) in OpenBIOS Forth, written once as a
+      PURE FUNCTION (32-bit arithmetic masked with `m32` so it is identical on 32- and 64-bit
+      cells; message words and the digest via bytewise `l@-be`/`l!-be`). It matches all three
+      **NIST test vectors on unix, amd64, x86 AND ppc** — the width × byte-order control a pure
+      function runs cleanest (a masking slip shows only on 64-bit cells, a byte-order slip only on
+      the BE row; neither did), so the plan's "if too slow, 1b runs on unix only" partition was not
+      needed. `eventlog.fth`'s `evlog-replay` recomputes `PCR = SHA256(PCR‖digest)` over the SAME
+      `(event2)` parse the reader prints from; the `event-replay` track's firmware PCR0/PCR1 of its
+      own authored log equal **two independent foreign oracles — `tpm2_eventlog`'s own replayed
+      `pcrs:` and python `hashlib`** — which also agree with each other (three-way). Negative
+      control: flipping ONE byte of the last digest (`ev-dig-adr`) moves PCR1 to exactly the value
+      `tpm2_eventlog` replays for the flipped log while PCR0 does not move — the replay TRACKS the
+      change rather than merely differing. Gotcha: **load order** — `sha256.fth` must load BEFORE
+      `eventlog.fth`; this Forth aborts a definition that names an unknown word and leaves the
+      interpreter mid-compile, so every later line cascades into "undefined word". 1c stated every
+      run: the replay proves the log is internally consistent; the AK quote is UNKNOWN.
+    - [ ] **⏭ NEXT STEP — B.3's remaining edges** (Spikes −1/0/1/2 all complete; pick by value):
+        1. **Parse a CAPTURED real edk2/swtpm `binary_bios_measurements`** — the multi-bank
+           (SHA1+SHA256) path 1a's reader is format-ready for; `swtpm`+OVMF are on this host.
+           Replay its PCRs against the guest's own `pcr-sha256/` files — a claimed PCR from a
+           machine that really measured, not from our own log.
+        2. **Spike 3's named UNCOVERED row** (plan §3 / review F5): the PCI option-ROM read is
+           still blocked (no config-space/port-I/O words bound); the live flash window is done.
+        3. **The comparison bench** (plan §12(2)) — needs a coreboot build with `CONFIG_VBOOT` +
+           a TPM, since today's ROMs measure nothing (review F4).
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

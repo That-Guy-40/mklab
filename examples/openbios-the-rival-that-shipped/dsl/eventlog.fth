@@ -19,7 +19,11 @@
 \               eventSize:u32, event[eventSize]
 \
 \ There is no entry count: a walk runs until it reaches the end of the log buffer.
-\ Load struct.fth FIRST, then this.
+\ LOAD ORDER: struct.fth, then sha256.fth, THEN this. evlog-replay (the 1b replay)
+\ references `sha256`, and this Forth aborts a colon definition that names a word
+\ it cannot find — and leaves the interpreter mid-compile, so every later line
+\ cascades into "undefined word" (measured 2026-09-03, loading these in the wrong
+\ order). The reader alone (1a) needs only struct.fth.
 hex
 
 4 1 0 type: u32le                 \ 4-byte LITTLE-endian (order 1 = LE)
@@ -74,15 +78,22 @@ variable ev-pcr  variable ev-type  variable ev-size  variable ev-dcount
 \ set when a walk hits a digest algorithm it cannot size; evlog-list stops on it
 \ rather than desyncing every later entry on a guessed width.
 variable ev-err
-: .event2 ( -- )
+\ address of this entry's SHA-256 digest (alg 0x0b), or 0 if it carries none —
+\ what the PCR replay extends with. Set by (event2).
+variable ev-sha256
+
+\ (event2): parse ONE crypto-agile entry at the cursor SILENTLY into the ev-*
+\ variables and advance past it. The printing walker and the replay both use
+\ this one parse, so "what the reader reads" and "what the replay extends" can
+\ never drift apart.
+: (event2) ( -- )
+  0 ev-sha256 !
   u32le t@+ ev-pcr !
   u32le t@+ ev-type !
   u32le t@+ ev-dcount !
-  ." evt| pcr=" ev-pcr @ .
-  ."  type=" ev-type @ .ev-type
-  ."  digests=" ev-dcount @ .
   ev-dcount @ 0 ?do
     u16le t@+                     ( algid )
+    dup 0b = if rec@ ev-sha256 ! then    \ remember where the SHA-256 digest is
     alg-digest-size dup 0< if
       \ leaving a ?do..loop by `exit` MUST `unloop` first — the loop's two
       \ indices sit on the return stack above the return address, and a bare
@@ -92,7 +103,14 @@ variable ev-err
     vbytes drop                   \ skip this digest
   loop
   u32le t@+ ev-size !             \ eventSize
-  ev-size @ vbytes drop           \ skip the event data
+  ev-size @ vbytes drop ;         \ skip the event data
+
+: .event2 ( -- )
+  (event2)
+  ev-err @ if exit then           \ a !BADALG entry has no trustworthy fields to print
+  ." evt| pcr=" ev-pcr @ .
+  ."  type=" ev-type @ .ev-type
+  ."  digests=" ev-dcount @ .
   ."  size=" ev-size @ . cr ;
 
 \ ── walk the whole log from `adr`, bounded by end address `end` ──
@@ -151,6 +169,10 @@ create ev-sig  53 c, 70 c, 65 c, 63 c, 20 c, 49 c, 44 c, 20 c,
 \ control the little-endian format demands; a value tpm2_eventlog then reads as a
 \ huge event that overruns the log).
 variable ev-size-adr
+\ …and of the LAST-authored entry's 32-byte digest — so a test can flip one byte of
+\ it and prove the replay DIVERGES (1b's negative control: a replay that cannot
+\ tell a changed digest from the original would be attestation theatre).
+variable ev-dig-adr
 
 \ author ONE crypto-agile entry: pcr, eventType, a 32-byte SHA-256 digest filled
 \ with `dbyte`, and a 4-byte event payload `ev`. ( pcr type dbyte ev -- )
@@ -158,7 +180,7 @@ variable ev-size-adr
   >r >r                           ( pcr type ) ( r: ev dbyte )
   swap >w32 >w32                  \ pcrIndex, eventType   (swap: type under pcr)
   1 >w32                          \ digest count = 1
-  0b >w16  r> 20 >wfill           \ (sha256, 32×dbyte)
+  0b >w16  rec@ ev-dig-adr !  r> 20 >wfill   \ (sha256, 32×dbyte) — remember where
   rec@ ev-size-adr !              \ remember where eventSize goes
   4 >w32  r> >w32 ;               \ eventSize 4, then the event payload
 
@@ -172,3 +194,36 @@ variable ev-size-adr
   0 01 22 cafebabe >evlog-entry   \ pcr0 EV_POST_CODE,      digest 0x22
   1 04 33 00000000 >evlog-entry   \ pcr1 EV_SEPARATOR,      digest 0x33
   rec@ swap - ;
+
+\ ── the REPLAY (Spike 1b — the attestation payoff, needs sha256.fth loaded) ────
+\ A PCR is an iterated hash: it starts as 32 zero bytes and every event that
+\ names it extends it, PCR = SHA256(PCR ‖ digest). Replaying the log recomputes
+\ the final PCR from nothing but the log — 100% software, no TPM — and a claimed
+\ PCR either matches it or it does not. What this PROVES: the log is internally
+\ consistent with the claimed value. What it does NOT prove, and this lab says so
+\ on every run: that a machine really measured those events — that needs the
+\ hardware-signed quote, which stays UNKNOWN here.
+create pcrbuf 20 allot              \ the running PCR (32 bytes)
+create catbuf 40 allot              \ PCR ‖ digest (64 bytes), the extend input
+variable rp-pcr
+
+\ evlog-replay ( adr end max pcr -- pcrbuf ): replay every SHA-256 extend of
+\ `pcr` in the log [adr,end), bounded by `max` entries; leave the final value in
+\ pcrbuf. Uses the SAME (event2) parse the reader prints from.
+: evlog-replay ( adr end max pcr -- pcrbuf )
+  rp-pcr !  >r                      ( adr end ) ( r: max )
+  pcrbuf 20 erase
+  swap evlog-skip-header >rec       ( end )
+  r>  0 ev-err !                    ( end max )
+  begin
+    over rec@ >  over 0>  and  ev-err @ 0=  and
+  while
+    (event2)
+    ev-pcr @ rp-pcr @ =  ev-sha256 @ 0<>  and if
+      pcrbuf      catbuf      20 move       \ old PCR   -> catbuf[0..32)
+      ev-sha256 @ catbuf 20 + 20 move       \ digest    -> catbuf[32..64)
+      catbuf 40 sha256  pcrbuf 20 move      \ PCR = SHA256(PCR ‖ digest)
+    then
+    1-
+  repeat
+  2drop pcrbuf ;

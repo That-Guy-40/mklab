@@ -52,6 +52,7 @@ tracks=(
     test-smoke-cbfs-payload.sh
     test-smoke-cbfs-live.sh
     test-smoke-event-log.sh
+    test-smoke-event-replay.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh
