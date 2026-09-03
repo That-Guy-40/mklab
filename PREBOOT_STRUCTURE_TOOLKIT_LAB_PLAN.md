@@ -425,7 +425,21 @@ and a little-endian `len` on the author makes `cbfstool` read a wrong size (the 
 slip the four-arch matrix exists to prevent, here defended by a control since `write-file`
 is hosted-only). The subject is a 128 KiB legacy CBFS (`cbfstool create -m x86 -s
 0x20000`) that fits the 4 MiB arena; the oracle is DERIVED (the ROM's own `cbfstool`).
-**Still to do:** the other three ROMs and the live form (§12(1)).
+**Telling payload KINDS apart — done and under a track (`dsl/cbfs-payload.fth`,
+`cbfs-payload` track).** All four ROMs carry their OS-facing payload as CBFS type
+`simple elf`, so the type does not distinguish them; the layer inside `fallback/payload`
+does — the coreboot `cbfs_payload_segment` array (a big-endian `CODE`/`DATA`/`BSS`/`ENTR`
+table with load addresses and an entry point). The walker dissects all four and tells
+them apart by signature (`build` 5:`0x40000` Linux+u-root, `build-ofw` 1:`0x19800a0`
+Firmworks, `build-openbios` 2:`0x101e68`, `build-openbios-amd64` 1:`0x101bf0`), each
+graded against **`readelf`** of the reconstituted ELF (every loadable segment's
+`load`/`mem` equals a `PT_LOAD`'s `VirtAddr`/`MemSiz`, the `ENTR` load equals `e_entry`)
+— a foreign decoder confirming the walk, not our reader. The table is big-endian, so
+`build-openbios` walked on x86, amd64, ppc and unix is byte-identical: the ppc row proves
+the BE reads (and the `u64` load split) one structural layer below the CBFS reader. This
+is §12's "the payload is the variable, the toolkit is the constant" on the ROMs on disk.
+
+**Still to do:** the live form (§12(1)).
 
 **Why it converges with Spike 1:** coreboot is *where measured boot happens* — its
 vboot extends PCRs and writes the very event-log format Spike 1 handles. And CBFS

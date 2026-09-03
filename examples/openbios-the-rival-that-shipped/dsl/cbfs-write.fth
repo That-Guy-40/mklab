@@ -36,9 +36,16 @@ variable cbw-ent                            \ matched entry base (absolute)
   rec@ cstr ;
 
 \ Step to the next entry from `cur`, reading cf-coff/cf-len set by (cbw-fields).
-\ Byte-identical to the tail of cbfs-entry: region-relative align_up to 64.
+\ Byte-identical to the tail of cbfs-entry: region-relative align_up to 64. NOTE
+\ the absence of a leading `dup`: this word CONSUMES cur ( cur -- next ), exactly
+\ as cbfs-entry does. A stray `dup` here (leaving cur next) grew the loop's stack
+\ by one address per entry — invisible on 64-bit, where that address is a positive
+\ signed value so the counter's `0>` stayed true, but fatal on 32-bit x86, where a
+\ high RAM address (0xe0......) is NEGATIVE signed, so `over 0>` went false and the
+\ walk stopped after one entry (found 2026-09-02 by the cbfs-payload x86 row — the
+\ arch matrix catching a bug unix could not show).
 : (cbw-next) ( cur -- next )
-  dup cf-coff @ + cf-len @ +  cbfs-rb @ -  3f + 40 negate and  cbfs-rb @ + ;
+  cf-coff @ + cf-len @ +  cbfs-rb @ -  3f + 40 negate and  cbfs-rb @ + ;
 
 \ Walk the CBFS from region base `rb` (bounded by `max` entries) looking for a
 \ named entry. On a hit, record its base in cbw-ent and return its CONTENT

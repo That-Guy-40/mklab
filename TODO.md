@@ -572,19 +572,29 @@ requires of any other cached fact.
       STILL TO DO for Spike 2: the other three ROMs and the live form (§12(1)). Then the TCG
       event log (Spike 1 — attestation without a TPM, stopping honestly at the quote; its
       subject is a swtpm guest's `binary_bios_measurements`, since no ROM here measures anything).
-    - [ ] **⏭ NEXT STEP — Spike 2, the rest** (read + write directions merged; each item below
-      is a natural next increment, in order):
-        1. **The other three ROMs**, telling payload kinds apart by what they carry under
-           `fallback/payload`: `build/coreboot.rom` (LinuxBoot kernel+u-root),
-           `build-ofw/coreboot.rom` (Firmworks), `build-openbios-amd64/coreboot.rom`
-           (OpenBIOS SELF). §12's thesis — the payload is the variable, the toolkit the
-           constant — has its subject set on disk.
-        2. **The live form (§12(1)) — the uniquely-afforded demo.** OpenBIOS-as-coreboot-
-           payload walking the CBFS of the **very ROM that delivered it**, at the `0 >`
-           prompt, on the mapped flash window (`flash-writer` already reads that window
-           through `>virt`) — Spike 2 (CBFS) and Spike 3 (real device memory) collapsed
-           into one. No hosted `cbfstool` can be *inside the ROM it booted from*. Observer
-           outside the firmware: the ROM file on the host, `cmp`'d, plus QEMU monitor `xp`.
+    - **Spike 2 (coreboot CBFS) — the OTHER THREE ROMs / payload dissection DONE 2026-09-02.**
+      `dsl/cbfs-payload.fth` + a `cbfs-payload` track. All four ROMs carry their payload as
+      CBFS type `simple elf`, so the type does NOT tell them apart — the layer INSIDE
+      `fallback/payload` does: the coreboot `cbfs_payload_segment` array (big-endian
+      CODE/DATA/BSS/ENTR with load addresses + an entry point). The walker (Spike 0 cursor +
+      `cbfs-find` from cbfs-write, the u64 load read as two u32be with a hi==0 flag) dissects
+      all four and tells them apart by signature `segcount:entry` — **build 5:0x40000
+      (Linux+u-root), build-ofw 1:0x19800a0 (Firmworks), build-openbios 2:0x101e68 (OpenBIOS
+      ppc), build-openbios-amd64 1:0x101bf0 (OpenBIOS amd64)**, four DISTINCT. Graded against
+      **readelf** of the reconstituted ELF (`cbfstool extract -m x86`): each loadable
+      segment's (load,mem) == a PT_LOAD's (VirtAddr,MemSiz), the ENTR load == e_entry — a
+      foreign decoder, not our reader. The segment table is big-endian, so build-openbios
+      walked on x86, amd64, ppc AND unix is byte-identical — the ppc row proving the BE reads
+      (the read `cbfs` track's control one structural layer deeper). A 256 KiB unix window
+      holds every payload's segment table even for the 16 MiB `build` ROM (the table is at
+      the payload's start). §12's thesis — the payload is the variable, the toolkit the
+      constant — proven on disk.
+    - [ ] **⏭ NEXT STEP — Spike 2, the live form (§12(1)) — the uniquely-afforded demo.**
+      OpenBIOS-as-coreboot-payload walking the CBFS of the **very ROM that delivered it**, at
+      the `0 >` prompt, on the mapped flash window (`flash-writer` already reads that window
+      through `>virt`) — Spike 2 (CBFS) and Spike 3 (real device memory) collapsed into one.
+      No hosted `cbfstool` can be *inside the ROM it booted from*. Observer outside the
+      firmware: the ROM file on the host, `cmp`'d, plus QEMU monitor `xp`.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
