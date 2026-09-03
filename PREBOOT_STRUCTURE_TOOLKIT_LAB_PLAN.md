@@ -409,7 +409,23 @@ load-base is not 64-aligned, where the QEMU arches' aligned load-base would have
 hidden it (the misaligned buffer is the control). `unix` reads the ROM's first
 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file
 through `(empty)`; the QEMU arches load the whole ROM and reach `bootblock`.
-**Still to do:** the WRITE/surgery direction (below) and the other three ROMs.
+
+**WRITE / surgery direction — done and under a track (`dsl/cbfs-write.fth`,
+`cbfs-write` smoke track, `unix` only).** Both origins §10 asks for, each graded by
+coreboot's own `cbfstool` and never by our reader: **patch** — `cbfs-find` locates a
+`raw` entry, `cbfs-fill` rewrites its content in place (same length, so no offset
+moves), and `cbfstool` accepts the whole image with byte-identical `print` metadata and
+`extract` == our bytes; **author** — `cbfs-find-empty`/`cbfs-author` compose a whole
+`cbfs_file` (the big-endian `len`/`type`/`offset` and the name) in the free space through
+the same `u32be t!+` (`l!-be`) cursor the reader was graded on, relink a fresh `(empty)`,
+and `cbfstool` accepts a coherent three-entry archive with the prior entry untouched. Two
+negative controls **bite** — an all-accept oracle proves nothing: a wrong-offset patch
+(the entry base, forgetting `offset`) stomps `LARCHIVE` and `cbfstool` refuses the entry,
+and a little-endian `len` on the author makes `cbfstool` read a wrong size (the byte-order
+slip the four-arch matrix exists to prevent, here defended by a control since `write-file`
+is hosted-only). The subject is a 128 KiB legacy CBFS (`cbfstool create -m x86 -s
+0x20000`) that fits the 4 MiB arena; the oracle is DERIVED (the ROM's own `cbfstool`).
+**Still to do:** the other three ROMs and the live form (§12(1)).
 
 **Why it converges with Spike 1:** coreboot is *where measured boot happens* — its
 vboot extends PCRs and writes the very event-log format Spike 1 handles. And CBFS
