@@ -12,7 +12,7 @@ repo authored** — the plan's "a claim from a machine that really measured".
 | [`pcrs-sha256.txt`](pcrs-sha256.txt) | `n:hex` for PCR 0–23 from `/sys/class/tpm/tpm0/pcr-sha256/` — **the machine's claim** | 1622 |
 | [`pcrs-sha1.txt`](pcrs-sha1.txt) | the same for the sha1 bank | 1046 |
 | [`PROVENANCE.txt`](PROVENANCE.txt) | firmware / swtpm / QEMU / kernel versions and sha256 of the files above — the record the track binds to | — |
-| [`serial-capture.log`](serial-capture.log) | the raw guest console the files were decoded from | 12146 |
+| [`serial-capture.txt`](serial-capture.txt) | the raw guest console the files were decoded from | 12146 |
 | [`capture.sh`](capture.sh) · [`capture-init.sh`](capture-init.sh) | the recipe: swtpm sidecar + OVMF (pflash) + a TPM-capable kernel + a busybox `/init` that prints the log (base64) and PCRs over serial, decoded on the host | — |
 
 **What is in the log** (from `tpm2_eventlog`): `EV_S_CRTM_VERSION`, `EV_EFI_PLATFORM_FIRMWARE_BLOB`,

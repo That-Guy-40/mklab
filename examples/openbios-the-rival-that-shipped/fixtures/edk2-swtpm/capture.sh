@@ -119,7 +119,10 @@ pcr_lines SHA1   > "$OUT/pcrs-sha1.txt"
 # machine that measured nothing has no claim worth vendoring.
 grep -qE '^0:[0-9a-f]*[1-9a-f]' "$OUT/pcrs-sha256.txt" \
     || die "PCR0 (sha256) is missing or all-zero in the capture — the firmware measured nothing, or the PCR lines were not parsed: $(head -3 "$OUT/pcrs-sha256.txt" | tr '\n' '|')"
-cp "$SERIAL" "$OUT/serial-capture.log"
+# .txt, not .log: the repo's root .gitignore drops every *.log, and the first commit of
+# this fixture silently lost the raw console while the README linked to it (2026-09-03).
+# A vendored source must not depend on `git add -f` to survive a re-capture.
+cp "$SERIAL" "$OUT/serial-capture.txt"
 
 {
     echo "# PROVENANCE — captured $(date -u +%Y-%m-%dT%H:%M:%SZ) by $(basename "$0")"
