@@ -71,6 +71,9 @@ hex
 \ Reads the digest set by its declared algorithm ids so a multi-bank log (SHA1 +
 \ SHA256, as edk2 emits) is walked correctly, not by assuming one 32-byte digest.
 variable ev-pcr  variable ev-type  variable ev-size  variable ev-dcount
+\ set when a walk hits a digest algorithm it cannot size; evlog-list stops on it
+\ rather than desyncing every later entry on a guessed width.
+variable ev-err
 : .event2 ( -- )
   u32le t@+ ev-pcr !
   u32le t@+ ev-type !
@@ -80,7 +83,12 @@ variable ev-pcr  variable ev-type  variable ev-size  variable ev-dcount
   ."  digests=" ev-dcount @ .
   ev-dcount @ 0 ?do
     u16le t@+                     ( algid )
-    alg-digest-size dup 0< if ." !BADALG" cr drop exit then
+    alg-digest-size dup 0< if
+      \ leaving a ?do..loop by `exit` MUST `unloop` first — the loop's two
+      \ indices sit on the return stack above the return address, and a bare
+      \ `exit` would return into them (found in review, 2026-09-02).
+      ." !BADALG" cr drop  true ev-err !  unloop exit
+    then
     vbytes drop                   \ skip this digest
   loop
   u32le t@+ ev-size !             \ eventSize
@@ -95,8 +103,10 @@ variable ev-pcr  variable ev-type  variable ev-size  variable ev-dcount
   swap evlog-skip-header          ( end first )  \ cursor now at first event2, rec set
   >rec                            ( end )
   r>                              ( end max )
+  0 ev-err !
   begin
     over rec@ >  over 0>  and     ( end max flag )   \ cursor<end AND max>0
+    ev-err @ 0=  and              \ …AND no unsizable digest seen
   while
     .event2
     1-                            ( end max-1 )

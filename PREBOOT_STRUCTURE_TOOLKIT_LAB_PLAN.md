@@ -419,6 +419,13 @@ load-base is not 64-aligned, where the QEMU arches' aligned load-base would have
 hidden it (the misaligned buffer is the control). `unix` reads the ROM's first
 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file
 through `(empty)`; the QEMU arches load the whole ROM and reach `bootblock`.
+**On the deliverable's "verify a payload's declared size/hash against its bytes":**
+the **size** half is done (every entry's length matches `cbfstool print`); the
+**hash** half is **N/A here, stated rather than skipped** — none of the four ROMs
+declares a hash attribute (`cbfstool print -v` shows zero hash/sha attributes; they
+were built without `add -A hash`), so there is no declared hash to check. It becomes
+checkable the day a ROM is built with hashed entries; the reader's attribute walk is
+the place it would go.
 
 **WRITE / surgery direction — done and under a track (`dsl/cbfs-write.fth`,
 `cbfs-write` smoke track, `unix` only).** Both origins §10 asks for, each graded by
