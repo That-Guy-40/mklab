@@ -650,15 +650,29 @@ requires of any other cached fact.
       `eventlog.fth`; this Forth aborts a definition that names an unknown word and leaves the
       interpreter mid-compile, so every later line cascades into "undefined word". 1c stated every
       run: the replay proves the log is internally consistent; the AK quote is UNKNOWN.
-    - [ ] **⏭ NEXT STEP — B.3's remaining edges** (Spikes −1/0/1/2 all complete; pick by value):
-        1. **Parse a CAPTURED real edk2/swtpm `binary_bios_measurements`** — the multi-bank
-           (SHA1+SHA256) path 1a's reader is format-ready for; `swtpm`+OVMF are on this host.
-           Replay its PCRs against the guest's own `pcr-sha256/` files — a claimed PCR from a
-           machine that really measured, not from our own log.
-        2. **Spike 3's named UNCOVERED row** (plan §3 / review F5): the PCI option-ROM read is
+    - **A REAL edk2/swtpm event log, replayed against the machine's OWN PCRs — DONE 2026-09-03.**
+      `fixtures/edk2-swtpm/` (`capture.sh` + `capture-init.sh`: swtpm sidecar + OVMF pflash + a
+      TPM-capable kernel + a busybox `/init` that prints the log and every PCR over serial) vendors
+      a 6345-byte log edk2 wrote booting a swtpm TPM 2.0 guest — 30 events, **four digest banks
+      per event** (sha1/256/384/512) — plus the guest's `pcr-sha256/` claim and `PROVENANCE.txt`
+      (sha256 of every file; the `event-real` track REFUSES a mismatch by name). The reader walks
+      all 29 crypto-agile entries stepping over 48/64-byte digests by declared size; the replay's
+      **PCR0–7 equal the machine's own TPM PCRs 8/8** and tpm2_eventlog's replay — a claim from a
+      firmware that really measured, reproduced from the log alone. Two things only a real log
+      surfaced: the replay had to learn the **EV_NO_ACTION rule** (informational events are not
+      extended — proven by an authored control that bites both ways, since this log's only
+      EV_NO_ACTION is the SpecID header), and two capture gotchas now guarded in the scripts (a
+      securityfs seq-file **stats as 0 bytes**, so `[ -s ]` called a 6 KiB log "empty"; the kernel
+      prints PCR hex in **upper case**, so `[0-9a-f]` silently kept only the all-zero PCRs). The
+      linuxboot kernels have no TPM drivers; the capture uses `~/.cache/mklab-kernel/vmlinuz`
+      (Ubuntu generic, TCG_TIS/CRB + SECURITYFS built in). Boundary: swtpm is software; the AK
+      quote stays UNKNOWN.
+    - [ ] **⏭ NEXT STEP — B.3's remaining edges** (all spikes + the real-log edge complete):
+        1. **Spike 3's named UNCOVERED row** (plan §3 / review F5): the PCI option-ROM read is
            still blocked (no config-space/port-I/O words bound); the live flash window is done.
-        3. **The comparison bench** (plan §12(2)) — needs a coreboot build with `CONFIG_VBOOT` +
-           a TPM, since today's ROMs measure nothing (review F4).
+        2. **The comparison bench** (plan §12(2)) — needs a coreboot build with `CONFIG_VBOOT` +
+           a TPM, since today's ROMs measure nothing (review F4). With `fixtures/edk2-swtpm/`
+           the event-log half of that bench now has a proven reader+replay waiting for it.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

@@ -398,6 +398,20 @@ Split deliberately, because only half needs crypto:
   reuses the reader's single `(event2)` parse, so "what is read" and "what is
   extended" cannot drift. The quote stays UNKNOWN (1c), stated on every run.
 
+  **The real subject — DONE 2026-09-03 (`fixtures/edk2-swtpm/`, `event-real` track).**
+  Review F4's "no ROM here can produce an event log" is answered the way F4 said it
+  would be: not by a ROM this repo builds, but by **capturing** one — `capture.sh`
+  boots OVMF + a swtpm TPM 2.0 + a TPM-capable kernel with a busybox `/init` that
+  hands the log and every PCR to the host over serial, and the result is vendored
+  byte-exact with `PROVENANCE.txt` (the track refuses a hash mismatch by name). It is
+  a **four-bank** log (sha1/sha256/sha384/sha512, 30 events) that nobody in this repo
+  authored, and the guest's own `pcr-sha256/` files are the claim. The reader walks
+  it stepping over 48- and 64-byte digests by declared size; the replay's **PCR0–7
+  equal the machine's own TPM PCRs, 8/8**, and `tpm2_eventlog`'s. Only a real log
+  surfaced the **EV_NO_ACTION** rule (informational events are not extended) — now
+  in `evlog-replay` and proven by an authored control that bites both ways. The
+  boundary holds: swtpm is software, and the AK quote stays UNKNOWN.
+
 - **1c — the boundary, stated out loud.** The hardware-signed **quote** is
   **UNKNOWN** and printed as such: the lab measured the log and the replay; it did
   **not** and cannot verify a hardware root of trust here. Naming it is the

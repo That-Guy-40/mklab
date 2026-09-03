@@ -1,0 +1,13 @@
+# PROVENANCE — captured 2026-09-03T05:53:25Z by capture.sh
+firmware:  /usr/share/OVMF/OVMF_CODE_4M.fd  sha256=949bfa5389c4c48582737481e7d24f46b3a16b276ef44c4089a56858c6a0a446
+ovmf-pkg:  ovmf 2024.02-2ubuntu0.9
+swtpm:     TPM emulator version 0.7.3, Copyright (c) 2014-2021 IBM Corp.
+qemu:      QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+kernel:    /home/sqs/.cache/mklab-kernel/vmlinuz  (version 6.8.0-137-generic)  sha256=76a7f2ef15fcbd2f5c25cd7e7b413f903b2078396063557f1dffb4a0b089a964
+tpm-dev:   tpm-tis (QEMU), swtpm --tpm2 ctrl=unixio
+accel:     kvm
+
+# sha256 of the captured files
+42a8616411e6b2884f6fbbf820cc9d39e29e9fcaddc4bb33eac65875dfd185b8  binary_bios_measurements
+885bd6679faaa013e7ab439445bdb66f6b5876d8b993d904178b9e609f314723  pcrs-sha256.txt
+dca7541e4735d3fee15268ddfcbbb3548f1118bed72aefb63b62d16ba25ce25f  pcrs-sha1.txt
