@@ -33,7 +33,7 @@ the OpenBIOS leg's PCR 2 — the payload is the whole difference, and `dsl/event
 ## Rebuilding and re-capturing
 
 ```console
-$ make -C ~/linuxboot-lab/coreboot/util/cbmem LDFLAGS=-static && strip ~/linuxboot-lab/coreboot/util/cbmem/cbmem
+$ make -C ~/linuxboot-lab/coreboot/util/cbmem LDFLAGS=-static     # a STATIC cbmem; build-rom.sh strips a copy
 $ ./build-rom.sh linux && ./build-rom.sh openbios       # ~4 min each; isolated .config-bench-<leg> + build-bench-<leg>/
 $ ( cd ../edk2-swtpm && CAPTURE_FIRMWARE=coreboot:$HOME/linuxboot-lab/coreboot/build-bench-linux/coreboot.rom \
       ./capture.sh --out ../coreboot-swtpm/leg-linux )

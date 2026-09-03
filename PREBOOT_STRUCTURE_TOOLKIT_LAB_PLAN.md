@@ -94,7 +94,7 @@ Per house rule, the load-bearing claims were measured first, not assumed:
 | a real subject exists to dissect | the lab's own coreboot build | ✅ `~/linuxboot-lab/coreboot/build-openbios/coreboot.rom`, 4 MiB |
 | `cbfstool` oracle is obtainable | coreboot tree | ✅ source-only, buildable with `make -C util/cbfstool` (same vendored-oracle pattern as ELFkickers/`elfls`) |
 | the writer side is available | TODO §20 | ✅ `write-file` on `main` — **hosted `unix` only** (patch 54); "author" means something different per arch — see Spike 0 |
-| the event log is verifiable without hardware | the extend is a pure function | ✅ replay `H(PCR‖digest)`; `tpm2_eventlog` is the external oracle. **SHA-256 is the crux dependency — see Spike 1 risk.** |
+| the event log is verifiable without hardware | the extend is a pure function | ✅ replay `H(PCR‖digest)`; `tpm2_eventlog` is the external oracle. SHA-256 *was* the crux dependency (Spike 1 risk) — **landed 2026-09-03 as `dsl/sha256.fth`**, NIST vectors green on all four arches (`event-replay`). |
 | the oracle's verbs actually work ([review F2](REVIEW-preboot-structure-toolkit-plan.md#f2--10-rests-on-cbfstool-extract-which-this-repo-has-already-measured-failing)) | run `cbfstool print`/`extract` on the lab's own ROM | ✅ re-measured 2026-09-01: `print` works; `extract` works on `raw` entries (LZMA decompressed too) **and on the payload with `-m x86`** — the 2026-08-27 "cannot extract a payload at all" in `tools/openbios-rom-provenance.sh` was a run missing the `-m ARCH` flag the error itself names (now corrected there). The extracted payload is a **reconstituted** ELF (segments only — different size and sha256 than the input), so §10's surgery round-trip byte-compares are scoped to `raw` entries; the payload is graded by `print` metadata + reconstituted-extract parseability. |
 | the four-arch matrix has a door on every arch ([review F3](REVIEW-preboot-structure-toolkit-plan.md#f3--the-four-arch-matrix-does-not-exist-yet-and-two-of-its-rows-have-no-door)) | boot each arch, deliver `struct.fth`, run the G2 controls | ✅ **measured 2026-09-01 — Spike −1 below.** Both "missing" doors existed in the shipped builds; no reflow, no dictionary bake, no new C. |
 | Spike 3 has a reachable subject ([review F5](REVIEW-preboot-structure-toolkit-plan.md#f5--spike-3s-subject-is-the-one-feasibility-claim-3-did-not-check-and-the-reachable-one-is-121)) | the poke-engine review's did-not-prove list + the `flash-writer` track | ⚠️ the PCI option-ROM read is **blocked** (no config-space/port-I/O words bound) and stays a named UNCOVERED row; the reachable subject is §12(1)'s live ROM window (`flash-writer` already reads CFI at `0xffbe0000` through `>virt`) — Spike 3 is re-aimed there. |
@@ -343,7 +343,9 @@ are length-prefixed; a width/endian leak here is inherited by everything above.
 no ROM this repo builds can produce an event log** — no coreboot config here
 sets `CONFIG_VBOOT`/`CONFIG_TPM*`, and OpenBIOS has no TPM driver, so *"coreboot
 is where measured boot happens"* is true of coreboot and false of every ROM on
-this host. The real subject comes from what the repo already has: **phase 2's
+this host. *(True when written; since 2026-09-03 two ROMs here DO measure —
+`fixtures/coreboot-swtpm/build-rom.sh`, and the prerequisite turned out to be
+`TPM_MEASURED_BOOT`, not `VBOOT` — see §12 item 2.)* The real subject comes from what the repo already has: **phase 2's
 swtpm sidecar (`tpm = true`)** under an OVMF guest exposes
 `/sys/kernel/security/tpm0/binary_bios_measurements` — a genuine
 `TCG_PCR_EVENT2` log written by edk2 — with `tpm2_eventlog` (packaged) and the
@@ -378,7 +380,8 @@ Split deliberately, because only half needs crypto:
 - **1b — the replay (the payoff, needs SHA-256).** Compute each PCR by replaying
   its extends, `PCR = SHA256(PCR ‖ digest)`, and **verify the replayed value
   equals a claimed final PCR.** This is the attestation result you can get with no
-  TPM. **Crux dependency / named risk:** OpenBIOS Forth has no SHA-256. Implement
+  TPM. **Crux dependency / named risk (RESOLVED — see the DONE block below):**
+  OpenBIOS Forth *had* no SHA-256. Implement
   it once — either in Forth, or as a hosted-only bound C word beside `write-file`
   — and it is the same on all four arches (a pure function is the cleanest thing
   to validate across the matrix; NIST test vectors are the control). If SHA-256 in
@@ -834,6 +837,8 @@ the cell this section originally declared missing — in bold — is present.**
 > measured-boot leg needs a ROM configuration that measures at all (review F4:
 > nothing here sets `CONFIG_VBOOT`/`CONFIG_TPM*`, so today's ROMs measure
 > nothing — a coreboot-with-vboot build is that leg's named prerequisite).
+> *Superseded 2026-09-03: built — and the prerequisite was measured to be
+> `TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2`, not VBOOT; see item 2's DONE block.*
 
 ### Two things the matrix affords this toolkit uniquely
 
@@ -870,7 +875,8 @@ the cell this section originally declared missing — in bold — is present.**
    — measured coreboot with *different payloads* produces *different
    measurements from the same ROM boot-block*, so "replay the log, see what
    differs" becomes a **comparison** rather than a single reading. **Named
-   prerequisite** (review F4): a fourth ROM configuration built with
+   prerequisite** (review F4; *as measured it is `TPM_MEASURED_BOOT`, not
+   VBOOT — DONE below*): a fourth ROM configuration built with
    `CONFIG_VBOOT` + a TPM behind it — today's ROMs measure nothing, and MAAS
    `DEFERRED.md` already measured where that road leads (*"a PCR policy over a
    BIOS boot blesses any payload"*).

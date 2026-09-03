@@ -160,6 +160,15 @@ pass() { echo "PASS: $*"; exit 0; }
 fail() { echo "FAIL: $*"; exit 1; }
 skip() { echo "SKIP: $*"; exit 77; }
 note() { echo "  - $*"; }
+# tpm2_eventlog's OWN replayed sha256 PCR <n> of a log — the foreign oracle the three
+# replay tracks (event-replay, event-real, event-bench) grade against. ONE
+# implementation, and the pattern is anchored to the WHOLE `  n : 0x<64 hex>` row: a
+# multi-bank log prints a sha1 block first, whose `  n :` rows a looser pattern would
+# also match, and the pattern must not decide by which row happens to come first.
+# (Review 2026-09-03: three tracks carried three copies, one of them unanchored.)
+oracle_pcr() {  # oracle_pcr <log> <n> -> 64 hex, or nothing
+  tpm2_eventlog "$1" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E "^\s+$2\s*:\s*0x[0-9a-f]{64}$" | head -1 | grep -oE '[0-9a-f]{64}'
+}
 # shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
 # single-quoted trap body; shellcheck analyses the string without carrying the assignment
 # into the uses that follow it.
@@ -3921,23 +3930,28 @@ PY
     # read CBFS native. write-file is hosted-only, so like cbfs-write this is a unix
     # workbench; the byte-order property is defended by ROW B's negative control.
     #
-    # 1b (the SHA-256 REPLAY of PCR = SHA256(PCR‖digest) vs a claimed PCR) is a
-    # separate increment — it needs SHA-256 in Forth. 1a's digests are placeholder
-    # fills, so tpm2_eventlog validates STRUCTURE and warns (expected) that they are
-    # not SHA-256 of the payload; that warning is not a failure.
+    # 1b (the SHA-256 REPLAY of PCR = SHA256(PCR‖digest) vs a claimed PCR) is the
+    # event-replay track. 1a's digests are placeholder fills, so tpm2_eventlog
+    # validates STRUCTURE and warns (expected) that they are not SHA-256 of the
+    # payload; that warning is not a failure.
+    # sha256.fth IS STAGED HERE TOO, though nothing in this track hashes: eventlog.fth
+    # is one file, its evlog-replay names `sha256`, and this Forth aborts a colon
+    # definition naming an unknown word and stays mid-compile — so every line after
+    # it fails. Found by the 2026-09-03 review: this track had been RED since 1b
+    # landed in the same file (#383), invisible to CI (no tpm2-tools there → SKIP).
     command -v tpm2_eventlog >/dev/null || skip "tpm2_eventlog not installed (apt install tpm2-tools) — it is the foreign oracle this track grades against"
     EUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
     EUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
     [[ -x "$EUBIN"  ]] || skip "missing $EUBIN — run ./build-openbios.sh unix first"
     [[ -f "$EUDICT" ]] || skip "missing $EUDICT — run ./build-openbios.sh unix first"
     command -v genisoimage >/dev/null || skip "genisoimage not installed"
-    ESTRUCT="$HERE/dsl/struct.fth"; EEVLOG="$HERE/dsl/eventlog.fth"
-    for f in "$ESTRUCT" "$EEVLOG"; do
+    ESTRUCT="$HERE/dsl/struct.fth"; ESHA="$HERE/dsl/sha256.fth"; EEVLOG="$HERE/dsl/eventlog.fth"
+    for f in "$ESTRUCT" "$ESHA" "$EEVLOG"; do
       [[ -f "$f" ]] || fail "the reader/author is missing at $f — this track stages the SHIPPED files, it does not re-implement them"
     done
 
     EWD="$WORKDIR/event-log"; rm -rf "$EWD"; mkdir -p "$EWD/stage"
-    cp "$ESTRUCT" "$EWD/stage/STRUCT.FTH"; cp "$EEVLOG" "$EWD/stage/EVLOG.FTH"
+    cp "$ESTRUCT" "$EWD/stage/STRUCT.FTH"; cp "$ESHA" "$EWD/stage/SHA.FTH"; cp "$EEVLOG" "$EWD/stage/EVLOG.FTH"
     genisoimage -quiet -o "$EWD/ev.iso" -V EVLOG "$EWD/stage" 2>/dev/null \
       || fail "event-log: genisoimage failed to stage the DSL"
 
@@ -3946,6 +3960,7 @@ PY
       { printf '%s\n' \
           '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
           'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+          'load hd:\SHA.FTH'    'load-base load-size evaluate' \
           'load hd:\EVLOG.FTH'  'load-base load-size evaluate' \
           '1000 alloc-mem value evbuf'
         printf '%s\n' "$@"
@@ -4031,7 +4046,7 @@ PY
     # cannot fake here. Naming it UNKNOWN is the deliverable's honesty.
     note "QUOTE: UNKNOWN — this track verified the log STRUCTURE (1a); the SHA-256 replay is 1b; the hardware-signed AK quote over the PCRs is NOT verified here and cannot be faked (see examples/metal-as-a-service/DEFERRED.md). UNKNOWN is a verdict, distinct from PASS."
 
-    pass "B.3 Spike 1a (event-log structure): dsl/eventlog.fth AUTHORS a crypto-agile TCG measured-boot event log (a Spec ID Event03 header declaring SHA-256, then TCG_PCR_EVENT2 entries) through the Spike-0 cursor, write-file persists it, and the TPM community's own tpm2_eventlog — never our reader — parses it: SpecID(sha256) header + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR entries, entry for entry. The format is LITTLE-endian, the deliberate complement to CBFS's big-endian: the same cursor walks both, so ppc byte-swaps here where it read CBFS native. The firmware's OWN reader round-trips the log to EVLOG-END with every eventSize landing on the next entry, and the negative control — one eventSize stored BIG-endian — makes tpm2_eventlog refuse the whole log, so the parse is a real byte-order result. write-file is hosted-only, so this is a unix workbench. THE BOUNDARY IS STATED: 1a proves the log STRUCTURE; the SHA-256 replay is 1b; the hardware-signed AK quote is UNKNOWN and cannot be faked here — a verdict distinct from PASS. STILL TO DO for Spike 1: 1b, the replay (needs SHA-256 in Forth)"
+    pass "B.3 Spike 1a (event-log structure): dsl/eventlog.fth AUTHORS a crypto-agile TCG measured-boot event log (a Spec ID Event03 header declaring SHA-256, then TCG_PCR_EVENT2 entries) through the Spike-0 cursor, write-file persists it, and the TPM community's own tpm2_eventlog — never our reader — parses it: SpecID(sha256) header + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR entries, entry for entry. The format is LITTLE-endian, the deliberate complement to CBFS's big-endian: the same cursor walks both, so ppc byte-swaps here where it read CBFS native. The firmware's OWN reader round-trips the log to EVLOG-END with every eventSize landing on the next entry, and the negative control — one eventSize stored BIG-endian — makes tpm2_eventlog refuse the whole log, so the parse is a real byte-order result. write-file is hosted-only, so this is a unix workbench. THE BOUNDARY IS STATED: 1a proves the log STRUCTURE; the SHA-256 replay is 1b; the hardware-signed AK quote is UNKNOWN and cannot be faked here — a verdict distinct from PASS. 1b, the replay, is the event-replay track (dsl/sha256.fth); the same reader on a REAL log is event-real"
     ;;
   event-replay)
     # B.3 Spike 1b: the REPLAY — the attestation payoff, and it needs SHA-256.
@@ -4128,9 +4143,8 @@ PY
     FP0="$(rp_val "$RB" PCR0)"; FP1="$(rp_val "$RB" PCR1)"; FP1F="$(rp_val "$RB" PCR1flip)"; FP0S="$(rp_val "$RB" PCR0same)"
     [[ -n "$FP0" && -n "$FP1" && -n "$FP1F" && -n "$FP0S" ]] \
       || fail "event-replay: the firmware did not print all four PCR values (PCR0/PCR1/PCR1flip/PCR0same): $(printf '%s' "$RB" | grep -E 'PCR|undefined' | tr '\n' '|')"
-    # ORACLE 1: tpm2_eventlog's own replayed PCRs of the log the firmware wrote.
-    rp_oracle1() { tpm2_eventlog "$1" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E "^\s+$2\s*:" | grep -oE '0x[0-9a-f]{64}' | cut -c3-; }
-    O1P0="$(rp_oracle1 "$RO" 0)"; O1P1="$(rp_oracle1 "$RO" 1)"; O1P1F="$(rp_oracle1 "$RF" 1)"; O1P0F="$(rp_oracle1 "$RF" 0)"
+    # ORACLE 1: tpm2_eventlog's own replayed PCRs of the log the firmware wrote (oracle_pcr).
+    O1P0="$(oracle_pcr "$RO" 0)"; O1P1="$(oracle_pcr "$RO" 1)"; O1P1F="$(oracle_pcr "$RF" 1)"; O1P0F="$(oracle_pcr "$RF" 0)"
     [[ -n "$O1P0" && -n "$O1P1" && -n "$O1P1F" ]] || fail "event-replay: tpm2_eventlog printed no pcrs for the firmware's log — oracle 1 unavailable, grading would be meaningless"
     # ORACLE 2: python hashlib, walking the SAME log bytes independently.
     rp_oracle2() { python3 - "$1" "$2" <<'PY'
@@ -4256,7 +4270,6 @@ PY
       || fail "event-real: tpm2_eventlog rejects the vendored log — the fixture is not a valid TCG log"
     RREV=$(grep -c 'EventNum:' "$RRO/oracle.yaml"); RRB4=$(grep -c 'DigestCount: 4' "$RRO/oracle.yaml")
     (( RREV >= 20 && RRB4 >= 20 )) || fail "event-real: the oracle sees $RREV events / $RRB4 four-bank entries — not the multi-bank edk2 log this track needs"
-    rr_oracle() { sed -n '/^pcrs:/,$p' "$RRO/oracle.yaml" | grep -E "^\s+$1\s*:\s*0x[0-9a-f]{64}$" | head -1 | grep -oE '[0-9a-f]{64}'; }
     rr_claim()  { sed -n "s/^$1:\([0-9a-f]\{64\}\)$/\1/p" "$FX/pcrs-sha256.txt"; }
 
     cp "$HERE/dsl/struct.fth" "$RRO/stage/STRUCT.FTH"; cp "$HERE/dsl/sha256.fth" "$RRO/stage/SHA.FTH"
@@ -4287,7 +4300,7 @@ PY
     RRB="$(rr_run replay 'load hd:\REAL.BIN' "${RRL[@]}")"
     rrok=0
     for n in 0 1 2 3 4 5 6 7; do
-      fw="$(rr_val "$RRB" "P$n")"; cl="$(rr_claim "$n")"; oc="$(rr_oracle "$n")"
+      fw="$(rr_val "$RRB" "P$n")"; cl="$(rr_claim "$n")"; oc="$(oracle_pcr "$FX/binary_bios_measurements" "$n")"
       [[ -n "$fw" ]] || fail "event-real: the firmware printed no PCR$n — the replay did not run: $(grep -E 'undefined|BADALG|TOO-LONG' <<<"$RRB" | head -2 | tr '\n' '|')"
       [[ -n "$cl" && -n "$oc" ]] || fail "event-real: no claimed/oracle value for PCR$n (claim='${cl:-}', oracle='${oc:-}') — the fixture is incomplete"
       [[ "$fw" == "$cl" ]] || fail "event-real: firmware replay of PCR$n = $fw but the MACHINE'S OWN TPM held $cl — the replay does not reproduce what a real firmware measured (oracle says $oc)"
@@ -4315,7 +4328,7 @@ PY
     RRBASE="$(rr_val "$RRC" BASE)"; RRNO="$(rr_val "$RRC" NOACT)"; RRAS="$(rr_val "$RRC" ASSEP)"
     [[ -n "$RRBASE" && -n "$RRNO" && -n "$RRAS" ]] || fail "event-real: the EV_NO_ACTION control did not print all three values: $(grep -E 'undefined|BASE|NOACT|ASSEP' <<<"$RRC" | tr '\n' '|')"
     [[ "$RRNO" == "$RRBASE" ]] || fail "event-real: an EV_NO_ACTION entry with a nonzero digest CHANGED PCR0 ($RRBASE -> $RRNO) — the replay extends informational events, which the TCG profile forbids and tpm2_eventlog does not do"
-    RRNOO="$(tpm2_eventlog "$RRO/noact/NOACT.EVT" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E '^\s+0\s*:' | grep -oE '[0-9a-f]{64}' | head -1)"
+    RRNOO="$(oracle_pcr "$RRO/noact/NOACT.EVT" 0)"
     [[ "$RRNOO" == "$RRBASE" ]] || fail "event-real: tpm2_eventlog's replay of the EV_NO_ACTION log ($RRNOO) != the base ($RRBASE) — the oracle and the firmware disagree on the rule"
     [[ "$RRAS" != "$RRBASE" ]] || fail "event-real EV_NO_ACTION CONTROL: the same entry re-typed as EV_SEPARATOR did NOT move PCR0 — the control cannot tell the rule from a replay that ignores digests entirely"
     note "EV_NO_ACTION rule: an informational entry with a nonzero digest leaves PCR0 at $RRBASE (tpm2_eventlog agrees); re-typed as a separator it moves PCR0 — the control bites"
@@ -4375,14 +4388,14 @@ PY
     BWD="$WORKDIR/event-bench"; rm -rf "$BWD"; mkdir -p "$BWD/stage"
     cp "$HERE/dsl/struct.fth" "$BWD/stage/STRUCT.FTH"; cp "$HERE/dsl/sha256.fth" "$BWD/stage/SHA.FTH"; cp "$HERE/dsl/eventlog.fth" "$BWD/stage/EVLOG.FTH"
     cp "$FXL/binary_bios_measurements" "$BWD/stage/CBL.BIN"; cp "$FXO/binary_bios_measurements" "$BWD/stage/CBO.BIN"
-    bench_oracle() { tpm2_eventlog "$1" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E "^\s+$2\s*:\s*0x[0-9a-f]{64}$" | head -1 | grep -oE '[0-9a-f]{64}'; }
     bench_claim()  { sed -n "s/^$2:\([0-9a-f]\{64\}\)$/\1/p" "$1/pcrs-sha256.txt"; }
-    # the payload entry's digest in a coreboot log = the LAST event's sha256 (entry 6)
-    bench_paydig() { tpm2_eventlog "$1" 2>/dev/null | awk '/^- EventNum/{n=$3} /Digest: "/{d=$2} END{gsub(/"/,"",d); print d}'; }
-    # each entry's name is NUL-padded hex; decode PER LINE or the names run together
+    # each entry's name is NUL-padded hex; decode PER LINE (the names run together
+    # otherwise) and emit ONE NAME PER LINE — the names themselves contain spaces
+    # (`CBFS: bootblock`), so a space-joined list cannot be cut back into names.
     bench_names()  { tpm2_eventlog "$1" 2>/dev/null | grep -E '^  Event: "' | sed 's/.*"\(.*\)"/\1/' \
-                     | while read -r h; do printf '%s' "$h" | xxd -r -p 2>/dev/null | tr -d '\0'; printf ' '; done; }
+                     | while read -r h; do printf '%s' "$h" | xxd -r -p 2>/dev/null | tr -d '\0'; printf '\n'; done; }
     bench_digests() { tpm2_eventlog "$1" 2>/dev/null | grep -E '^    Digest: "' | sed 's/.*"\(.*\)"/\1/'; }
+    bench_join()   { local IFS='|'; echo "$*"; }   # names, one line, for messages
 
     # ── ROW A: each coreboot leg is internally consistent — reader, replay, claim, oracle
     bench_run() {  # bench_run <subdir> <forth-line>...
@@ -4393,44 +4406,62 @@ PY
       } | ( cd "$d" && "$BUBIN" -f "$BWD/bench.iso" "$BUDICT" ) 2>&1 | tr -d '\r'
     }
     bval() { grep -oE "$2=[0-9a-f]{64}" <<<"$1" | tail -1 | cut -d= -f2; }
+    genisoimage -quiet -o "$BWD/bench.iso" -V BENCH "$BWD/stage" 2>/dev/null || fail "event-bench: genisoimage failed"
     for LEG in linux openbios; do
       if [[ $LEG == linux ]]; then FX="$FXL"; BIN=CBL.BIN; else FX="$FXO"; BIN=CBO.BIN; fi
       NEV=$(tpm2_eventlog "$FX/binary_bios_measurements" 2>/dev/null | grep -c 'EventNum:')
-      (( NEV >= 7 )) || fail "event-bench coreboot-$LEG: tpm2_eventlog sees only $NEV events — not the measured-boot log this track needs (FMAP, bootblock, romstage, postcar, ramstage, payload)"
-      grep -q 'fallback/payload' <<<"$(bench_names "$FX/binary_bios_measurements")" \
-        || fail "event-bench coreboot-$LEG: the log does not name CBFS: fallback/payload — coreboot did not measure the payload"
-      genisoimage -quiet -o "$BWD/bench.iso" -V BENCH "$BWD/stage" 2>/dev/null || fail "event-bench: genisoimage failed"
+      mapfile -t BN < <(bench_names "$FX/binary_bios_measurements")
+      (( NEV >= 7 )) || fail "event-bench coreboot-$LEG: tpm2_eventlog sees only $NEV events [$(bench_join "${BN[@]}")] — not the measured-boot log this track needs (FMAP, bootblock, romstage, postcar, ramstage, payload)"
+      grep -q 'fallback/payload' <<<"$(bench_join "${BN[@]}")" \
+        || fail "event-bench coreboot-$LEG: the log does not name CBFS: fallback/payload [$(bench_join "${BN[@]}")] — coreboot did not measure the payload"
       OUT="$(bench_run "leg-$LEG" "load hd:\\$BIN" 'load-base load-base load-size + 40 evlog-list' \
              '." P2=" load-base load-base load-size + 40 2 evlog-replay .digest cr')"
       NW=$(grep -c 'evt| pcr=' <<<"$OUT"); grep -q EVLOG-END <<<"$OUT" || fail "event-bench coreboot-$LEG: the reader did not reach EVLOG-END: $(grep -E 'BADALG|evt' <<<"$OUT" | tail -2 | tr '\n' '|')"
       [[ "$NW" -eq $((NEV-1)) ]] || fail "event-bench coreboot-$LEG: the reader walked $NW entries but the oracle sees $NEV events (= $((NEV-1)) + the SpecID header)"
-      P2="$(bval "$OUT" P2)"; CL="$(bench_claim "$FX" 2)"; OR="$(bench_oracle "$FX/binary_bios_measurements" 2)"
+      P2="$(bval "$OUT" P2)"; CL="$(bench_claim "$FX" 2)"; OR="$(oracle_pcr "$FX/binary_bios_measurements" 2)"
       [[ -n "$P2" && "$P2" == "$CL" ]] || fail "event-bench coreboot-$LEG: firmware replay PCR2 ${P2:-<none>} != the machine's own PCR2 $CL"
       [[ "$P2" == "$OR" ]] || fail "event-bench coreboot-$LEG: firmware replay PCR2 $P2 != tpm2_eventlog's $OR"
       # coreboot extends ONLY its SRTM PCR: every other firmware PCR must be zero in the claim
       NZ="$(awk -F: '$1<=7 && $1!=2 && $2 ~ /[1-9a-f]/ {printf "%s ", $1}' "$FX/pcrs-sha256.txt")"
       [[ -z "$NZ" ]] || fail "event-bench coreboot-$LEG: PCR(s) $NZ are nonzero but coreboot's measured boot extends only PCR 2 — something else measured, or the fixture is not a coreboot capture"
-      note "coreboot→$LEG: $NW entries [$(bench_names "$FX/binary_bios_measurements" | sed 's/ *$//')] → PCR2 replay == claim == oracle; PCR0/1/3-7 zero (SRTM-only, by design)"
+      note "coreboot→$LEG: $NW entries [$(bench_join "${BN[@]}")] → PCR2 replay == claim == oracle; PCR0/1/3-7 zero (SRTM-only, by design)"
     done
 
     # ── ROW B: THE COMPARISON — same ROM, different payload ────────────────────────
     mapfile -t BDL < <(bench_digests "$FXL/binary_bios_measurements"); mapfile -t BDO < <(bench_digests "$FXO/binary_bios_measurements")
-    (( ${#BDL[@]} == 6 && ${#BDO[@]} == 6 )) || fail "event-bench: expected 6 measured entries per coreboot leg, got ${#BDL[@]} / ${#BDO[@]}"
-    for i in 0 1 2 3 4; do
-      [[ "${BDL[$i]}" == "${BDO[$i]}" ]] || fail "event-bench: entry $((i+1)) ($(bench_names "$FXL/binary_bios_measurements" | cut -d' ' -f$((i+1)),$((i+2)))) differs between the two coreboot legs (${BDL[$i]:0:16} vs ${BDO[$i]:0:16}) — they were supposed to be the same ROM bytes with only the payload swapped"
+    mapfile -t BNL < <(bench_names   "$FXL/binary_bios_measurements"); mapfile -t BNO < <(bench_names   "$FXO/binary_bios_measurements")
+    (( ${#BDL[@]} == ${#BNL[@]} && ${#BDO[@]} == ${#BNO[@]} )) \
+      || fail "event-bench: digests and names do not pair up (linux ${#BDL[@]}/${#BNL[@]}, openbios ${#BDO[@]}/${#BNO[@]}) — tpm2_eventlog's YAML is not shaped as this track reads it"
+    (( ${#BDL[@]} == ${#BDO[@]} && ${#BDL[@]} >= 2 )) \
+      || fail "event-bench: the two coreboot legs measured different NUMBERS of entries — linux [$(bench_join "${BNL[@]}")] vs openbios [$(bench_join "${BNO[@]}")] — the same ROM must measure the same stages"
+    # The payload entry is found BY NAME, not by position: a coreboot that measured one
+    # more stage would shift it, and a hardcoded "entry 6" would then compare — and in
+    # ROW C overwrite — the wrong digest while still printing a confident verdict.
+    PI=-1; for i in "${!BNL[@]}"; do [[ "${BNL[$i]}" == *fallback/payload* ]] && PI=$i; done
+    (( PI >= 0 )) || fail "event-bench: no CBFS: fallback/payload entry in the Linux leg's log [$(bench_join "${BNL[@]}")]"
+    [[ "${BNO[$PI]}" == *fallback/payload* ]] \
+      || fail "event-bench: entry $((PI+1)) is the payload in the Linux leg but '${BNO[$PI]}' in the OpenBIOS leg — the two logs are not aligned entry for entry"
+    for i in "${!BDL[@]}"; do
+      (( i == PI )) && continue
+      [[ "${BNL[$i]}" == "${BNO[$i]}" ]] \
+        || fail "event-bench: entry $((i+1)) is '${BNL[$i]}' in the Linux leg but '${BNO[$i]}' in the OpenBIOS leg — the same ROM must measure the same stages in the same order"
+      [[ "${BDL[$i]}" == "${BDO[$i]}" ]] \
+        || fail "event-bench: entry $((i+1)) (${BNL[$i]}) differs between the two coreboot legs (${BDL[$i]:0:16} vs ${BDO[$i]:0:16}) — they were supposed to be the same ROM bytes with only the payload swapped"
     done
-    [[ "${BDL[5]}" != "${BDO[5]}" ]] || fail "event-bench: the payload entry has the SAME digest in both coreboot legs (${BDL[5]:0:16}) — the two ROMs do not carry different payloads, so there is nothing to compare"
+    [[ "${BDL[$PI]}" != "${BDO[$PI]}" ]] || fail "event-bench: the payload entry (${BNL[$PI]}) has the SAME digest in both coreboot legs (${BDL[$PI]:0:16}) — the two ROMs do not carry different payloads, so there is nothing to compare"
     CL2="$(bench_claim "$FXL" 2)"; CO2="$(bench_claim "$FXO" 2)"
     [[ "$CL2" != "$CO2" ]] || fail "event-bench: both coreboot legs report the same PCR2 ($CL2) despite different payload digests — the payload measurement did not reach the PCR"
-    note "comparison: entries 1-5 (FMAP/bootblock/romstage/postcar/ramstage) IDENTICAL across the two coreboot legs; entry 6 (CBFS: fallback/payload) DIFFERS — Linux ${BDL[5]:0:12}… vs OpenBIOS ${BDO[5]:0:12}… — and so do their PCR2s"
+    note "comparison: $((${#BDL[@]}-1)) entries [$(bench_join "${BNL[@]:0:PI}")] IDENTICAL across the two coreboot legs; entry $((PI+1)) (${BNL[$PI]}) DIFFERS — Linux ${BDL[$PI]:0:12}… vs OpenBIOS ${BDO[$PI]:0:12}… — and so do their PCR2s"
 
     # ── ROW C: THE DIFFERENCE, EXPLAINED IN FORTH — swap one digest, get the other PCR
-    # Load the Linux leg's log, walk to its payload entry, overwrite that one SHA-256
-    # digest with the OpenBIOS leg's payload digest (delivered as a 32-byte file), and
-    # replay PCR2: it must equal the OpenBIOS leg's own PCR2. One entry explains the
-    # whole difference — and the instrument that shows it is the firmware's toolkit.
-    printf '%s' "${BDO[5]}" | xxd -r -p > "$BWD/stage/ODIG.BIN"; [[ $(stat -c%s "$BWD/stage/ODIG.BIN") -eq 32 ]] || fail "event-bench: could not stage the OpenBIOS payload digest"
+    # Load the Linux leg's log, walk to its payload entry (PI+1 parses — the same
+    # by-name index ROW B found, not a constant), overwrite that one SHA-256 digest
+    # with the OpenBIOS leg's payload digest (delivered as a 32-byte file), and replay
+    # PCR2: it must equal the OpenBIOS leg's own PCR2. One entry explains the whole
+    # difference — and the instrument that shows it is the firmware's toolkit.
+    printf '%s' "${BDO[$PI]}" | xxd -r -p > "$BWD/stage/ODIG.BIN"; [[ $(stat -c%s "$BWD/stage/ODIG.BIN") -eq 32 ]] || fail "event-bench: could not stage the OpenBIOS payload digest"
     genisoimage -quiet -o "$BWD/bench.iso" -V BENCH "$BWD/stage" 2>/dev/null || fail "event-bench: genisoimage failed"
+    WALK="$(printf '(event2) %.0s' $(seq 0 "$PI"))"       # "(event2) " × (PI+1)
     # `load` takes the REST OF THE LINE as its path (like `boot`), so each load sits
     # alone on its line — a `load X  foo bar` loads "X  foo bar" and runs nothing
     # (found 2026-09-03: the swap printed no PCR at all).
@@ -4440,14 +4471,14 @@ PY
       'load-base dig 20 move' \
       'load hd:\CBL.BIN' \
       'load-base evlog-skip-header >rec' \
-      '(event2) (event2) (event2) (event2) (event2) (event2)' \
+      "$WALK" \
       'dig ev-sha256 @ 20 move' \
       '." PSWAP=" load-base load-base load-size + 40 2 evlog-replay .digest cr')"
     PSWAP="$(bval "$OUTC" PSWAP)"
     [[ -n "$PSWAP" ]] || fail "event-bench: the digest-swap run printed no PCR: $(grep -E 'undefined|BADALG' <<<"$OUTC" | head -2 | tr '\n' '|')"
     [[ "$PSWAP" == "$CO2" ]] || fail "event-bench: the Linux leg's log with ONLY the payload digest swapped for OpenBIOS's replays to $PSWAP, not the OpenBIOS leg's own PCR2 $CO2 — the payload entry does not fully explain the difference"
     [[ "$PSWAP" != "$CL2" ]] || fail "event-bench: the swap left PCR2 unchanged — the overwrite did not land on the payload entry's digest"
-    note "explained: the Linux leg's log with one digest swapped (entry 6 ← OpenBIOS's payload digest) replays to EXACTLY the OpenBIOS leg's PCR2 — the payload is the whole difference, shown in Forth"
+    note "explained: the Linux leg's log with one digest swapped (entry $((PI+1)) ← OpenBIOS's payload digest) replays to EXACTLY the OpenBIOS leg's PCR2 — the payload is the whole difference, shown in Forth"
 
     # ── ROW D: the UEFI leg is a different firmware — it measures differently, not just more
     CE0="$(bench_claim "$FXE" 0)"; CE2="$(bench_claim "$FXE" 2)"

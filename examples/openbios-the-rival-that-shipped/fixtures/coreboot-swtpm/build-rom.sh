@@ -44,9 +44,14 @@ case "$LEG" in
     CBMEM="${CAPTURE_CBMEM:-$CB/util/cbmem/cbmem}"
     [[ -x "$CBMEM" ]] || die "no static cbmem at $CBMEM — build it: make -C $CB/util/cbmem LDFLAGS=-static"
     file -b "$CBMEM" | grep -q 'statically linked' || die "$CBMEM is not statically linked — an initramfs needs a static one"
+    # strip a COPY (the ROM slot is tight — see SIZE below); the tree's own binary is
+    # left as built, and a missing `strip` just packs it unstripped
+    CBMEM_PACKED="$HERE/cbmem-static"
+    cp "$CBMEM" "$CBMEM_PACKED" || die "cannot copy $CBMEM"
+    strip "$CBMEM_PACKED" 2>/dev/null || true
     "$REPO/examples/metal-as-a-service/build-probe-initramfs.sh" \
       --init "$HERE/../edk2-swtpm/capture-init.sh" --busybox /usr/bin/busybox --out "$INITRD" \
-      --add "$CBMEM:/bin/cbmem" >/dev/null 2>&1 \
+      --add "$CBMEM_PACKED:/bin/cbmem" >/dev/null 2>&1 \
       || die "building the capture initramfs failed"
     # SIZE, MEASURED. A 16 MiB ROM leaves a 16,596,480-byte slot; the 15 MiB kernel plus
     # a gzip initramfs carrying cbmem came to 16,632,490 — 36 KB over — and cbfstool's
@@ -58,13 +63,13 @@ case "$LEG" in
     INITRD_XZ="${INITRD%.gz}.xz"
     zcat "$INITRD" | xz -9 --check=crc32 > "$INITRD_XZ" || die "re-packing the initramfs as xz failed"
     INITRD="$INITRD_XZ"
+    # iomem=relaxed: the guest reads coreboot's TPM 2.0-format log straight out of
+    # cbmem with `cbmem -r` (see capture-init.sh), and Ubuntu's CONFIG_STRICT_DEVMEM
+    # refuses /dev/mem reads of RAM without it.
     PAYLOAD_KEYS="CONFIG_PAYLOAD_LINUX=y
 CONFIG_PAYLOAD_FILE=\"$KERNEL\"
 CONFIG_LINUX_INITRD=\"$INITRD\"
 CONFIG_LINUX_COMMAND_LINE=\"console=ttyS0,115200 loglevel=5 iomem=relaxed\"" ;;
-    # iomem=relaxed: the guest reads coreboot's TPM 2.0-format log straight out of
-    # cbmem with `cbmem -r` (see capture-init.sh), and Ubuntu's CONFIG_STRICT_DEVMEM
-    # refuses /dev/mem reads of RAM without it.
   openbios)
     [[ -f "$OBELF" ]] || die "no amd64 OpenBIOS payload at $OBELF — run ./build-openbios.sh amd64 first"
     PAYLOAD_KEYS="CONFIG_PAYLOAD_ELF=y

@@ -1,17 +1,37 @@
 #!/usr/bin/env bash
-# capture.sh — capture a REAL edk2 (OVMF) TCG event log and the PCRs a real (swtpm)
-# TPM holds, from a throwaway guest, into this fixture directory. Subject
-# acquisition for the openbios lab's `event-real` track: a measured-boot log
-# nobody in this repo authored, plus the machine's own claim of what it measured.
+# capture.sh — capture a REAL TCG event log and the PCRs a real (swtpm) TPM holds,
+# from a throwaway guest, into a fixture directory. Subject acquisition for the
+# openbios lab's `event-real` and `event-bench` tracks: a measured-boot log nobody
+# in this repo authored, plus the machine's own claim of what it measured — and the
+# SAME Linux reader behind three firmware substrates, so nothing but the firmware
+# differs between the bench's legs.
 #
 #   capture.sh [--out DIR]        (default: this directory)
 #
-# HOW. swtpm (socket, TPM 2.0) is started as a sidecar; QEMU boots OVMF_CODE_4M
-# (which has TPM2 support and measures its boot into the TPM + the event log) with
-# a tpm-tis device on that socket, and direct-boots a TPM-capable Linux kernel with
-# a busybox initramfs whose /init (capture-init.sh) mounts securityfs and prints
-# the log (base64) and every PCR over the serial console, then powers off. The host
-# decodes the framing back into files and records sha256s. Rootless; no network.
+#   CAPTURE_FIRMWARE=ovmf                       (default) OVMF/edk2 as pflash, which
+#                                               direct-boots the reader kernel + initramfs
+#   CAPTURE_FIRMWARE=coreboot:<rom>             a measured coreboot ROM (-bios) whose
+#                                               Linux payload IS the reader — no kernel
+#                                               is passed; see ../coreboot-swtpm/build-rom.sh
+#   CAPTURE_FIRMWARE=coreboot-openbios:<rom>    a measured coreboot ROM carrying OpenBIOS,
+#                                               which `boot`s the reader off a piix3-ide CD
+#                                               (the prompt is driven over a serial socket)
+#   CAPTURE_KERNEL=<vmlinuz>     the TPM-capable reader kernel (see WHY THE HOST KERNEL)
+#   CAPTURE_CBMEM=<cbmem>        coreboot's STATIC cbmem, packed into the initramfs as
+#                                /bin/cbmem (default: $COREBOOT_DIR/util/cbmem/cbmem);
+#                                a coreboot guest reads its TPM 2.0 log through it
+#   CAPTURE_TPMDEV=tpm-crb       the QEMU TPM front-end (default tpm-tis)
+#   CAPTURE_APPEND=…             the kernel command line (ovmf mode only)
+#   CAPTURE_INIT=… CAPTURE_DONE_MARKER=…   DIAG MODE: swap in a diagnostic /init and
+#                                name its end marker — keeps the serial log, decodes nothing
+#
+# HOW. swtpm (socket, TPM 2.0) is started as a sidecar; QEMU boots the firmware with
+# a tpm-tis device on that socket; the firmware measures its boot into the TPM + the
+# event log and (one way or another) reaches a TPM-capable Linux kernel with a
+# busybox initramfs whose /init (capture-init.sh) mounts securityfs — or, under
+# coreboot, reads cbmem — and prints the log (base64) and every PCR over the serial
+# console, then powers off. The host decodes the framing back into files and records
+# sha256s. Rootless; no network.
 #
 # WHY THE HOST KERNEL. The linuxboot kernels on this host have no TPM drivers (they
 # are minimal u-root builds). ~/.cache/mklab-kernel/vmlinuz is a world-readable copy
@@ -25,7 +45,7 @@ set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd -- "$HERE/../../../.." && pwd)"
 OUT="$HERE"
-[[ "${1:-}" == "--out" ]] && OUT="$2"
+[[ "${1:-}" == "--out" ]] && OUT="${2:?capture: --out needs a directory}"
 die() { printf 'capture: %s\n' "$*" >&2; exit 1; }
 
 KERNEL="${CAPTURE_KERNEL:-$HOME/.cache/mklab-kernel/vmlinuz}"
@@ -33,11 +53,11 @@ OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS=/usr/share/OVMF/OVMF_VARS_4M.fd
 PACKER="$REPO/examples/metal-as-a-service/build-probe-initramfs.sh"
 for t in swtpm qemu-system-x86_64 base64 sha256sum; do command -v "$t" >/dev/null || die "$t is required"; done
-# FIRMWARE MODE. Default: OVMF (edk2) as pflash, direct-booting KERNEL+initramfs.
-# CAPTURE_FIRMWARE=coreboot:<rom> boots that ROM with `-bios` on q35 instead — the
-# ROM carries its own payload (the §12 bench's measured coreboot ROMs), so no
-# kernel is passed; the initramfs is still built so a Linux payload ROM can be
-# rebuilt from it, and the decode/provenance path is shared with the OVMF mode.
+# FIRMWARE MODE (see the header). Default: OVMF (edk2) as pflash, direct-booting
+# KERNEL+initramfs. coreboot:<rom> boots that ROM with `-bios` on q35 — the ROM
+# carries its own payload (the §12 bench's measured coreboot ROMs, whose Linux leg
+# packs its own initramfs in build-rom.sh), so neither a kernel nor an initramfs is
+# built here; the decode/provenance path is shared by every mode.
 FWMODE="${CAPTURE_FIRMWARE:-ovmf}"
 COREBOOT_ROM=""; OBLEG=0
 case "$FWMODE" in
@@ -60,15 +80,20 @@ esac
 [[ -x /usr/bin/busybox ]] || die "/usr/bin/busybox (busybox-static) is required for the guest initramfs"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/tpmcap.XXXXXX")"
-SWPID=""; QPID=""
+SWPID=""; QPID=""; SERSOCK=""
 cleanup() {
     [[ -n "$QPID"  ]] && kill "$QPID"  2>/dev/null   # by PID, never by pattern
     [[ -n "$SWPID" ]] && kill "$SWPID" 2>/dev/null
+    # the OpenBIOS leg's serial socket lives OUTSIDE $WORK (AF_UNIX path-length
+    # limit), so it is removed by name — the first draft leaked one per run
+    [[ -n "$SERSOCK" ]] && rm -f "$SERSOCK"
     rm -rf "$WORK"
 }
 trap cleanup EXIT
 
 # ── the guest initramfs: busybox + capture-init.sh as /init ──────────────────
+# Built only for the modes that boot it from here (OVMF direct-boot, the OpenBIOS
+# leg's CD); a coreboot:<rom> carries its own, packed by build-rom.sh.
 INITRD="$WORK/capture-initramfs.cpio.gz"
 INIT="${CAPTURE_INIT:-$HERE/capture-init.sh}"        # a diagnostic /init can be swapped in
 # coreboot's static `cbmem` rides along when present: under a coreboot ROM the guest
@@ -76,9 +101,11 @@ INIT="${CAPTURE_INIT:-$HERE/capture-init.sh}"        # a diagnostic /init can be
 # securityfs file is empty there). Harmless under OVMF — it is simply never invoked.
 CBMEM="${CAPTURE_CBMEM:-${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}/util/cbmem/cbmem}"
 ADDS=(); [[ -x "$CBMEM" ]] && ADDS=(--add "$CBMEM:/bin/cbmem")
-"$PACKER" --init "$INIT" --busybox /usr/bin/busybox --out "$INITRD" "${ADDS[@]}" >/dev/null 2>&1 \
-    || die "building the capture initramfs failed (run $PACKER by hand to see why)"
-[[ -s "$INITRD" ]] || die "packer produced no initramfs"
+if [[ -z "$COREBOOT_ROM" || "$OBLEG" == 1 ]]; then
+    "$PACKER" --init "$INIT" --busybox /usr/bin/busybox --out "$INITRD" "${ADDS[@]}" >/dev/null 2>&1 \
+        || die "building the capture initramfs failed (run $PACKER by hand to see why)"
+    [[ -s "$INITRD" ]] || die "packer produced no initramfs"
+fi
 
 # ── swtpm sidecar (TPM 2.0), ctrl socket for QEMU ────────────────────────────
 TPMSTATE="$WORK/tpmstate"; mkdir -p "$TPMSTATE"
@@ -248,8 +275,16 @@ cp "$SERIAL" "$OUT/serial-capture.txt"
     fi
     echo "swtpm:     $(swtpm --version 2>&1 | head -1)"
     echo "qemu:      $(qemu-system-x86_64 --version | head -1)"
-    echo "kernel:    $KERNEL  ($(file -b "$KERNEL" | grep -oE 'version [^ ]+' ))  sha256=$(sha256sum "$KERNEL" | cut -d' ' -f1)"
-    echo "tpm-dev:   tpm-tis (QEMU), swtpm --tpm2 ctrl=unixio"
+    # the reader kernel is recorded where THIS script booted it; under coreboot:<rom>
+    # it is inside the ROM (build-rom.sh's CONFIG_PAYLOAD_FILE) and the payload line
+    # above is its record — naming a host path here would be a claim this script
+    # never checked (it does not even require the file to exist in that mode)
+    if [[ -n "$COREBOOT_ROM" && "$OBLEG" == 0 ]]; then
+        echo "kernel:    (inside the ROM as its Linux payload — see payload: and build-rom.sh)"
+    else
+        echo "kernel:    $KERNEL  ($(file -b "$KERNEL" | grep -oE 'version [^ ]+' ))  sha256=$(sha256sum "$KERNEL" | cut -d' ' -f1)$([[ "$OBLEG" == 1 ]] && echo '  (booted by OpenBIOS off the piix3-ide CD as \V + \I)')"
+    fi
+    echo "tpm-dev:   ${CAPTURE_TPMDEV:-tpm-tis} (QEMU), swtpm --tpm2 ctrl=unixio"
     echo "accel:     $ACCEL"
     echo "log-src:   ${LOGSRC:-securityfs}  (securityfs = /sys/kernel/security/tpm0/binary_bios_measurements; cbmem = coreboot's CBMEM_ID_TPM2_TCG_LOG read with cbmem -r, trimmed by walking)"
     echo

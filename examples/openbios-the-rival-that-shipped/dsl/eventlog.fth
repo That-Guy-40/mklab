@@ -1,5 +1,6 @@
 \ eventlog.fth — a TCG PC Client crypto-agile measured-boot event log reader/author
-\ in OpenBIOS Forth (B.3 Spike 1a — the STRUCTURE, no crypto yet).
+\ in OpenBIOS Forth (B.3 Spike 1a — the STRUCTURE), plus the PCR REPLAY over that
+\ same parse (Spike 1b — needs sha256.fth; see LOAD ORDER below).
 \
 \ ALL LITTLE-ENDIAN — the deliberate complement to CBFS's big-endian (cbfs.fth): the
 \ same Spike-0 cursor walks both, so ppc byte-swaps HERE (through le-l@) while it read
@@ -23,7 +24,9 @@
 \ references `sha256`, and this Forth aborts a colon definition that names a word
 \ it cannot find — and leaves the interpreter mid-compile, so every later line
 \ cascades into "undefined word" (measured 2026-09-03, loading these in the wrong
-\ order). The reader alone (1a) needs only struct.fth.
+\ order). That applies to the READER too: this is one file and the whole of it is
+\ evaluated, so a consumer that only wants the 1a walk still has to load
+\ sha256.fth first — the event-log track was red for two merges on exactly that.
 hex
 
 4 1 0 type: u32le                 \ 4-byte LITTLE-endian (order 1 = LE)
@@ -134,7 +137,7 @@ variable ev-sha256
 \ ── authoring (Spike 1a WRITE direction — structure, not crypto) ──────────────
 \ The firmware composes a whole crypto-agile log through the SAME cursor the reader
 \ was graded on (every multi-byte field a LITTLE-endian store, u32le/u16le t!+),
-\ then write-file persists it and coreboot's neighbour — no, TPM's tool — reads it:
+\ then write-file persists it and the TPM community's own tool reads it back:
 \ tpm2_eventlog is the foreign oracle. For 1a the digests are placeholder fills (a
 \ constant byte per entry): tpm2_eventlog validates STRUCTURE, and 1b replaces the
 \ fills with a real SHA-256 chain for the replay. Load-bearing point: a log the

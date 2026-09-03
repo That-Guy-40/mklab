@@ -49,4 +49,14 @@ on a good log — read the bytes); and the kernel prints PCR hex in **upper case
 `[0-9a-f]` pattern silently keeps only the all-zero PCRs and drops the ones that matter.
 
 `CAPTURE_INIT=… CAPTURE_DONE_MARKER=…` swap in a diagnostic `/init`; `CAPTURE_TPMDEV=tpm-crb`
-and `CAPTURE_APPEND=…` change the device and kernel command line.
+and `CAPTURE_APPEND=…` change the device and kernel command line; `CAPTURE_KERNEL=` names
+another reader kernel.
+
+**The same recipe captures the bench's other legs.** `CAPTURE_FIRMWARE=coreboot:<rom>` boots
+a measured coreboot ROM whose Linux payload *is* the reader, and
+`CAPTURE_FIRMWARE=coreboot-openbios:<rom>` one carrying OpenBIOS, which `boot`s the reader
+off a `piix3-ide` CD (the prompt is driven over a serial socket). Both need coreboot's
+**static** `cbmem` packed into the initramfs (`CAPTURE_CBMEM=`, default
+`$COREBOOT_DIR/util/cbmem/cbmem`) because coreboot's TPM 2.0 log is not what its ACPI table
+publishes — the how and why, and the ROM build, are in
+[`../coreboot-swtpm/`](../coreboot-swtpm/README.md).
