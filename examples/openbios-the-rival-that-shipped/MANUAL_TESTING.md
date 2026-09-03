@@ -468,6 +468,49 @@ copy of the source and regression-tested against x86 before being applied here.
 Not sent upstream: nothing upstream ships needs this path. See
 [TODO §13.1](../../TODO.md).
 
+### The `region-diff` track — a change the FIRMWARE caused (B.3 Spike 3)
+
+Needs both coreboot ROMs (`./build-coreboot-openbios.sh x86` and `amd64`); each
+is checked against the tree's payload first, so a stale ROM is a SKIP, not a
+green run about other firmware.
+
+```console
+$ ./smoke-openbios.sh region-diff
+  - x86 provenance: the ROM carries this tree's payload (d9a72f3a5e40)
+  - x86: SELFTEST=1 QUIET=0 | lb-table 0x1fe9e000+0x324 LBTAB=0 | RANGES=2 STEP=0x90 HEAP=0x7 LAST=0x1b RAW=0x0
+  - x86: QEMU reads 0x1f at guest-physical 0x1fe42913+0x1b (the firmware said 0x1f); the bytes
+    decode to RAM 0x1000+0x9f000 and 0x100000+0x1fd71000 = 510 MiB
+  - amd64 provenance: the ROM carries this tree's payload (2d8b8fcebf55)
+  - amd64: SELFTEST=1 QUIET=0 | lb-table 0x1fe9e000+0x324 LBTAB=0 | RANGES=2 STEP=0x90 HEAP=0x7 LAST=0x1b RAW=0x7
+PASS: B.3 Spike 3 (region diff, plan §9's last unmet line): a REGION DIFF SHOWS A
+      FIRMWARE-CAUSED CHANGE, on x86 and amd64 …
+```
+
+**Read `RAW` across the two arches — that pair is the point.** It is the same
+bytes snapshotted at the **physical** address with **no `>virt`**: `0` on x86,
+where the GDT rebase means the snapshot landed on other memory that read back
+convincingly, and `0x7` — identical to the `>virt` path — on amd64, where
+`virt_offset` is 0 and there is no trap to bite. One number alone would be
+ambiguous; the pair is not.
+
+`LBTAB=0` is the negative control and it also **retracts the review's premise**:
+`read_lbtable()` is a reader, so the region it walks does not change. The write
+is one level down, in `convert_memmap()`'s `malloc`.
+
+### The `region-diff` controls, run 2026-09-03
+
+Three, each re-injected into a fresh build and watched to bite:
+
+| broken | what fired |
+|---|---|
+| `region-diffs` returns `0` unconditionally | `FAIL: … SELFTEST=0, not 1 — one byte poked by the test itself was not seen …` |
+| `region-snap` drops its `>virt` | `FAIL: … HEAP=0 … SELFTEST=1 above means the instrument works, so this is about the subject` |
+| `lb-walk` skips `read_lbtable()` | `FAIL: … lb-walk returned 0 RAM ranges … the parser did not run` |
+
+The middle row is the one worth reading twice: the message points at the
+**subject** rather than the instrument, and it can only do that because
+`SELFTEST` is asserted first.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console
@@ -500,6 +543,49 @@ memory map is real, the zero page is built in C. The difference is the whole
 point (POC-4). Needs `genisoimage` + a kernel/initrd pair (defaults:
 `~/linuxboot-lab/payload-bzImage` + `uroot.cpio`; override `KERNEL=`/
 `INITRD=`). ≈ 30–45 s under KVM.
+
+### The other showcase — the whole toolkit in ONE boot
+
+[`showcase-preboot-toolkit.sh`](showcase-preboot-toolkit.sh), documented in
+[SHOWCASE-PREBOOT-TOOLKIT.md](SHOWCASE-PREBOOT-TOOLKIT.md). Where the showcase
+above ends in an OS, this one never leaves the firmware: four acts at the `0 >`
+prompt of the amd64 payload booted from a coreboot ROM, with two FCode
+option-ROM cards on the bus and every `dsl/` reader delivered over a CD.
+
+```console
+$ ./showcase-preboot-toolkit.sh
+  - firmware: the amd64 payload of …/coreboot.rom (the ROM carries this tree's payload)
+  - cards: fcode-card.fth and fcode-card-cfg.fth → toke → 2048- and 2048-byte PCI option ROMs
+  - the ROM is 4194304 bytes → QEMU maps it at 0xffc00000; its CBFS region begins at 0xffc01000
+
+══ ACT I — the firmware dissects the container it arrived in ══
+     0 > ffc01000 20 cbfs-list
+     cbfs| off=0001b500 type=simple-elf len=00015c71 name=fallback/payload
+  - 12 entries read out of guest-PHYSICAL flash by the firmware itself
+     NO HOSTED TOOL CAN BE HERE: cbfstool cannot run inside the ROM it is reading.
+
+══ ACT II — the firmware watches its own parser work ══
+  - SELFTEST=1 — one byte poked by us, one difference found
+  - LBTAB=0 — unchanged. read_lbtable() is a READER; this is the negative control
+  - the bump allocator advanced 0x90 bytes and 7 of them changed, all inside that block
+
+══ ACT III — a card's own program, run out of the card's own ROM ══
+     optrom| byte-load fcode@41040040
+  - MARK=FCODE-FROM-CARD-RAN — the card's own bytecode ran and stamped the node
+  - CFGID=100e8086 — the second card asked its own PCI config space who it is
+
+══ ACT IV — measured-boot arithmetic, with no TPM and no OS ══
+  - a TCG crypto-agile event log authored in RAM: 227 bytes
+  - PCR0 = the same extend chain computed on the host: SHA256(PCR ‖ digest), twice
+     UNKNOWN, and it stays UNKNOWN …
+
+PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
+```
+
+**It is graded, not narrated.** Every act asserts its outcome and the run exits
+1 if one does not happen — verified 2026-09-03 by making `lb-walk` a no-op,
+which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
+≈ 2 min under KVM.
 
 ## 5. The firmware as a Unix process (no QEMU)
 

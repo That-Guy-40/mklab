@@ -98,6 +98,7 @@ Per house rule, the load-bearing claims were measured first, not assumed:
 | the oracle's verbs actually work ([review F2](REVIEW-preboot-structure-toolkit-plan.md#f2--10-rests-on-cbfstool-extract-which-this-repo-has-already-measured-failing)) | run `cbfstool print`/`extract` on the lab's own ROM | ✅ re-measured 2026-09-01: `print` works; `extract` works on `raw` entries (LZMA decompressed too) **and on the payload with `-m x86`** — the 2026-08-27 "cannot extract a payload at all" in `tools/openbios-rom-provenance.sh` was a run missing the `-m ARCH` flag the error itself names (now corrected there). The extracted payload is a **reconstituted** ELF (segments only — different size and sha256 than the input), so §10's surgery round-trip byte-compares are scoped to `raw` entries; the payload is graded by `print` metadata + reconstituted-extract parseability. |
 | the four-arch matrix has a door on every arch ([review F3](REVIEW-preboot-structure-toolkit-plan.md#f3--the-four-arch-matrix-does-not-exist-yet-and-two-of-its-rows-have-no-door)) | boot each arch, deliver `struct.fth`, run the G2 controls | ✅ **measured 2026-09-01 — Spike −1 below.** Both "missing" doors existed in the shipped builds; no reflow, no dictionary bake, no new C. |
 | Spike 3 has a reachable subject ([review F5](REVIEW-preboot-structure-toolkit-plan.md#f5--spike-3s-subject-is-the-one-feasibility-claim-3-did-not-check-and-the-reachable-one-is-121)) | the poke-engine review's did-not-prove list + the `flash-writer` track | ✅ **COVERED 2026-09-03** (`optrom` track, patch 55, `dsl/optrom.fth`): the read needed no port I/O at all — the allocator had already mapped *and enabled* every device's ROM BAR and only never published it; patch 55 publishes the register-30 entry and binds `config-{b,w,l}@`/`!`, and the OFW lab's FCode ROM byte-loads from the live BAR on x86 and amd64. *(Was: "blocked — no config-space/port-I/O words bound — and stays a named UNCOVERED row";)* the reachable subject is §12(1)'s live ROM window (`flash-writer` already reads CFI at `0xffbe0000` through `>virt`) — Spike 3 is re-aimed there. |
+| `region-snap`/`region-diff` port cleanly ([review F6](REVIEW-preboot-structure-toolkit-plan.md#f6--region-snapregion-diff-are-not-existing-in-this-lab-they-are-ofw-words-that-have-not-been-ported)) | copy them into `dsl/`, aim them at the firmware's own `LB_TAG` walk, run the diff | ✅ **DONE 2026-09-03** (`region-diff` track, patch 58, `dsl/region.fth` + `dsl/lbregion.fth`): they port on `alloc-mem`/`move`/`c@` alone. **But F6's own transition-to-diff was wrong and is retracted:** `read_lbtable()` is a *reader*, so the table region does **not** change (`LBTAB=0` — it is the negative control); the firmware's write lands one level down, in `convert_memmap()`'s `malloc`, which is why patch 58 publishes `heap-cursor` as well. `>virt` moved *inside* `region-snap` so a caller cannot forget it, and the trap is measured in both directions (`RAW=0` on x86, `RAW==HEAP` on amd64) rather than described. |
 
 ---
 
@@ -556,20 +557,49 @@ list), and the only FCode option-ROM subject in the repo
 (`open-firmware-debugs-itself/build-fcode-rom.sh`) is attached to **OFW**, not
 OpenBIOS. Uncovered, not dropped (the chaos-matrix rule).
 
-**The diff half:** `region-snap`/`region-diff` are **fifteen OFW lines that have
-not been ported** —
+**The diff half — ✅ DONE 2026-09-03 (`region-diff` track, patch 58,
+`dsl/region.fth` + `dsl/lbregion.fth`).** `region-snap`/`region-diff` were
+**fifteen OFW lines that had not been ported** —
 [review F6](REVIEW-preboot-structure-toolkit-plan.md#f6--region-snapregion-diff-are-not-existing-in-this-lab-they-are-ofw-words-that-have-not-been-ported):
-they get **copied** into this lab's `dsl/` (self-containment rule), through the
-habitats lab's `PORTING.md` checklist, with `>virt` on the snapshot address on
-`x86` (the `flash-writer` trap). The natural transition to diff is the
-firmware's own `LB_TAG` table walk (`linuxbios_info.c`, patched by this lab's
-patches 01 and 39): snapshot the table region, re-run the walk, diff — a change
-the firmware itself caused, from a code path already in-tree.
+now **copied** into this lab's `dsl/` (self-containment rule), through the
+habitats lab's `PORTING.md` checklist, with `>virt` applied *inside* the
+snapshot entry point on `x86` so a caller cannot forget it (the `flash-writer`
+trap). The transition to diff is the firmware's own `LB_TAG` table walk
+(`linuxbios_info.c`, patched by this lab's patches 01 and 39), re-run on demand
+by patch 58's `lb-walk` into a **scratch** `sys_info`.
 
-**Exit criterion (scoped, honest):** the live CBFS walk on `x86`/`amd64` from
-the mapped ROM window matches both the host-side file walk and `cbfstool print`;
-a `region-snap`/`region-diff` shows a firmware-caused change; the option-ROM row
-prints as UNCOVERED with its blockers named.
+**And the premise of that sentence was wrong — retracted.** F6 (and F5) said to
+snapshot *the table region*, re-run the walk and diff. `read_lbtable()` is a
+**reader**: measured, that region comes back byte-identical every time, so it is
+the **negative control**, not the subject. The write is one level down —
+`convert_memmap()` calls `malloc()` and fills what it gets — so the subject is
+the bump allocator's cursor (`heap-cursor`), and the six rows the track runs are:
+
+| row | what it says |
+|---|---|
+| `SELFTEST=1` | one byte the *test* poked is found — the instrument, calibrated before it is aimed (must-catch) |
+| `QUIET=0` | a snapshot left alone does not drift (must-not-catch) |
+| `LBTAB=0` | the walk does not change what it **reads** (negative control) |
+| `HEAP>0` | the walk **does** change the allocator's next block — ***the clause*** |
+| `LAST<STEP` | …and only inside the block it asked for (`STEP` = a whole number of 16-byte `memrange`s) |
+| `RAW` | the same bytes at the **physical** address with **no `>virt`**: `0` on x86, where the GDT rebase makes that other memory that *reads back convincingly*; equal to `HEAP` on amd64, where `virt_offset` is 0 and there is no trap to bite |
+
+A seventh observer sits outside the firmware entirely: QEMU's monitor reads the
+same guest-physical bytes, agrees with the firmware byte-for-byte at the
+last-changed offset, and they decode to the RAM ranges of the machine QEMU was
+actually given (`0x1000+0x9f000` and `0x100000+0x1fd71000` = 510 MiB of `-m 512`).
+Three negative controls were re-injected and watched to bite: a `region-diffs`
+that always answers 0 (`SELFTEST` → 0), a `region-snap` that forgets `>virt`
+(`HEAP` → 0 on x86 while `SELFTEST` stays 1, so the message points at the
+subject and not the instrument), and an `lb-walk` that skips `read_lbtable`
+(`RANGES` → 0).
+
+**Exit criterion (scoped, honest) — ✅ MET 2026-09-03, all three:** the live
+CBFS walk on `x86`/`amd64` from the mapped ROM window matches both the host-side
+file walk and `cbfstool print` (`cbfs-live`); a `region-snap`/`region-diff` shows
+a firmware-caused change (`region-diff`, above); and the option-ROM row — which
+this criterion originally only asked to print as UNCOVERED with its blockers
+named — is **covered** instead (`optrom`, below).
 
 **The option-ROM row — COVERED 2026-09-03 (`optrom` track, patch 55,
 `dsl/optrom.fth`, `fixtures/optrom/`).** Measured before anything was written:
@@ -734,12 +764,16 @@ Docs, `link_check.py`, and the patch record stay green at every step.
   files as `$OBJDIR/cbfstool print`, on all four arches, the `ppc` row proving the
   big-endian reads and telling the payload kinds apart; an authored `raw` entry
   round-trips through `cbfstool`.
-- **Spike 3:** the **live** CBFS walk from the mapped ROM window on `amd64`/`x86`
-  matches both the host-side file walk and `cbfstool print`; a region diff shows a
-  firmware-caused change; the option-ROM read prints as UNCOVERED with its blockers
-  named. *(✅ 2026-09-03: the option-ROM row is no longer UNCOVERED — the `optrom`
-  track reads a real option ROM at its live BAR and byte-loads its FCode on
-  x86/amd64; see §5.)*
+- **Spike 3 (✅ met 2026-09-03, every clause):** the **live** CBFS walk from the
+  mapped ROM window on `amd64`/`x86` matches both the host-side file walk and
+  `cbfstool print` (`cbfs-live`); a region diff shows a firmware-caused change —
+  the `region-diff` track re-runs the firmware's own coreboot-table parser and
+  finds the region it *reads* unchanged while the allocator's next block moves,
+  with the `>virt` trap measured in both directions and QEMU's monitor agreeing
+  from outside (patch 58, `dsl/region.fth` + `dsl/lbregion.fth`); and the
+  option-ROM read, which this signature only asked to print as UNCOVERED with its
+  blockers named, is **covered** — the `optrom` track reads a real option ROM at
+  its live BAR and byte-loads its FCode on x86/amd64/ppc (see §5).
 
 ---
 

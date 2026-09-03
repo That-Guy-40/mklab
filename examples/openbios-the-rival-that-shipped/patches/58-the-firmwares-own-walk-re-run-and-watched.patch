@@ -1,0 +1,331 @@
+Subject: [PATCH 58/58] linuxbios_info: the firmware's own walk, re-run and watched
+
+Arch-tested: x86 amd64 ppc unix
+
+The three words exist on x86 and amd64 only -- CONFIG_LINUXBIOS is false
+everywhere else, and those two are also the only arch/*/lib.c with the bump
+allocator behind heap-cursor. ppc and unix are on that line because two of the
+seven files are SHARED HEADERS they compile, so "it builds and its tracks pass
+there" is a claim this lab can make and therefore has to: the whole suite was
+run on all four.
+
+B.3's last unmet success-signature line (plan §9, Spike 3) is "a region diff
+shows a FIRMWARE-CAUSED change". The word doing the work is *firmware-caused*:
+a diff over bytes the test itself wrote proves the instrument and nothing else.
+So the subject has to be a code path already in the tree, and this is the one
+the plan names -- libopenbios/linuxbios_info.c, the coreboot-table parser that
+runs at init and that this lab has already patched twice (01: publish the real
+memory map; 39: chase LB_TAG_FORWARD into CBMEM).
+
+Three words, bound the way patches 14/16 established (after device_end(), or a
+global bind is not FOUND):
+
+    lb-table    ( -- phys len )   the CBMEM-forwarded table, header included
+    lb-walk     ( -- n )          re-run the parse into a SCRATCH sys_info;
+                                  n = RAM ranges written, -1 = no table
+    heap-cursor ( -- phys avail ) where arch/{x86,amd64}/lib.c's bump allocator
+                                  will put the NEXT malloc
+
+THE REVIEW THAT SCHEDULED THIS WORK WAS WRONG ABOUT WHERE THE CHANGE LANDS, and
+publishing lb-table is how that gets said out loud rather than quietly dropped.
+F5/F6 read: "snapshot the CBMEM-forwarded table region, re-run the walk, diff".
+Measured 2026-09-03: read_lbtable() is a READER. That region comes back
+byte-identical every time (LBTAB=0), so it is the NEGATIVE CONTROL, not the
+subject. The write is one level down -- convert_memmap() calls malloc() and
+fills what it gets -- which is why heap-cursor exists at all: it is the only
+way to snapshot bytes BEFORE the firmware writes them, and afterwards there is
+nothing to compare against.
+
+ADDRESSES OUT ARE PHYSICAL, ON PURPOSE. x86 relocates by rebasing the GDT
+(arch/x86/segment.c), so a bare firmware pointer handed to Forth would let a
+snapshot land on memory that READS BACK CONVINCINGLY -- no error, plausible
+bytes, and a diff of zero, which is the failure mode that looks like success.
+Physical forces the caller through dsl/struct.fth's >virt, and the `region-diff`
+track measures the trap in both directions: 0 on x86 without >virt, and equal to
+the >virt path on amd64, where virt_offset is 0 and there is no trap to bite.
+
+lb_find_table() is collect_linuxbios_info()'s own search, unchanged, lifted out
+so it can be run more than once. collect_linuxbios_info() keeps its behaviour
+exactly; lb-walk never touches the live sys_info.
+
+x86 and amd64 only: CONFIG_LINUXBIOS is false on ppc/sparc32/sparc64/ppc64, and
+those two are also the only arch/*/lib.c with the bump allocator heap-cursor
+reports (sparc64's malloc is ofmem_malloc, which has no such cursor).
+
+Measured after, on both, with QEMU's monitor reading the same guest-physical
+bytes from outside: LBTAB=0, the cursor advances 0x90 (nine 16-byte memranges),
+seven bytes change, all inside that block, and they decode to the two RAM ranges
+of the machine QEMU was given (0x1000+0x9f000 and 0x100000+0x1fd71000 = 510 MiB
+of -m 512). Three negative controls were re-injected and watched to bite: a
+region-diffs that always answers 0 (SELFTEST goes to 0), a region-snap that
+forgets >virt (HEAP goes to 0 on x86 while SELFTEST stays 1, so the message
+correctly points at the subject and not the instrument), and a lb-walk that
+skips read_lbtable (RANGES goes to 0).
+
+All seven files, in one diff: the two `arch/*/lib.c` hunks are identical because
+the two bump allocators are copies of each other, and so are the two
+`arch/*/openbios.c` hunks, for the same reason.
+
+diff --git a/include/libc/stdlib.h b/include/libc/stdlib.h
+--- a/include/libc/stdlib.h
++++ b/include/libc/stdlib.h
+@@ -20,6 +20,18 @@
+ extern void	free( void *ptr );
+ extern void	*realloc( void *ptr, size_t size );
+ 
++/* -- mklab, B.3 Spike 3 (patch 58): the allocator's own cursor ---------------
++ * NOT libc. arch/{x86,amd64}/lib.c implement malloc as a bump pointer over a
++ * static 128 KiB array and free() as a no-op, so "where will the next malloc
++ * write" is a question those two arches can answer exactly -- which is what a
++ * region-diff needs in order to snapshot bytes BEFORE the firmware's own code
++ * path writes them. Physical, because the snapshot address has to survive
++ * x86's relocation the way every other address in this lab does (>virt).
++ * Only the bump allocators define these; sparc64's malloc is ofmem_malloc and
++ * has no such cursor, and nothing outside CONFIG_LINUXBIOS calls them. */
++extern unsigned long	malloc_cursor_phys( void );
++extern unsigned long	malloc_avail( void );
++
+ /* should perhaps go somewhere else... */
+ extern void	qsort( void *base, size_t nmemb, size_t size, int (*compar)(const void*, const void*));
+ 
+diff --git a/arch/x86/lib.c b/arch/x86/lib.c
+--- a/arch/x86/lib.c
++++ b/arch/x86/lib.c
+@@ -9,6 +9,7 @@
+ 
+ #include "config.h"
+ #include "asm/types.h"
++#include "asm/io.h"		/* virt_to_phys, for malloc_cursor_phys (patch 58) */
+ #include <stdarg.h>
+ #include "libc/stdlib.h"
+ #include "libc/vsprintf.h"
+@@ -54,3 +55,23 @@
+ {
+ 	/* Nothing yet */
+ }
++
++/* -- mklab, B.3 Spike 3 (patch 58): where the NEXT allocation will write ------
++ * The allocator above is a bump pointer over a static array with a free() that
++ * does nothing, so `memptr` is not an implementation detail to be guessed at --
++ * it is the exact address the next malloc() returns. Publishing it is what lets
++ * a Forth region-diff snapshot those bytes BEFORE the firmware's own coreboot-
++ * table parser (libopenbios/linuxbios_info.c) allocates and writes there, and
++ * then show the change the firmware itself caused rather than one the test made.
++ * PHYSICAL on purpose: on x86 a Forth address is the relocated one, and handing
++ * out a bare pointer would let a snapshot land on RAM that reads back
++ * convincingly -- the trap dsl/struct.fth's >virt/>phys pair exists for. */
++unsigned long malloc_cursor_phys(void)
++{
++	return virt_to_phys(memptr);
++}
++
++unsigned long malloc_avail(void)
++{
++	return (unsigned long)memsize;
++}
+diff --git a/arch/amd64/lib.c b/arch/amd64/lib.c
+--- a/arch/amd64/lib.c
++++ b/arch/amd64/lib.c
+@@ -9,6 +9,7 @@
+ 
+ #include "config.h"
+ #include "asm/types.h"
++#include "asm/io.h"		/* virt_to_phys, for malloc_cursor_phys (patch 58) */
+ #include <stdarg.h>
+ #include "libc/stdlib.h"
+ #include "libc/vsprintf.h"
+@@ -54,3 +55,23 @@
+ {
+ 	/* Nothing yet */
+ }
++
++/* -- mklab, B.3 Spike 3 (patch 58): where the NEXT allocation will write ------
++ * The allocator above is a bump pointer over a static array with a free() that
++ * does nothing, so `memptr` is not an implementation detail to be guessed at --
++ * it is the exact address the next malloc() returns. Publishing it is what lets
++ * a Forth region-diff snapshot those bytes BEFORE the firmware's own coreboot-
++ * table parser (libopenbios/linuxbios_info.c) allocates and writes there, and
++ * then show the change the firmware itself caused rather than one the test made.
++ * PHYSICAL on purpose: on x86 a Forth address is the relocated one, and handing
++ * out a bare pointer would let a snapshot land on RAM that reads back
++ * convincingly -- the trap dsl/struct.fth's >virt/>phys pair exists for. */
++unsigned long malloc_cursor_phys(void)
++{
++	return virt_to_phys(memptr);
++}
++
++unsigned long malloc_avail(void)
++{
++	return (unsigned long)memsize;
++}
+diff --git a/include/libopenbios/sys_info.h b/include/libopenbios/sys_info.h
+--- a/include/libopenbios/sys_info.h
++++ b/include/libopenbios/sys_info.h
+@@ -38,6 +38,13 @@
+ 
+ void collect_elfboot_info(struct sys_info *info);
+ void collect_linuxbios_info(struct sys_info *info);
++/* mklab, B.3 Spike 3 (patch 58): bind lb-table / lb-walk / heap-cursor, so a
++ * Forth region-diff can snapshot around the firmware's OWN coreboot-table
++ * parser and show the change that parser causes. CONFIG_LINUXBIOS only --
++ * x86 and amd64 -- which is also the only place the bump allocator behind
++ * heap-cursor exists. Call it after device_end(), like every other global
++ * bind in this tree (patches 14/16). */
++void ob_lb_bind_words(void);
+ 
+ /* Our name and version. I want to see single instance of these in the image */
+ extern const char *program_name, *program_version;
+diff --git a/libopenbios/linuxbios_info.c b/libopenbios/linuxbios_info.c
+--- a/libopenbios/linuxbios_info.c
++++ b/libopenbios/linuxbios_info.c
+@@ -7,6 +7,9 @@
+ #include "linuxbios.h"
+ #include "libopenbios/ipchecksum.h"
+ #include "libopenbios/sys_info.h"
++#include "libopenbios/bindings.h"
++#include "libc/stdlib.h"
++#include "libc/string.h"
+ 
+ #ifdef CONFIG_DEBUG_BOOT
+ #define debug printk
+@@ -140,25 +143,107 @@
+ 	return 0;
+ }
+ 
+-void collect_linuxbios_info(struct sys_info *info)
++/* The search, on its own, so it can be run more than once (patch 58). The two
++ * windows and the forward chase are collect_linuxbios_info()'s, unchanged. */
++static struct lb_header *lb_find_table(void)
+ {
+ 	struct lb_header *lb_table, *fwd_table;
+ 	int found;
++
+ 	debug("Searching for LinuxBIOS tables...\n");
+-	found = 0;
++	found = find_lb_table(phys_to_virt(0x00000), phys_to_virt(0x01000),
++			      &lb_table);
+ 	if (!found) {
+-		found = find_lb_table(phys_to_virt(0x00000), phys_to_virt(0x01000), &lb_table);
+-	}
+-	if (!found) {
+-		found = find_lb_table(phys_to_virt(0xf0000), phys_to_virt(0x100000), &lb_table);
++		found = find_lb_table(phys_to_virt(0xf0000),
++				      phys_to_virt(0x100000), &lb_table);
+ 	}
+ 	if (!found)
+-		return;
++		return NULL;
+ 
+ 	if (forward_lb_table(lb_table, &fwd_table))
+ 		lb_table = fwd_table;
+ 
++	return lb_table;
++}
++
++void collect_linuxbios_info(struct sys_info *info)
++{
++	struct lb_header *lb_table = lb_find_table();
++
++	if (!lb_table)
++		return;
++
+ 	debug("Found LinuxBIOS table at: %p\n", lb_table);
+ 	info->firmware = "LinuxBIOS";
+ 	read_lbtable(lb_table, info);
+ }
++
++/* -- mklab, B.3 Spike 3 (patch 58): the walk, and the region it walks ---------
++ * B.3's remaining success-signature clause is "a region diff shows a
++ * firmware-caused change", and the change has to come from a code path that is
++ * already in the tree -- otherwise the diff is showing the test's own writing.
++ * This parser is that path: it runs once at init, it is the one this lab
++ * patched twice (01 and 39), and re-running it is a whole in-tree behaviour
++ * repeated on demand rather than a poke staged to be found.
++ *
++ * `lb-table ( -- phys len )` is the region the walk READS -- the CBMEM-
++ * forwarded table, header included. The review that scheduled this work
++ * expected the diff to appear there; measured 2026-09-03, it does not, and
++ * that is the point of publishing it: read_lbtable() is a reader, so the
++ * region it walks is the NEGATIVE control, not the subject.
++ *
++ * `lb-walk ( -- n )` re-runs the parse into a scratch sys_info -- the live one
++ * is never touched -- and answers with the number of RAM ranges it wrote, or
++ * -1 when no table was found (a non-coreboot boot). What it DOES leave behind
++ * is an allocation: convert_memmap() mallocs and fills it, so the bytes at
++ * malloc_cursor_phys() are the subject, and the firmware wrote them.
++ *
++ * Addresses out are PHYSICAL, because x86 relocates and a bare pointer handed
++ * to Forth would let a snapshot land on RAM that reads back convincingly.
++ */
++static unsigned long lb_table_phys(void)
++{
++	struct lb_header *head = lb_find_table();
++
++	return head ? virt_to_phys(head) : 0;
++}
++
++static unsigned long lb_table_len(void)
++{
++	struct lb_header *head = lb_find_table();
++
++	return head ? (unsigned long)(sizeof(*head) + head->table_bytes) : 0;
++}
++
++static void forth_lb_table(void)
++{
++	PUSH(lb_table_phys());
++	PUSH(lb_table_len());
++}
++
++static void forth_lb_walk(void)
++{
++	struct lb_header *head = lb_find_table();
++	struct sys_info scratch;
++
++	if (!head) {
++		PUSH((ucell)-1);
++		return;
++	}
++	memset(&scratch, 0, sizeof(scratch));
++	read_lbtable(head, &scratch);
++	PUSH((ucell)scratch.n_memranges);
++}
++
++static void forth_heap_cursor(void)
++{
++	PUSH(malloc_cursor_phys());
++	PUSH(malloc_avail());
++}
++
++void ob_lb_bind_words(void)
++{
++	bind_func("lb-table", forth_lb_table);
++	bind_func("lb-walk", forth_lb_walk);
++	bind_func("heap-cursor", forth_heap_cursor);
++}
+diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -550,6 +550,9 @@
+ 	/* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
+ 	 * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
+ 	ob_pci_bind_config_words();
++	/* ...and lb-table / lb-walk / heap-cursor, for the same reason and in the
++	 * same place; see libopenbios/linuxbios_info.c (patch 58). */
++	ob_lb_bind_words();
+ 
+ 	/* x86 relocates itself by REBASING THE GDT data segment (see
+ 	 * arch/x86/segment.c), so every address Forth and the generic loaders
+diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -282,6 +282,9 @@
+ 	/* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
+ 	 * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
+ 	ob_pci_bind_config_words();
++	/* ...and lb-table / lb-walk / heap-cursor, for the same reason and in the
++	 * same place; see libopenbios/linuxbios_info.c (patch 58). */
++	ob_lb_bind_words();
+ 
+ 	/* Spike 2: expose the context-switch self-test at the prompt, so the
+ 	 * checkpoint can be driven the same way every other one is. */
