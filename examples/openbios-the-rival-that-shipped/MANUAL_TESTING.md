@@ -524,6 +524,61 @@ Two PRs, read line by line and then measured. Four defects, none visible in a gr
 
 Smaller: the ppc leg matched `"> "` and threw away the stack-depth assertion (`0 > ` now — the depth was 0 on all nine prompts, so it costs nothing); the region-diff monitor dump was 32 bytes while `LAST` can land anywhere in `STEP` (256 now — a real disagreement past byte 31 would have been a bash arithmetic error with no verdict); `region-snapv` leaked the old buffer on growth; `forth_lb_table` searched twice per call; the PASS text had unescaped inner quotes that bash word-split silently.
 
+### The `fdt` track — the live device tree, flattened, graded by `dtc` (B.3 Spike 4)
+
+Needs `device-tree-compiler` (`dtc`, `fdtdump`, `fdtget`) and all three firmwares
+plus the hosted one. Four doors, one grader:
+
+```console
+$ ./smoke-openbios.sh fdt
+  - unix: dtc parses it; fdtdump: 21 nodes, 63 properties == the firmware's NODES/PROPS; /chosen stdin = 536890280 (2325 bytes)
+  - unix controls: the LE-magic blob is refused ('incorrect magic'); a 0x100-byte struct bound makes dt>fdt refuse with OVERFLOW and answer 0
+  - x86: dtc parses it; fdtdump: 30 nodes, 175 properties == the firmware's NODES/PROPS; /memory reg = 0 654336 1048576 535691264 (5952 bytes)
+  - amd64: dtc parses it; fdtdump: 29 nodes, 171 properties == …; /memory reg = 0 0 0 654336 0 1048576 0 535691264 (5892 bytes)
+  - ppc: dtc parses it; fdtdump: 46 nodes, 280 properties == …; /memory reg = 0 134217728 (10314 bytes)
+  - four doors, four different trees …
+PASS: B.3 Spike 4 (FDT): the firmware's LIVE device tree, flattened by dsl/fdt.fth …
+```
+
+Read the amd64 `/memory reg` beside the x86 one: **two cells per address** on
+amd64 is patch 43's root `#address-cells 2`, visible in the blob. And ppc's
+`0 134217728` is the machine's 128 MiB — the `Memory: 128M` banner, as data.
+
+By hand, on the hosted firmware (every line ≤ 80 columns — the stdin line editor
+truncates past ~82, and the first draft of `dsl/fdt.fth` had an 85-column `fpad`
+that came back as `rep: undefined word` with a cascade behind it):
+
+```console
+$ { cat dsl/struct.fth dsl/fdt.fth; printf '/fdt-buf alloc-mem value fb\nfb dt>fdt dup .fdt-counts\nfb swap s" out.dtb" write-file . cr\nbye\n'; } \
+    | ~/openbios-lab/openbios/obj-amd64/openbios-unix ~/openbios-lab/openbios/obj-amd64/openbios-unix.dict | grep -a FDTL
+FDTL=915 NODES=15 PROPS=3f
+$ dtc -I dtb -O dts out.dtb | head -12
+/dts-v1/;
+
+/ {
+	#address-cells = <0x01>;
+
+	aliases {
+		hd = "/unix/block/disk";
+	};
+
+	openprom {
+		device_type = "BootROM";
+		model = "OpenFirmware 3";
+```
+
+The one property the writer skips, by name, is the **root's** `name`:
+OpenBIOS says `OpenBiosTeam,OpenBIOS`, FDT's root base name must be `""`, and
+`dtc` refuses the disagreement (`name_properties`). That refusal is how it was
+found.
+
+Getting bytes out of the emulated arches: **QMP** `pmemsave`, not the HMP
+monitor's — HMP reads its *filename* as an expression (`invalid char 't' in
+expression`, the `t` of `/tmp`), which this repo's memory already recorded and
+which still cost a run. ppc's console is pty-only, so its row prints the buffer
+with the firmware's own `dump` (16 bytes a line, a double space mid-line) and
+the host parses it back — 10314 of 10314 bytes.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

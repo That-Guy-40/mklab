@@ -94,6 +94,11 @@ TRACK (default multiboot):
                               table parser; the region it reads is unchanged, the
                               allocator's next block is not; the >virt trap measured
                               on both arches (needs both coreboot ROMs)
+  fdt                         B.3 Spike 4: the LIVE device tree FLATTENED by dsl/fdt.fth
+                              (a v17 FDT, every field big-endian) and accepted by dtc
+                              on ALL FOUR arches; fdtdump's counts == the firmware's;
+                              the four trees differ; LE-magic and overflow controls
+                              (needs device-tree-compiler, both QEMUs)
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -4981,6 +4986,166 @@ PY
     done
     pass "B.3 Spike 3 (region diff, plan §9's last unmet line): a REGION DIFF SHOWS A FIRMWARE-CAUSED CHANGE, on x86 and amd64. dsl/region.fth is examples/open-firmware-debugs-itself's region-snap/region-diff PORTED to this firmware (review F6 — a copy, not a cross-lab load), and it is calibrated before it is aimed: SELFTEST=1 finds a byte the test poked itself, QUIET=0 says an untouched snapshot does not drift. Aimed at libopenbios/linuxbios_info.c — the coreboot-table parser this lab patched in 01 and 39, re-run through patch 58's lb-walk into a scratch sys_info — the region it READS comes back byte-identical (LBTAB=0, which RETRACTS the review's own premise that the diff would appear there: read_lbtable is a reader), while the allocator's next block CHANGES: convert_memmap() mallocs a whole number of 16-byte memranges (STEP) and every changed byte lies inside it (LAST<STEP). The trap is measured in both directions rather than described: the same bytes snapshotted at the PHYSICAL address with no >virt count ZERO on x86, where the GDT rebase makes that other memory that reads back convincingly, and count the SAME as the >virt path on amd64, where virt_offset=0 leaves no trap to bite. And the change is not the firmware's own word: QEMU's monitor read the same guest-physical bytes from outside, agreed with the firmware byte for byte at the last-changed offset, and they decode to the RAM ranges of the machine QEMU was actually given"
     ;;
+  fdt)
+    # B.3 Spike 4 — the LIVE DEVICE TREE, FLATTENED. The plan's named first candidate
+    # once CBFS and the event log had paid (§6, review F7): OpenBIOS's device tree is
+    # the one subject every arch has natively, and a `dt>fdt` flatten is the
+    # boot-handoff structure DESIGN-NOTES §8 lists first. dsl/fdt.fth walks the
+    # firmware's own tree (child/peer/next-property from `/`) and writes a version-17
+    # FDT: header, rsvmap, the BEGIN_NODE/PROP/END_NODE token stream, the strings
+    # block — every field BIG-endian through l!-be, so this is CBFS-write's byte-order
+    # axis again: ppc stores native, the three little-endian arches swap.
+    #
+    # THE ORACLE IS dtc — the device-tree compiler itself, never our reader. Four
+    # doors, four trees, one grader:
+    #   unix   write-file → out.dtb                                   (hosted)
+    #   x86    fb >phys → QEMU's QMP pmemsave (an observer OUTSIDE the guest;
+    #   amd64  QMP, not the HMP monitor, whose parser reads a filename as an
+    #          expression — the trap this repo's memory already carried)
+    #   ppc    the console is pty-only, so the firmware's own `dump` prints the
+    #          buffer and the host parses the hex back (the firmware's word for the
+    #          bytes — said so; dtc's acceptance and the counts are what it proves)
+    # On each: dtc must PARSE it (rc 0), fdtdump's node and property counts must
+    # EQUAL the counts the firmware says it wrote (the outcome, not the walk),
+    # /memory's reg must decode, and the four trees must DIFFER — a walk of a
+    # fixture would give the same tree everywhere. Two controls on unix: the magic
+    # stored little-endian is refused by dtc BY NAME (the byte-order slip), and a
+    # struct bound shrunk to nothing makes dt>fdt REFUSE (OVERFLOW, 0) rather than
+    # write property values over its own strings.
+    command -v dtc >/dev/null || skip "dtc not installed — the device-tree compiler is the oracle (apt: device-tree-compiler)"
+    command -v fdtdump >/dev/null || skip "fdtdump not installed (device-tree-compiler)"
+    command -v fdtget >/dev/null || skip "fdtget not installed (device-tree-compiler)"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    FSTRUCT="$HERE/dsl/struct.fth"; FFDT="$HERE/dsl/fdt.fth"
+    for f in "$FSTRUCT" "$FFDT"; do [[ -f "$f" ]] || fail "fdt: the writer is missing at $f — this track stages the SHIPPED dsl/, it does not re-implement it"; done
+    FUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; FUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    FXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   FXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    FAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; FADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    FPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$FUBIN" "$FUDICT" "$FXMB" "$FXDI" "$FAMB" "$FADI" "$FPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    FWD="$WORKDIR/fdt"; rm -rf "$FWD"; mkdir -p "$FWD/stage"
+    cp "$FSTRUCT" "$FWD/stage/STRUCT.FTH"; cp "$FFDT" "$FWD/stage/FDT.FTH"
+    genisoimage -quiet -o "$FWD/fdt.iso" -V FDT -r -J "$FWD/stage" 2>/dev/null || fail "fdt: genisoimage failed to stage the writer"
+
+    # dtc's verdict on a blob, and fdtdump's counts — the same two questions on every door
+    # <node> <prop>: the one property every consumer asks for first — /memory reg
+    # where there is a machine; on the hosted unix target there is NO /memory node
+    # (it is a process), so /chosen stdin, the ihandle patch 50 exists for.
+    fdt_grade() {  # fdt_grade <arch> <dtb> <nodes-hex> <props-hex> <node> <prop>
+      local a="$1" f="$2" wn="$3" wp="$4" nd="$5" pr="$6" out rc n p
+      out="$(dtc -I dtb -O dts -o "${f%.dtb}.dts" "$f" 2>&1)"; rc=$?
+      [[ $rc -eq 0 ]] \
+        || fail "fdt ($a): dtc REFUSED the firmware's flattened tree (rc=$rc): $(grep -v Warning <<<"$out" | head -2 | tr '\n' '|') — see $f"
+      n=$(fdtdump "$f" 2>/dev/null | grep -cE '\{$'); p=$(fdtdump "$f" 2>/dev/null | grep -cE '^\s+[^ {}]+( = .*)?;$')
+      [[ "$n" -eq $((16#$wn)) ]] \
+        || fail "fdt ($a): fdtdump reads $n nodes, the firmware says it wrote 0x$wn ($((16#$wn))) — a node went missing or was counted twice between the walk and the token stream — see $f"
+      [[ "$p" -eq $((16#$wp)) ]] \
+        || fail "fdt ($a): fdtdump reads $p properties, the firmware says it wrote 0x$wp ($((16#$wp))) — see $f"
+      fdtget "$f" "$nd" "$pr" >/dev/null 2>&1 \
+        || fail "fdt ($a): fdtget cannot read $nd $pr from the flattened tree — it is not there or not decodable — see $f"
+      note "$a: dtc parses it; fdtdump: $n nodes, $p properties == the firmware's NODES/PROPS; $nd $pr = $(fdtget "$f" "$nd" "$pr" 2>/dev/null | tr '\n' ' ')($(stat -c%s "$f") bytes)"
+    }
+
+    # ── unix: write-file, and both CONTROLS ──────────────────────────────────
+    # Every firmware line ≤ 80 cols (the hosted line editor truncates past ~82).
+    ( cd "$FWD" && { cat "$FSTRUCT" "$FFDT"; printf '\n/fdt-buf alloc-mem value fb\nfb dt>fdt dup .fdt-counts\nfb swap s" unix.dtb" write-file ." WROTE=" . cr\nfb dt>fdt value fl  fdt-magic fb le-l!\nfb fl s" ctl-le.dtb" write-file drop\n100 to fdt-struct-max\nfb dt>fdt ." CTL=" . cr\nbye\n'; } \
+        | "$FUBIN" "$FUDICT" 2>&1 | tr -d '\r' > "$FWD/unix.log" )
+    FUG="$(cat "$FWD/unix.log")"
+    FUN="$(grep -aoE 'NODES=[0-9a-f]+' <<<"$FUG" | head -1 | cut -d= -f2)"; FUP="$(grep -aoE 'PROPS=[0-9a-f]+' <<<"$FUG" | head -1 | cut -d= -f2)"
+    [[ -n "$FUN" && -n "$FUP" ]] || fail "fdt (unix): dt>fdt never printed its counts — see $FWD/unix.log"
+    [[ -s "$FWD/unix.dtb" ]] || fail "fdt (unix): write-file produced no unix.dtb — $(grep -aoE 'WROTE=[^ ]*|write-file:.*' <<<"$FUG" | head -1)"
+    fdt_grade unix "$FWD/unix.dtb" "$FUN" "$FUP" /chosen stdin
+    FCTL="$(dtc -I dtb -O dts -o /dev/null "$FWD/ctl-le.dtb" 2>&1)"; FCRC=$?
+    [[ $FCRC -ne 0 && "$FCTL" == *"incorrect magic"* ]] \
+      || fail "fdt CONTROL (unix): the magic stored LITTLE-endian was not refused by name (rc=$FCRC: $(head -1 <<<"$FCTL")) — dtc would accept a byte-swapped header, so the big-endian stores above prove nothing"
+    # The refusal is printed by dt>fdt itself, MID-LINE, before anything typed after
+    # it prints — so the driver prints CTL= after the call, and the pattern needs the
+    # digit AND the trailing space (the first two drafts matched the echoed `." CTL="`
+    # and then the `fd` of `fdt|`: a regex over a line, standing in for a question
+    # about a value, twice in one control)
+    grep -qE 'fdt\| OVERFLOW, refused' <<<"$FUG" && grep -qE 'CTL=0 ' <<<"$FUG" \
+      || fail "fdt CONTROL (unix): with the struct bound shrunk to 0x100 bytes dt>fdt did not REFUSE (wanted 'OVERFLOW, refused' and CTL=0): $(grep -aoE 'CTL=[0-9a-f]+ ' <<<"$FUG" | head -1 | sed 's/^$/<no CTL value printed>/') — it would write property values over its own strings block"
+    note "unix controls: the LE-magic blob is refused ('incorrect magic'); a 0x100-byte struct bound makes dt>fdt refuse with OVERFLOW and answer 0"
+
+    # ── x86 and amd64: QMP pmemsave, an observer outside the guest ───────────
+    fdt_qmp() {  # fdt_qmp <qmp-sock> <phys-hex> <len-hex> <file>
+      python3 - "$@" <<'PY'
+import socket, sys, json, time
+s = socket.socket(socket.AF_UNIX); s.settimeout(15)
+for _ in range(20):
+    try: s.connect(sys.argv[1]); break
+    except OSError: time.sleep(0.5)
+else: print("ERR: no qmp"); sys.exit(0)
+s.recv(65536)
+def cmd(o): s.sendall((json.dumps(o)+"\n").encode()); return s.recv(65536).decode()
+cmd({"execute": "qmp_capabilities"})
+r = cmd({"execute": "pmemsave", "arguments": {"val": int(sys.argv[2], 16), "size": int(sys.argv[3], 16), "filename": sys.argv[4]}})
+print("ERR: " + r.strip() if '"error"' in r else "ok")
+PY
+    }
+    for FA in x86 amd64; do
+      if [[ $FA == x86 ]]; then FMB="$FXMB"; FDI="$FXDI"; else FMB="$FAMB"; FDI="$FADI"; fi
+      FSER="/tmp/fdt-$FA-$$.sock"; FQMP="/tmp/fdtq-$FA-$$.sock"; FLOG="$FWD/$FA.log"; rm -f "$FSER" "$FQMP" "$FLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$FMB" -initrd "$FDI" -nic none -cdrom "$FWD/fdt.iso" \
+        -display none -serial "unix:$FSER,server=on,wait=off" -qmp "unix:$FQMP,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      FQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$FSER" "$FLOG" --timeout 150 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\FDT.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send '/fdt-buf alloc-mem value fb  fb dt>fdt .fdt-counts\r' --expect "PROPS=" --expect "0 > " \
+        --send '." FDTP=" fb >phys u. cr\r' --expect "FDTP=" --expect "0 > "
+      FRC=$?
+      FPH="$(grep -aoE 'FDTP=[0-9a-f]+' "$FLOG" | head -1 | cut -d= -f2)"; FLN="$(grep -aoE 'FDTL=[0-9a-f]+' "$FLOG" | head -1 | cut -d= -f2)"
+      FN="$(grep -aoE 'NODES=[0-9a-f]+' "$FLOG" | head -1 | cut -d= -f2)"; FP="$(grep -aoE 'PROPS=[0-9a-f]+' "$FLOG" | head -1 | cut -d= -f2)"
+      FQR=""; [[ -n "$FPH" && -n "$FLN" ]] && FQR="$(fdt_qmp "$FQMP" "$FPH" "$FLN" "$FWD/$FA.dtb")"
+      kill "$FQ" 2>/dev/null   # by PID, never by pattern
+      [[ $FRC -eq 0 ]] || fail "fdt ($FA): the prompt driver did not complete (rc=$FRC) — see $FLOG"
+      [[ "$FQR" == ok && -s "$FWD/$FA.dtb" ]] \
+        || fail "fdt ($FA): QMP pmemsave of 0x$FLN bytes at guest-physical 0x$FPH did not deliver the blob (${FQR:-no reply}) — the observer outside the guest never got the bytes"
+      [[ "$(stat -c%s "$FWD/$FA.dtb")" -eq $((16#$FLN)) ]] || fail "fdt ($FA): pmemsave wrote $(stat -c%s "$FWD/$FA.dtb") bytes, dt>fdt said 0x$FLN"
+      fdt_grade "$FA" "$FWD/$FA.dtb" "$FN" "$FP" /memory reg
+    done
+
+    # ── ppc: the BIG-endian row, its bytes read back through the console ─────
+    FPLOG="$FWD/ppc.log"; rm -f "$FPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$FPLOG" --timeout 400 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\FDT.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send '/fdt-buf alloc-mem value fb  fb dt>fdt dup value fl .fdt-counts\r' --expect "PROPS=" --expect "0 > " \
+      --send 'fb fl dump\r' --expect "0 > " \
+      -- qemu-system-ppc -bios "$FPELF" -nographic -vga none -cdrom "$FWD/fdt.iso" >/dev/null 2>&1
+    FPRC=$?
+    [[ $FPRC -eq 0 ]] || fail "fdt (ppc): the prompt driver did not complete (rc=$FPRC) — see $FPLOG"
+    FPN="$(grep -aoE 'NODES=[0-9a-f]+' "$FPLOG" | head -1 | cut -d= -f2)"; FPP="$(grep -aoE 'PROPS=[0-9a-f]+' "$FPLOG" | head -1 | cut -d= -f2)"
+    FPL="$(grep -aoE 'FDTL=[0-9a-f]+' "$FPLOG" | head -1 | cut -d= -f2)"
+    [[ -n "$FPL" ]] || fail "fdt (ppc): dt>fdt never printed its length — see $FPLOG"
+    # the firmware's own `dump` — 16 bytes a line, a double space mid-line, an ASCII
+    # column after `|` — parsed back into the blob dt>fdt described
+    python3 - "$FPLOG" "$FWD/ppc.dtb" "$FPL" <<'PY'
+import sys, re
+txt = open(sys.argv[1], 'rb').read().decode(errors='replace').replace('\r', '')
+seg = txt[txt.rfind('fb fl dump'):]
+out = bytearray()
+for ln in seg.splitlines():
+    m = re.match(r'.*?([0-9a-f]+): ((?:[0-9a-f]{2}\s*)+)\|', ln)
+    if m: out += bytes.fromhex(m.group(2).replace(' ', ''))
+n = int(sys.argv[3], 16); open(sys.argv[2], 'wb').write(bytes(out[:n]))
+PY
+    [[ "$(stat -c%s "$FWD/ppc.dtb")" -eq $((16#$FPL)) ]] \
+      || fail "fdt (ppc): the console dump yielded $(stat -c%s "$FWD/ppc.dtb") bytes, dt>fdt said 0x$FPL — lines were lost or mis-parsed — see $FPLOG"
+    fdt_grade ppc "$FWD/ppc.dtb" "$FPN" "$FPP" /memory reg
+
+    # ── the four trees must DIFFER: a fixture would flatten the same everywhere ──
+    FSUMS="$(for a in unix x86 amd64 ppc; do sha256sum "$FWD/$a.dts" | cut -c1-64; done | sort -u | wc -l)"
+    [[ "$FSUMS" -eq 4 ]] \
+      || fail "fdt: only $FSUMS distinct trees across the four arches — two doors flattened the same tree, so at least one is not the LIVE tree of the firmware that ran"
+    note "four doors, four DIFFERENT trees (distinct sha256 of each dtc decompile) — the walk is of the live tree that ran, not a fixture"
+    pass "B.3 Spike 4 (FDT): the firmware's LIVE device tree, flattened by dsl/fdt.fth into a version-17 flattened device tree and accepted by dtc — the device-tree compiler itself — on unix, x86, amd64 AND ppc. The walk is the firmware's own (child/peer/next-property from /), the token stream is the Spike-0 cursor vocabulary plus one big-endian 32-bit store, and it is CBFS-write's byte-order axis again: ppc stores native and the three little-endian arches swap, and dtc accepts all four. THE OUTCOME IS GRADED, not the walk: on every arch fdtdump's node and property counts equal the counts the firmware says it wrote, /memory reg decodes where there is a machine (amd64's two-cell root, patch 43, visible in the blob) and /chosen stdin on the hosted target, which has no /memory node, and the four trees DIFFER — a fixture would not. THE BYTES LEAVE THE GUEST THREE WAYS: write-file on unix; QEMU's QMP pmemsave on x86/amd64 — an observer outside the guest, and QMP rather than the HMP monitor because HMP reads a filename as an expression; and the firmware's own dump on pty-only ppc, parsed back on the host and said to be the firmware's word for the bytes. Two controls bite: the magic stored little-endian is refused by dtc BY NAME (incorrect magic), and a struct bound shrunk to 0x100 makes dt>fdt refuse with OVERFLOW and answer 0 instead of writing property values over its own strings"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -6375,5 +6540,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|unix]" >&2; exit 1 ;;
 esac

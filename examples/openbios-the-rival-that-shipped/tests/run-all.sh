@@ -57,6 +57,7 @@ tracks=(
     test-smoke-event-bench.sh
     test-smoke-optrom.sh
     test-smoke-region-diff.sh
+    test-smoke-fdt.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh

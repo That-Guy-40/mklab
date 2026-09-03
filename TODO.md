@@ -507,7 +507,14 @@ requires of any other cached fact.
       **BUILD-READY** as of 2026-08-08, all four §9 decisions resolved including the
       charter boundary and the directory name (`examples/security-range/`). First
       increment: the spine + S2.
-- [ ] **B.3 — build [`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)** —
+- [x] **B.3 — build [`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)** —
+      **✅ COMPLETE 2026-09-03**: every §9 clause met (Spikes −1, 0, 1a/1b/1c, 2, 3 and the
+      §12(2) bench), audited (#390: patches 59/60), and the plan's named follow-on taken as
+      **Spike 4 — the live device tree flattened** (`dsl/fdt.fth`, the `fdt` track): a v17 FDT
+      `dtc` accepts on all four arches, `fdtdump`'s counts equal the firmware's, the four trees
+      differ, an LE magic and a shrunk bound are refused by name. Bytes out by `write-file`,
+      QEMU **QMP** `pmemsave` (HMP reads a filename as an expression — the memory's own trap,
+      hit again), and ppc's console `dump` parsed back. History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
       dissect). A preboot TLV toolkit over the four OpenBIOS arches as an
