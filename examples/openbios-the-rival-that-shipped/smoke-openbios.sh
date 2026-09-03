@@ -4519,9 +4519,18 @@ PY
     # address; setting it brings the header back -- a config WRITE with an effect.
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
     command -v genisoimage >/dev/null || skip "genisoimage not installed"
-    command -v xxd >/dev/null || skip "xxd not installed"
-    OTOKE="${FCODE_UTILS:-$WORKDIR/fcode-utils}/toke/toke"
-    [[ -x "$OTOKE" ]] || skip "no toke at $OTOKE — build-openbios.sh builds fcode-utils (FCODE_UTILS= to point elsewhere)"
+    OFCU="${FCODE_UTILS:-$WORKDIR/fcode-utils}"; OTOKE="$OFCU/toke/toke"
+    # toke is built INSIDE the build container (Containerfile installs it to the
+    # image's /usr/local/bin), so on a host that only ever ran build-openbios.sh --
+    # CI's runner -- the pinned fcode-utils clone is there and its toke is not.
+    # Build it from that clone, in place: plain C, plain make, nothing fetched.
+    # (Found by CI on the first run of this track, 2026-09-03: a SKIP on the runner
+    # where the dev box, which had built toke by hand for the OFW lab, passed.)
+    if [[ ! -x "$OTOKE" && -f "$OFCU/toke/Makefile" ]] && command -v make >/dev/null && command -v cc >/dev/null; then
+      make -C "$OFCU/toke" >"$WORKDIR/toke-build.log" 2>&1 \
+        || note "building toke from $OFCU/toke failed (see $WORKDIR/toke-build.log)"
+    fi
+    [[ -x "$OTOKE" ]] || skip "no toke at $OTOKE and it could not be built from $OFCU/toke — run ./build-openbios.sh (which clones fcode-utils) or set FCODE_UTILS="
     OAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; OADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
     OXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   OXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
     for f in "$OAMB" "$OADI" "$OXMB" "$OXDI"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"; done
@@ -4554,7 +4563,7 @@ PY
     fi
     cp "$HERE/dsl/struct.fth" "$OWD/stage/STRUCT.FTH"; cp "$HERE/dsl/optrom.fth" "$OWD/stage/OPTROM.FTH"
     genisoimage -quiet -o "$OWD/dsl.iso" -V DSL -r -J "$OWD/stage" 2>/dev/null || fail "optrom: genisoimage failed"
-    OSUBJ64="$(xxd -p -l 64 "$OWD/fcode.rom" | tr -d '\n')"
+    OSUBJ64="$(od -An -tx1 -N64 "$OWD/fcode.rom" | tr -d ' \n')"   # od, not xxd: coreutils only
     _omon() {  # _omon <monitor-sock> <hmp command...> -> the monitor's raw reply
       python3 - "$@" <<'PY'
 import socket, sys, time

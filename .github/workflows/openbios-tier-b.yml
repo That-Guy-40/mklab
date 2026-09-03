@@ -237,7 +237,14 @@ jobs:
             [[ "$t" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
               || { echo "::error::refusing track name '$t' — expected [a-z0-9-]"; exit 1; }
             s=$(date +%s)
-            timeout 1200 ./smoke-openbios.sh "$t" > "/tmp/track-$t.out" 2>&1; r=$?
+            # `&& r=0 || r=$?`, NOT `; r=$?`: this step runs under GitHub's `bash -e`
+            # (see the build step's note), so a bare non-zero here ended the step
+            # before the case below could grade it. Measured 2026-09-03 on the first
+            # run of `optrom`: it SKIPped (77) and the job died with "exit code 77"
+            # instead of the ::warning the case was written to print — the 77 branch
+            # had been unreachable since it was written, and every earlier track had
+            # happened to pass, which is exactly how an unreachable branch survives.
+            timeout 1200 ./smoke-openbios.sh "$t" > "/tmp/track-$t.out" 2>&1 && r=0 || r=$?
             e=$(date +%s)
             printf 'track:%s %ss rc=%s\n' "$t" "$((e - s))" "$r" >> /tmp/tierb-times
             tail -1 "/tmp/track-$t.out"
