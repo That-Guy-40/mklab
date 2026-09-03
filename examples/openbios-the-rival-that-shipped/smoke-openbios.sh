@@ -94,6 +94,11 @@ TRACK (default multiboot):
                               four digest banks) walked and REPLAYED — the firmware's
                               PCR0-7 equal the MACHINE'S OWN TPM PCRs and tpm2_eventlog;
                               EV_NO_ACTION control; flipped-byte control; quote UNKNOWN
+  event-bench                 plan §12(2): the COMPARISON BENCH — one Linux reader through
+                              UEFI, measured coreboot→Linux and coreboot→OpenBIOS→Linux
+                              (fixtures/coreboot-swtpm); the two coreboot logs agree on
+                              every entry but the payload, and swapping that one digest
+                              in Forth reproduces the other leg's PCR2; quote UNKNOWN
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -4334,6 +4339,125 @@ PY
 
     pass "B.3 event-real: a REAL measured-boot event log — written by edk2 (OVMF) booting a swtpm TPM 2.0 guest, captured by fixtures/edk2-swtpm/capture.sh and vendored byte-exact with its provenance — is walked by dsl/eventlog.fth on unix (all $RRN crypto-agile entries, each carrying FOUR digest banks the reader steps over by declared size, to EVLOG-END, matching tpm2_eventlog's $RREV events) and REPLAYED by evlog-replay + dsl/sha256.fth: the firmware's PCR0-7 equal the MACHINE'S OWN TPM PCRs $rrok/8 — a claim from a machine that really measured, reproduced from the log alone — and equal tpm2_eventlog's replay. The EV_NO_ACTION rule (informational events are not extended) is proven by an authored control that bites both ways, since this log's only EV_NO_ACTION is the SpecID header; a single flipped digest byte in the real log breaks PCR0 and leaves PCR1 alone. The fixture is bound to PROVENANCE.txt by sha256 and refused on mismatch. THE BOUNDARY: swtpm is software and the AK quote is UNKNOWN — this proves the replay reproduces a real firmware's measurements, not that a physical machine is trustworthy"
     ;;
+  event-bench)
+    # PLAN §12(2), THE COMPARISON BENCH: the same target Linux reached through THREE
+    # firmware substrates — UEFI (edk2), measured coreboot → Linux, measured coreboot →
+    # OpenBIOS → Linux — each captured with the SAME reader (fixtures/*/capture.sh) so
+    # nothing but the firmware differs, and the toolkit pointed at all three. "Replay
+    # the log, see what differs" becomes a comparison, and the comparison is EXPLAINED:
+    # the two coreboot legs are the same ROM bytes with a different payload, so their
+    # logs must agree entry for entry on FMAP/bootblock/romstage/postcar/ramstage and
+    # differ in exactly one entry, `CBFS: fallback/payload` — and substituting that one
+    # digest into the other leg's log must reproduce the other leg's PCR2, in Forth.
+    #
+    # THE PREREQUISITE, AS MEASURED (fixtures/coreboot-swtpm/build-rom.sh): not VBOOT
+    # but TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2 on q35; and coreboot's TPM 2.0-format
+    # log is NOT what its ACPI TPM2 table publishes, so the capture reads it straight
+    # out of cbmem. coreboot extends only its SRTM PCR (2); edk2 extends PCR0-7.
+    command -v tpm2_eventlog >/dev/null || skip "tpm2_eventlog not installed (apt install tpm2-tools) — the oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    BUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; BUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    [[ -x "$BUBIN" && -f "$BUDICT" ]] || skip "missing openbios-unix — run ./build-openbios.sh unix first"
+    FXE="$HERE/fixtures/edk2-swtpm"; FXL="$HERE/fixtures/coreboot-swtpm/leg-linux"; FXO="$HERE/fixtures/coreboot-swtpm/leg-openbios"
+    for d in "$FXE" "$FXL" "$FXO"; do for f in binary_bios_measurements pcrs-sha256.txt PROVENANCE.txt; do
+      [[ -f "$d/$f" ]] || fail "missing $d/$f — the three legs' fixtures are tracked; this track stages them, it does not re-capture"
+    done; done
+    for f in "$HERE/dsl/struct.fth" "$HERE/dsl/sha256.fth" "$HERE/dsl/eventlog.fth"; do [[ -f "$f" ]] || fail "missing $f"; done
+    # bind every leg to its provenance (a re-captured log with stale PCR files, or the
+    # reverse, is the record-outlived-its-subject bug; refuse it by name)
+    bench_bind() { while read -r want name; do [[ "$want" =~ ^[0-9a-f]{64}$ ]] || continue
+        got="$(sha256sum "$1/$name" 2>/dev/null | cut -d' ' -f1)"
+        [[ "$got" == "$want" ]] || fail "event-bench: $1/$name hashes to ${got:-<missing>} but PROVENANCE.txt records $want — fixture and provenance disagree"
+      done < <(grep -E '^[0-9a-f]{64}  ' "$1/PROVENANCE.txt"); }
+    bench_bind "$FXE"; bench_bind "$FXL"; bench_bind "$FXO"
+    note "three legs bound to their PROVENANCE: UEFI(edk2) · coreboot→Linux · coreboot→OpenBIOS→Linux"
+
+    BWD="$WORKDIR/event-bench"; rm -rf "$BWD"; mkdir -p "$BWD/stage"
+    cp "$HERE/dsl/struct.fth" "$BWD/stage/STRUCT.FTH"; cp "$HERE/dsl/sha256.fth" "$BWD/stage/SHA.FTH"; cp "$HERE/dsl/eventlog.fth" "$BWD/stage/EVLOG.FTH"
+    cp "$FXL/binary_bios_measurements" "$BWD/stage/CBL.BIN"; cp "$FXO/binary_bios_measurements" "$BWD/stage/CBO.BIN"
+    bench_oracle() { tpm2_eventlog "$1" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E "^\s+$2\s*:\s*0x[0-9a-f]{64}$" | head -1 | grep -oE '[0-9a-f]{64}'; }
+    bench_claim()  { sed -n "s/^$2:\([0-9a-f]\{64\}\)$/\1/p" "$1/pcrs-sha256.txt"; }
+    # the payload entry's digest in a coreboot log = the LAST event's sha256 (entry 6)
+    bench_paydig() { tpm2_eventlog "$1" 2>/dev/null | awk '/^- EventNum/{n=$3} /Digest: "/{d=$2} END{gsub(/"/,"",d); print d}'; }
+    # each entry's name is NUL-padded hex; decode PER LINE or the names run together
+    bench_names()  { tpm2_eventlog "$1" 2>/dev/null | grep -E '^  Event: "' | sed 's/.*"\(.*\)"/\1/' \
+                     | while read -r h; do printf '%s' "$h" | xxd -r -p 2>/dev/null | tr -d '\0'; printf ' '; done; }
+    bench_digests() { tpm2_eventlog "$1" 2>/dev/null | grep -E '^    Digest: "' | sed 's/.*"\(.*\)"/\1/'; }
+
+    # ── ROW A: each coreboot leg is internally consistent — reader, replay, claim, oracle
+    bench_run() {  # bench_run <subdir> <forth-line>...
+      local d="$BWD/$1"; shift; rm -rf "$d"; mkdir -p "$d"
+      { printf '%s\n' '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+          'load hd:\STRUCT.FTH' 'load-base load-size evaluate' 'load hd:\SHA.FTH' 'load-base load-size evaluate' \
+          'load hd:\EVLOG.FTH' 'load-base load-size evaluate'; printf '%s\n' "$@"; printf 'bye\n'
+      } | ( cd "$d" && "$BUBIN" -f "$BWD/bench.iso" "$BUDICT" ) 2>&1 | tr -d '\r'
+    }
+    bval() { grep -oE "$2=[0-9a-f]{64}" <<<"$1" | tail -1 | cut -d= -f2; }
+    for LEG in linux openbios; do
+      if [[ $LEG == linux ]]; then FX="$FXL"; BIN=CBL.BIN; else FX="$FXO"; BIN=CBO.BIN; fi
+      NEV=$(tpm2_eventlog "$FX/binary_bios_measurements" 2>/dev/null | grep -c 'EventNum:')
+      (( NEV >= 7 )) || fail "event-bench coreboot-$LEG: tpm2_eventlog sees only $NEV events — not the measured-boot log this track needs (FMAP, bootblock, romstage, postcar, ramstage, payload)"
+      grep -q 'fallback/payload' <<<"$(bench_names "$FX/binary_bios_measurements")" \
+        || fail "event-bench coreboot-$LEG: the log does not name CBFS: fallback/payload — coreboot did not measure the payload"
+      genisoimage -quiet -o "$BWD/bench.iso" -V BENCH "$BWD/stage" 2>/dev/null || fail "event-bench: genisoimage failed"
+      OUT="$(bench_run "leg-$LEG" "load hd:\\$BIN" 'load-base load-base load-size + 40 evlog-list' \
+             '." P2=" load-base load-base load-size + 40 2 evlog-replay .digest cr')"
+      NW=$(grep -c 'evt| pcr=' <<<"$OUT"); grep -q EVLOG-END <<<"$OUT" || fail "event-bench coreboot-$LEG: the reader did not reach EVLOG-END: $(grep -E 'BADALG|evt' <<<"$OUT" | tail -2 | tr '\n' '|')"
+      [[ "$NW" -eq $((NEV-1)) ]] || fail "event-bench coreboot-$LEG: the reader walked $NW entries but the oracle sees $NEV events (= $((NEV-1)) + the SpecID header)"
+      P2="$(bval "$OUT" P2)"; CL="$(bench_claim "$FX" 2)"; OR="$(bench_oracle "$FX/binary_bios_measurements" 2)"
+      [[ -n "$P2" && "$P2" == "$CL" ]] || fail "event-bench coreboot-$LEG: firmware replay PCR2 ${P2:-<none>} != the machine's own PCR2 $CL"
+      [[ "$P2" == "$OR" ]] || fail "event-bench coreboot-$LEG: firmware replay PCR2 $P2 != tpm2_eventlog's $OR"
+      # coreboot extends ONLY its SRTM PCR: every other firmware PCR must be zero in the claim
+      NZ="$(awk -F: '$1<=7 && $1!=2 && $2 ~ /[1-9a-f]/ {printf "%s ", $1}' "$FX/pcrs-sha256.txt")"
+      [[ -z "$NZ" ]] || fail "event-bench coreboot-$LEG: PCR(s) $NZ are nonzero but coreboot's measured boot extends only PCR 2 — something else measured, or the fixture is not a coreboot capture"
+      note "coreboot→$LEG: $NW entries [$(bench_names "$FX/binary_bios_measurements" | sed 's/ *$//')] → PCR2 replay == claim == oracle; PCR0/1/3-7 zero (SRTM-only, by design)"
+    done
+
+    # ── ROW B: THE COMPARISON — same ROM, different payload ────────────────────────
+    mapfile -t BDL < <(bench_digests "$FXL/binary_bios_measurements"); mapfile -t BDO < <(bench_digests "$FXO/binary_bios_measurements")
+    (( ${#BDL[@]} == 6 && ${#BDO[@]} == 6 )) || fail "event-bench: expected 6 measured entries per coreboot leg, got ${#BDL[@]} / ${#BDO[@]}"
+    for i in 0 1 2 3 4; do
+      [[ "${BDL[$i]}" == "${BDO[$i]}" ]] || fail "event-bench: entry $((i+1)) ($(bench_names "$FXL/binary_bios_measurements" | cut -d' ' -f$((i+1)),$((i+2)))) differs between the two coreboot legs (${BDL[$i]:0:16} vs ${BDO[$i]:0:16}) — they were supposed to be the same ROM bytes with only the payload swapped"
+    done
+    [[ "${BDL[5]}" != "${BDO[5]}" ]] || fail "event-bench: the payload entry has the SAME digest in both coreboot legs (${BDL[5]:0:16}) — the two ROMs do not carry different payloads, so there is nothing to compare"
+    CL2="$(bench_claim "$FXL" 2)"; CO2="$(bench_claim "$FXO" 2)"
+    [[ "$CL2" != "$CO2" ]] || fail "event-bench: both coreboot legs report the same PCR2 ($CL2) despite different payload digests — the payload measurement did not reach the PCR"
+    note "comparison: entries 1-5 (FMAP/bootblock/romstage/postcar/ramstage) IDENTICAL across the two coreboot legs; entry 6 (CBFS: fallback/payload) DIFFERS — Linux ${BDL[5]:0:12}… vs OpenBIOS ${BDO[5]:0:12}… — and so do their PCR2s"
+
+    # ── ROW C: THE DIFFERENCE, EXPLAINED IN FORTH — swap one digest, get the other PCR
+    # Load the Linux leg's log, walk to its payload entry, overwrite that one SHA-256
+    # digest with the OpenBIOS leg's payload digest (delivered as a 32-byte file), and
+    # replay PCR2: it must equal the OpenBIOS leg's own PCR2. One entry explains the
+    # whole difference — and the instrument that shows it is the firmware's toolkit.
+    printf '%s' "${BDO[5]}" | xxd -r -p > "$BWD/stage/ODIG.BIN"; [[ $(stat -c%s "$BWD/stage/ODIG.BIN") -eq 32 ]] || fail "event-bench: could not stage the OpenBIOS payload digest"
+    genisoimage -quiet -o "$BWD/bench.iso" -V BENCH "$BWD/stage" 2>/dev/null || fail "event-bench: genisoimage failed"
+    # `load` takes the REST OF THE LINE as its path (like `boot`), so each load sits
+    # alone on its line — a `load X  foo bar` loads "X  foo bar" and runs nothing
+    # (found 2026-09-03: the swap printed no PCR at all).
+    OUTC="$(bench_run swap \
+      '1000 alloc-mem value dig' \
+      'load hd:\ODIG.BIN' \
+      'load-base dig 20 move' \
+      'load hd:\CBL.BIN' \
+      'load-base evlog-skip-header >rec' \
+      '(event2) (event2) (event2) (event2) (event2) (event2)' \
+      'dig ev-sha256 @ 20 move' \
+      '." PSWAP=" load-base load-base load-size + 40 2 evlog-replay .digest cr')"
+    PSWAP="$(bval "$OUTC" PSWAP)"
+    [[ -n "$PSWAP" ]] || fail "event-bench: the digest-swap run printed no PCR: $(grep -E 'undefined|BADALG' <<<"$OUTC" | head -2 | tr '\n' '|')"
+    [[ "$PSWAP" == "$CO2" ]] || fail "event-bench: the Linux leg's log with ONLY the payload digest swapped for OpenBIOS's replays to $PSWAP, not the OpenBIOS leg's own PCR2 $CO2 — the payload entry does not fully explain the difference"
+    [[ "$PSWAP" != "$CL2" ]] || fail "event-bench: the swap left PCR2 unchanged — the overwrite did not land on the payload entry's digest"
+    note "explained: the Linux leg's log with one digest swapped (entry 6 ← OpenBIOS's payload digest) replays to EXACTLY the OpenBIOS leg's PCR2 — the payload is the whole difference, shown in Forth"
+
+    # ── ROW D: the UEFI leg is a different firmware — it measures differently, not just more
+    CE0="$(bench_claim "$FXE" 0)"; CE2="$(bench_claim "$FXE" 2)"
+    [[ -n "$CE0" && "$CE0" =~ [1-9a-f] ]] || fail "event-bench: the UEFI leg's PCR0 is zero — edk2 measures its firmware into PCR0, so this fixture is not an edk2 capture"
+    [[ "$CE2" != "$CL2" && "$CE2" != "$CO2" ]] || fail "event-bench: the UEFI leg's PCR2 equals a coreboot leg's — two different firmwares cannot produce the same SRTM measurement"
+    note "UEFI(edk2): extends PCR0-7 (PCR0=${CE0:0:12}…), PCR2 differs from both coreboot legs — a different firmware measures differently, not merely more"
+
+    note "QUOTE: UNKNOWN — every leg's TPM is swtpm and every claim is a software TPM's; the bench proves the replays reproduce three firmwares' measurements and explains their difference, not that any machine is trustworthy."
+    pass "B.3 §12(2) comparison bench: the same Linux reader captured through THREE firmware substrates — UEFI (edk2), measured coreboot → Linux, measured coreboot → OpenBIOS → Linux (fixtures/edk2-swtpm, fixtures/coreboot-swtpm; the coreboot ROMs built with TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2 on q35, their TCG2 logs read out of cbmem because coreboot's ACPI table publishes only the TPM 1.2-format area). Each coreboot leg: dsl/eventlog.fth walks its log to EVLOG-END and the replay's PCR2 equals the machine's own PCR2 and tpm2_eventlog's, with PCR0/1/3-7 zero as SRTM-only measured boot implies. THE COMPARISON: the two coreboot legs agree entry for entry on FMAP/bootblock/romstage/postcar/ramstage and differ in exactly one entry, CBFS: fallback/payload — and so in PCR2. THE EXPLANATION, IN FORTH: the Linux leg's log with that one digest swapped for OpenBIOS's replays to exactly the OpenBIOS leg's PCR2. The UEFI leg extends PCR0-7 and differs from both. Every fixture is bound to its PROVENANCE. QUOTE UNKNOWN: three software TPMs; the bench explains what differs and why, not who to trust"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -5728,5 +5852,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|unix]" >&2; exit 1 ;;
 esac
