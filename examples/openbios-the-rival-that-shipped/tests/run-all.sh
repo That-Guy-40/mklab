@@ -49,6 +49,7 @@ tracks=(
     test-smoke-amd64-pmem.sh
     test-smoke-cbfs.sh
     test-smoke-cbfs-write.sh
+    test-smoke-cbfs-payload.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh

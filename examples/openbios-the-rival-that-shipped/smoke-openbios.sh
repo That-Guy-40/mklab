@@ -72,6 +72,11 @@ TRACK (default multiboot):
                               coreboot's own cbfstool accept the whole image — with
                               a wrong-offset and a byte-order negative control that
                               cbfstool must reject (unix only; needs cbfstool)
+  cbfs-payload                B.3 Spike 2: dsl/cbfs-payload.fth dissects the SELF
+                              payload inside fallback/payload (the big-endian
+                              cbfs_payload_segment table) to tell the four ROMs'
+                              payloads apart, graded vs readelf; build-openbios on
+                              all four arches proves the BE reads (needs 4 ROMs)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -3540,6 +3545,192 @@ PY
 
     pass "B.3 Spike 2 (WRITE): dsl/cbfs-write.fth performs CBFS surgery in OpenBIOS Forth and coreboot's own cbfstool — never our reader — grades every result. PATCH: the firmware finds a raw entry, rewrites its content in place through write-file, and cbfstool accepts the whole image with byte-identical metadata and extract == our $PAYLEN bytes; the negative control patches at the ENTRY BASE (forgetting the offset field) and cbfstool refuses the stomped entry. AUTHOR: the firmware composes a whole cbfs_file — the big-endian len/type/offset fields and the name — in the free space through the SAME width/endian-aware cursor the reader was graded on (u32be t!+ is l!-be), relinks a fresh (empty), and cbfstool accepts a coherent 3-entry archive with the prior entry untouched and extract == our 32 bytes; the negative control stores that len LITTLE-endian and cbfstool reads the wrong size — the byte-order slip the four-arch matrix exists to prevent, here caught by the foreign oracle. write-file is hosted-only, so this is a unix workbench; the arch matrix's byte-order property is defended by the author negative control instead. The subject is a 128 KiB legacy CBFS that fits the 4 MiB arena; the oracle is DERIVED (the ROM's own cbfstool, review F2), not vendored. STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
     ;;
+  cbfs-payload)
+    # B.3 Spike 2: dissect the SELF PAYLOAD inside fallback/payload — the layer
+    # that tells payload KINDS apart. Every coreboot ROM here carries its OS-facing
+    # payload as CBFS type `simple elf`, so the CBFS type does not distinguish a
+    # Linux+u-root ROM from an OpenBIOS one from a Firmworks one; what does is the
+    # coreboot `cbfs_payload_segment` array INSIDE it (dsl/cbfs-payload.fth) — a
+    # big-endian table of CODE/DATA/BSS/ENTR segments with load addresses and an
+    # entry point that differ per payload. §12's "the payload is the variable, the
+    # toolkit is the constant" made concrete on the four ROMs on disk.
+    #
+    # TWO DIMENSIONS, TWO CONTROLS:
+    #   (1) TELL THEM APART — the four ROMs' payloads, each walked on unix and
+    #       graded against readelf of the RECONSTITUTED ELF (cbfstool extract -m):
+    #       every loadable segment's (load,mem) equals a PT_LOAD's (VirtAddr,MemSiz)
+    #       and the ENTR load equals e_entry, a FOREIGN decoder confirming the walk.
+    #       Their signatures (segment count : entry) must all DIFFER — a walk that
+    #       read a fixed offset, or the same bytes each time, would collide.
+    #   (2) BYTE ORDER — build-openbios walked on x86, amd64, ppc AND unix must
+    #       produce the IDENTICAL segment table; the big-endian ppc row proves the
+    #       BE reads (and the u64 load split) are right where a hidden-LE bug would
+    #       show as a ppc-only disagreement (the read `cbfs` track's control, one
+    #       structural layer deeper).
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed — it is the foreign oracle for the segment table"
+    PUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    PUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    PAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; PADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    PXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   PXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    PPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$PUBIN" "$PUDICT" "$PAMB" "$PADI" "$PXMB" "$PXDI" "$PPELF"; do
+      [[ -e "$f" ]] || skip "missing $f — run ./build-openbios.sh all first (this track needs all four arches)"
+    done
+    PSTRUCT="$HERE/dsl/struct.fth"; PCBFS="$HERE/dsl/cbfs.fth"
+    PCBW="$HERE/dsl/cbfs-write.fth"; PCBP="$HERE/dsl/cbfs-payload.fth"
+    for f in "$PSTRUCT" "$PCBFS" "$PCBW" "$PCBP"; do
+      [[ -f "$f" ]] || fail "the dissector is missing at $f — this track stages the SHIPPED files, it does not re-implement them"
+    done
+    # region base of a ROM's COREBOOT CBFS (file offset), from its own cbfstool.
+    prgn() { "$1" "$2" layout 2>/dev/null | sed -n "s/.*'COREBOOT'.*offset \([0-9]*\).*/\1/p" | head -1; }
+
+    PWD_="$WORKDIR/cbfs-payload"; rm -rf "$PWD_"; mkdir -p "$PWD_"
+    PST="$PWD_/stage"; mkdir -p "$PST"
+    cp "$PSTRUCT" "$PST/STRUCT.FTH"; cp "$PCBFS" "$PST/CBFS.FTH"
+    cp "$PCBW" "$PST/CBFSW.FTH"; cp "$PCBP" "$PST/CBFSP.FTH"
+
+    # run the dissector on unix over a 256 KiB window of ROM $1 at region $2 -> log $3
+    pay_unix() {  # pay_unix <rom-window-src> <region-hex> <log>
+      head -c 262144 "$1" > "$PST/ROM256.BIN"
+      genisoimage -quiet -o "$PWD_/pay.iso" -V CBFSP "$PST" 2>/dev/null
+      local d="$PWD_/run"; rm -rf "$d"; mkdir -p "$d"
+      { printf '%s\n' \
+          '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+          'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+          'load hd:\CBFS.FTH'   'load-base load-size evaluate' \
+          'load hd:\CBFSW.FTH'  'load-base load-size evaluate' \
+          'load hd:\CBFSP.FTH'  'load-base load-size evaluate' \
+          'load hd:\ROM256.BIN'
+        printf 'load-base %s + 20 10 payload-of\n' "$2"
+        printf 'bye\n'
+      } | ( cd "$d" && "$PUBIN" -f "$PWD_/pay.iso" "$PUDICT" ) 2>&1 | tr -d '\r' > "$3"
+    }
+
+    # ── DIMENSION 1: all four ROMs on unix, graded vs readelf, told apart ──────
+    declare -A SIG
+    PANYSKIP=""
+    for R in build build-ofw build-openbios build-openbios-amd64; do
+      ROM="$CB/$R/coreboot.rom"; CBT="$CB/$R/cbfstool"
+      if [[ ! -f "$ROM" || ! -x "$CBT" ]]; then
+        PANYSKIP="$PANYSKIP $R"; continue
+      fi
+      RGN="$(prgn "$CBT" "$ROM")"
+      [[ -n "$RGN" ]] || fail "cbfs-payload $R: could not read the COREBOOT region offset via cbfstool layout"
+      RGNHEX="$(printf '%x' "$RGN")"
+      PLOG="$PWD_/unix-$R.log"
+      pay_unix "$ROM" "$RGNHEX" "$PLOG"
+      grep -q 'PAYLOAD-END' "$PLOG" \
+        || fail "cbfs-payload $R: the segment walk did not terminate at ENTR (no PAYLOAD-END) — see $PLOG"
+      grep -q 'LOAD-HI' "$PLOG" \
+        && fail "cbfs-payload $R: a segment declared a load address above 4 GiB (!LOAD-HI) — the 32-bit-cell read cannot represent it and would grade a truncated value — see $PLOG"
+      # the reconstituted-ELF oracle (segments only; review F2). -m x86 reconstitutes
+      # all four here (the machine field aside, segment load/entry are arch-neutral).
+      OREF="$PWD_/ref-$R.elf"
+      "$CBT" "$ROM" extract -m x86 -n fallback/payload -f "$OREF" 2>/dev/null \
+        || fail "cbfs-payload $R: cbfstool could not reconstitute fallback/payload as an ELF — the oracle is unavailable, so grading would be meaningless"
+      # grade the Forth walk against readelf, and return a signature line.
+      SIG["$R"]="$(python3 - "$PLOG" "$OREF" <<'PY'
+import sys, subprocess, re
+log, elf = sys.argv[1], sys.argv[2]
+# Forth: pseg| type=CODE load=00100000 len=... mem=002508f0   (+ ENTR = entry)
+segs=[]; entry=None
+for ln in open(log):
+    m=re.search(r'pseg\| type=(\S+)\s+load=([0-9a-f]+)\s+len=([0-9a-f]+)\s+mem=([0-9a-f]+)', ln)
+    if not m: continue
+    t,load,ln_,mem=m.group(1),int(m.group(2),16),int(m.group(3),16),int(m.group(4),16)
+    if t=='ENTR': entry=load
+    else: segs.append((load,mem))
+if entry is None: print("FAILGRADE no ENTR segment in the Forth walk"); sys.exit(3)
+# readelf oracle
+h=subprocess.run(['readelf','-h',elf],capture_output=True,text=True).stdout
+me=re.search(r'Entry point address:\s*0x([0-9a-fA-F]+)', h)
+if not me: print("FAILGRADE readelf gave no entry point"); sys.exit(3)
+oentry=int(me.group(1),16)
+l=subprocess.run(['readelf','-l',elf],capture_output=True,text=True).stdout
+loads=set()
+for ln in l.splitlines():
+    p=ln.split()
+    if len(p)>=6 and p[0]=='LOAD':
+        loads.add((int(p[2],16), int(p[5],16)))   # VirtAddr, MemSiz
+if entry!=oentry:
+    print(f"FAILGRADE entry 0x{entry:x} != readelf e_entry 0x{oentry:x}"); sys.exit(3)
+fseg=set(segs)
+if fseg!=loads:
+    print(f"FAILGRADE seg (load,mem) set {sorted(hex(a) for a,_ in fseg)} != readelf PT_LOAD {sorted(hex(a) for a,_ in loads)}"); sys.exit(3)
+print(f"{len(segs)}:{entry:x}")   # the distinguishing signature
+PY
+)"
+      case "${SIG[$R]}" in
+        FAILGRADE*) fail "cbfs-payload $R: ${SIG[$R]} — the Forth segment walk disagrees with readelf of the reconstituted ELF (the foreign oracle) — see $PLOG" ;;
+      esac
+      note "$R: $(grep -c '^pseg' "$PLOG") segments walked, entry+load map == readelf; signature ${SIG[$R]}"
+    done
+    [[ -z "$PANYSKIP" ]] \
+      || skip "cbfs-payload: missing ROM/cbfstool for:$PANYSKIP — build them first (this track needs all four ROMs to tell the payloads apart)"
+    # TOLD APART: the four signatures (segcount:entry) must be pairwise distinct.
+    PUNIQ="$(printf '%s\n' "${SIG[@]}" | sort -u | wc -l)"
+    [[ "$PUNIQ" -eq 4 ]] \
+      || fail "cbfs-payload: the four payload signatures are not all distinct ($(printf '%s ' "${SIG[@]}")) — the dissector is not telling the payload kinds apart, or it read a fixed offset each time"
+    note "told apart: build=${SIG[build]} ofw=${SIG[build-ofw]} openbios=${SIG[build-openbios]} amd64=${SIG[build-openbios-amd64]} — four distinct (segcount:entry)"
+
+    # ── DIMENSION 2: build-openbios walked on x86/amd64/ppc must equal unix ────
+    # The big-endian truth-teller. If any arch's segment table differs from unix's,
+    # a byte-order read is wrong on that arch — which for BE metadata is precisely
+    # what a ppc-only disagreement would reveal.
+    ROM="$CB/build-openbios/coreboot.rom"; CBT="$CB/build-openbios/cbfstool"
+    RGNHEX="$(printf '%x' "$(prgn "$CBT" "$ROM")")"
+    # the canonical segment lines from the unix run above (order-preserving)
+    PUNIXSEG="$(grep '^pseg' "$PWD_/unix-build-openbios.log")"
+    cp "$ROM" "$PST/ROMFULL.BIN"
+    genisoimage -quiet -o "$PWD_/pay-rj.iso"    -V CBFSP -r -J "$PST"
+    genisoimage -quiet -o "$PWD_/pay-plain.iso" -V CBFSP       "$PST"
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$PAMB"; DI="$PADI"; else MB="$PXMB"; DI="$PXDI"; fi
+      PSOCK="$PWD_/seg-$A.sock"; PALOG="$PWD_/seg-$A.log"; rm -f "$PSOCK" "$PALOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$PWD_/pay-rj.iso" -display none -serial "unix:$PSOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      PQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$PSOCK" "$PALOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CBFS.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CBFSW.FTH\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CBFSP.FTH\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ROMFULL.BIN\r' --expect "0 > " \
+        --send "load-base $RGNHEX + 20 10 payload-of\r" --expect "PAYLOAD-END"
+      PRC=$?
+      kill "$PQ" 2>/dev/null   # by PID, never by pattern
+      [[ $PRC -eq 0 ]] || fail "cbfs-payload on $A: the segment walk did not complete (rc=$PRC) — see $PALOG"
+      ASEG="$(tr -d '\r' < "$PALOG" | grep '^pseg')"
+      [[ "$ASEG" == "$PUNIXSEG" ]] \
+        || fail "cbfs-payload on $A: the segment table differs from unix — a byte-order read is wrong on $A. $A:[$(printf '%s' "$ASEG" | tr '\n' '|')] unix:[$(printf '%s' "$PUNIXSEG" | tr '\n' '|')]"
+      note "$A: segment table byte-identical to unix"
+    done
+    # ppc — the big-endian arch, plain iso9660, pty + echo-gate
+    PPLOG="$PWD_/seg-ppc.log"; rm -f "$PPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$PPLOG" --timeout 600 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\CBFS.FTH;1\r'   --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\CBFSW.FTH;1\r'  --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\CBFSP.FTH;1\r'  --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\ROMFULL.BIN;1\r' --expect "> " \
+      --send "load-base $RGNHEX + 20 10 payload-of\r" --expect "PAYLOAD-END" \
+      -- qemu-system-ppc -bios "$PPELF" -nographic -vga none -cdrom "$PWD_/pay-plain.iso"
+    PPRC=$?
+    [[ $PPRC -eq 0 ]] || fail "cbfs-payload on ppc: the segment walk did not complete (rc=$PPRC) — see $PPLOG"
+    PPSEG="$(tr -d '\r' < "$PPLOG" | grep '^pseg')"
+    [[ "$PPSEG" == "$PUNIXSEG" ]] \
+      || fail "cbfs-payload on ppc: the BIG-ENDIAN row's segment table differs from unix — a host-native (LE) read slipped into the segment parser, exactly what the ppc row is here to catch. ppc:[$(printf '%s' "$PPSEG" | tr '\n' '|')] unix:[$(printf '%s' "$PUNIXSEG" | tr '\n' '|')]"
+    note "ppc: the big-endian row's segment table is byte-identical to unix (BE reads confirmed)"
+    unset SIG
+
+    pass "B.3 Spike 2 (payloads): dsl/cbfs-payload.fth dissects the coreboot SELF payload inside fallback/payload — the cbfs_payload_segment array (big-endian CODE/DATA/BSS/ENTR with load addresses and an entry point) that tells payload KINDS apart, since all four ROMs carry CBFS type 'simple elf' and only the segment table distinguishes them. Told apart on unix, each graded against readelf of the reconstituted ELF (the foreign oracle: every loadable segment's load/mem == a PT_LOAD's VirtAddr/MemSiz, the ENTR load == e_entry): build (Linux+u-root, 5 segs, entry 0x40000), build-ofw (Firmworks, entry 0x19800a0), build-openbios (OpenBIOS ppc, entry 0x101e68), build-openbios-amd64 (OpenBIOS amd64, entry 0x101bf0) — four DISTINCT signatures, so the toolkit is the constant and the payload is the variable (§12). And the segment table is big-endian, so build-openbios walked on x86, amd64 AND ppc is byte-identical to unix — the ppc row proving the BE reads (and the u64 load split) are right where a hidden-LE bug would show as a ppc-only disagreement, the read cbfs track's control one structural layer deeper. STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -4934,5 +5125,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|unix]" >&2; exit 1 ;;
 esac
