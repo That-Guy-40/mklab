@@ -3298,6 +3298,10 @@ PY
     (( ${#CEXPNAME[@]} >= 11 )) \
       || fail "cbfstool print yielded only ${#CEXPNAME[@]} entries for $ROM — the oracle itself looks wrong, so grading against it would be meaningless"
     note "oracle: cbfstool lists ${#CEXPNAME[@]} entries; COREBOOT region at file offset 0x$CRGNHEX"
+    # Plan §10: the track RECORDS the commit the ROM and its cbfstool came from — a
+    # version string is not an identity, the commit is. Derived from the tree, never
+    # cached; "unknown" if the tree is not a git checkout, rather than a guess.
+    note "oracle+ROM commit: $(git -C "$CB" rev-parse --short HEAD 2>/dev/null || echo unknown) (cbfstool and coreboot.rom from the same objdir of that tree)"
 
     CST="$WORKDIR/cbfs-stage"; rm -rf "$CST"; mkdir -p "$CST"
     cp "$CSTRUCT" "$CST/STRUCT.FTH"; cp "$CCBFS" "$CST/CBFS.FTH"
@@ -3384,7 +3388,7 @@ PY
       note "$A: $cmatched entries match cbfstool (payload seen$( [[ "$A" != unix ]] && printf ', bootblock seen'))"
     done
     unset CEXPNAME CEXPSZ
-    pass "B.3 Spike 2 (read): dsl/cbfs.fth walks the real coreboot ROM's CBFS and lists every file — offset, type, size and name — MATCHING coreboot's own cbfstool entry for entry, on unix, amd64, x86 AND ppc. The reader is the Spike 0 cursor vocabulary (type:/>rec/t@+/vbytes) plus one big-endian u32be type and nothing else, which is the point: CBFS metadata is big-endian ('ORBC'/'LARCHIVE'), so ppc reads len/type/offset natively while the LE arches byte-swap them through l@-be, and all four reproduce cbfstool's listing — so 'the walk is correct' means the byte order is correct too, the negative control a single-machine tool (cbfstool, poke) structurally cannot run. The oracle is DERIVED — the cbfstool the ROM's own build tree produced, pinned to its commit by construction (review F2), not vendored. unix reads the ROM's first 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file through (empty); the QEMU arches load the whole ROM and additionally reach bootblock. The WRITE/surgery direction is the sibling cbfs-write track; STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    pass "B.3 Spike 2 (read): dsl/cbfs.fth walks the real coreboot ROM's CBFS and lists every file — offset, type, size and name — MATCHING coreboot's own cbfstool entry for entry, on unix, amd64, x86 AND ppc. The reader is the Spike 0 cursor vocabulary (type:/>rec/t@+/vbytes) plus one big-endian u32be type and nothing else, which is the point: CBFS metadata is big-endian ('ORBC'/'LARCHIVE'), so ppc reads len/type/offset natively while the LE arches byte-swap them through l@-be, and all four reproduce cbfstool's listing — so 'the walk is correct' means the byte order is correct too, the negative control a single-machine tool (cbfstool, poke) structurally cannot run. The oracle is DERIVED — the cbfstool the ROM's own build tree produced, pinned to its commit by construction (review F2), not vendored. unix reads the ROM's first 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file through (empty); the QEMU arches load the whole ROM and additionally reach bootblock. The WRITE/surgery direction is the sibling cbfs-write track; the live form (the firmware walking the CBFS of the ROM that booted it, §12(1)) is the sibling cbfs-live track"
     ;;
   cbfs-write)
     # B.3 Spike 2, WRITE direction: dsl/cbfs-write.fth PATCHES and AUTHORS raw
@@ -3551,7 +3555,7 @@ PY
     fi
     note "author negative control: storing the len little-endian makes cbfstool read a wrong size — so the BE fields the firmware authored are what cbfstool actually validated in the positive row"
 
-    pass "B.3 Spike 2 (WRITE): dsl/cbfs-write.fth performs CBFS surgery in OpenBIOS Forth and coreboot's own cbfstool — never our reader — grades every result. PATCH: the firmware finds a raw entry, rewrites its content in place through write-file, and cbfstool accepts the whole image with byte-identical metadata and extract == our $PAYLEN bytes; the negative control patches at the ENTRY BASE (forgetting the offset field) and cbfstool refuses the stomped entry. AUTHOR: the firmware composes a whole cbfs_file — the big-endian len/type/offset fields and the name — in the free space through the SAME width/endian-aware cursor the reader was graded on (u32be t!+ is l!-be), relinks a fresh (empty), and cbfstool accepts a coherent 3-entry archive with the prior entry untouched and extract == our 32 bytes; the negative control stores that len LITTLE-endian and cbfstool reads the wrong size — the byte-order slip the four-arch matrix exists to prevent, here caught by the foreign oracle. write-file is hosted-only, so this is a unix workbench; the arch matrix's byte-order property is defended by the author negative control instead. The subject is a 128 KiB legacy CBFS that fits the 4 MiB arena; the oracle is DERIVED (the ROM's own cbfstool, review F2), not vendored. STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    pass "B.3 Spike 2 (WRITE): dsl/cbfs-write.fth performs CBFS surgery in OpenBIOS Forth and coreboot's own cbfstool — never our reader — grades every result. PATCH: the firmware finds a raw entry, rewrites its content in place through write-file, and cbfstool accepts the whole image with byte-identical metadata and extract == our $PAYLEN bytes; the negative control patches at the ENTRY BASE (forgetting the offset field) and cbfstool refuses the stomped entry. AUTHOR: the firmware composes a whole cbfs_file — the big-endian len/type/offset fields and the name — in the free space through the SAME width/endian-aware cursor the reader was graded on (u32be t!+ is l!-be), relinks a fresh (empty), and cbfstool accepts a coherent 3-entry archive with the prior entry untouched and extract == our 32 bytes; the negative control stores that len LITTLE-endian and cbfstool reads the wrong size — the byte-order slip the four-arch matrix exists to prevent, here caught by the foreign oracle. write-file is hosted-only, so this is a unix workbench; the arch matrix's byte-order property is defended by the author negative control instead. The subject is a 128 KiB legacy CBFS that fits the 4 MiB arena; the oracle is DERIVED (the ROM's own cbfstool, review F2), not vendored. the live form (the firmware walking the CBFS of the ROM that booted it, §12(1)) is the sibling cbfs-live track"
     ;;
   cbfs-payload)
     # B.3 Spike 2: dissect the SELF PAYLOAD inside fallback/payload — the layer
@@ -3596,6 +3600,8 @@ PY
     prgn() { "$1" "$2" layout 2>/dev/null | sed -n "s/.*'COREBOOT'.*offset \([0-9]*\).*/\1/p" | head -1; }
 
     PWD_="$WORKDIR/cbfs-payload"; rm -rf "$PWD_"; mkdir -p "$PWD_"
+    # Plan §10: record the commit the ROMs and their cbfstools came from (derived).
+    note "oracle+ROMs commit: $(git -C "$CB" rev-parse --short HEAD 2>/dev/null || echo unknown) (each ROM graded by the cbfstool of its own objdir)"
     PST="$PWD_/stage"; mkdir -p "$PST"
     cp "$PSTRUCT" "$PST/STRUCT.FTH"; cp "$PCBFS" "$PST/CBFS.FTH"
     cp "$PCBW" "$PST/CBFSW.FTH"; cp "$PCBP" "$PST/CBFSP.FTH"
@@ -3674,7 +3680,15 @@ PY
       case "${SIG[$R]}" in
         FAILGRADE*) fail "cbfs-payload $R: ${SIG[$R]} — the Forth segment walk disagrees with readelf of the reconstituted ELF (the foreign oracle) — see $PLOG" ;;
       esac
-      note "$R: $(grep -c '^pseg' "$PLOG") segments walked, entry+load map == readelf; signature ${SIG[$R]}"
+      # The signature must have the shape segcount:entry. Without this, a Python
+      # crash (traceback on stderr, nothing on stdout) leaves SIG empty, and one
+      # empty string among four can still count as "four distinct" below — a
+      # vacuous pass (found in review, 2026-09-02).
+      [[ "${SIG[$R]}" =~ ^[0-9]+:[0-9a-f]+$ ]] \
+        || fail "cbfs-payload $R: the grader produced no signature ('${SIG[$R]}') — it crashed rather than grading, so this ROM was not checked — see $PLOG"
+      # count 'pseg| type=' anywhere on a line, NOT anchored at column 0: the first
+      # segment prints on the same line as the echoed `payload-of` command.
+      note "$R: $(grep -c 'pseg| type=' "$PLOG") segments walked, entry+load map == readelf; signature ${SIG[$R]}"
     done
     [[ -z "$PANYSKIP" ]] \
       || skip "cbfs-payload: missing ROM/cbfstool for:$PANYSKIP — build them first (this track needs all four ROMs to tell the payloads apart)"
@@ -3691,7 +3705,7 @@ PY
     ROM="$CB/build-openbios/coreboot.rom"; CBT="$CB/build-openbios/cbfstool"
     RGNHEX="$(printf '%x' "$(prgn "$CBT" "$ROM")")"
     # the canonical segment lines from the unix run above (order-preserving)
-    PUNIXSEG="$(grep '^pseg' "$PWD_/unix-build-openbios.log")"
+    PUNIXSEG="$(grep -o 'pseg| .*' "$PWD_/unix-build-openbios.log")"
     cp "$ROM" "$PST/ROMFULL.BIN"
     genisoimage -quiet -o "$PWD_/pay-rj.iso"    -V CBFSP -r -J "$PST"
     genisoimage -quiet -o "$PWD_/pay-plain.iso" -V CBFSP       "$PST"
@@ -3713,7 +3727,7 @@ PY
       PRC=$?
       kill "$PQ" 2>/dev/null   # by PID, never by pattern
       [[ $PRC -eq 0 ]] || fail "cbfs-payload on $A: the segment walk did not complete (rc=$PRC) — see $PALOG"
-      ASEG="$(tr -d '\r' < "$PALOG" | grep '^pseg')"
+      ASEG="$(tr -d '\r' < "$PALOG" | grep -o 'pseg| .*')"
       [[ "$ASEG" == "$PUNIXSEG" ]] \
         || fail "cbfs-payload on $A: the segment table differs from unix — a byte-order read is wrong on $A. $A:[$(printf '%s' "$ASEG" | tr '\n' '|')] unix:[$(printf '%s' "$PUNIXSEG" | tr '\n' '|')]"
       note "$A: segment table byte-identical to unix"
@@ -3731,7 +3745,7 @@ PY
       -- qemu-system-ppc -bios "$PPELF" -nographic -vga none -cdrom "$PWD_/pay-plain.iso"
     PPRC=$?
     [[ $PPRC -eq 0 ]] || fail "cbfs-payload on ppc: the segment walk did not complete (rc=$PPRC) — see $PPLOG"
-    PPSEG="$(tr -d '\r' < "$PPLOG" | grep '^pseg')"
+    PPSEG="$(tr -d '\r' < "$PPLOG" | grep -o 'pseg| .*')"
     [[ "$PPSEG" == "$PUNIXSEG" ]] \
       || fail "cbfs-payload on ppc: the BIG-ENDIAN row's segment table differs from unix — a host-native (LE) read slipped into the segment parser, exactly what the ppc row is here to catch. ppc:[$(printf '%s' "$PPSEG" | tr '\n' '|')] unix:[$(printf '%s' "$PUNIXSEG" | tr '\n' '|')]"
     note "ppc: the big-endian row's segment table is byte-identical to unix (BE reads confirmed)"
@@ -3779,6 +3793,8 @@ PY
     LWIN="$(printf '%x' $(( LMAPBASE + LRGN )))"
     LRGNHEX="$(printf '%x' "$LRGN")"
     note "amd64 ROM is $LROMSZ bytes → mapped at $(printf '0x%x' "$LMAPBASE"); COREBOOT region +0x$LRGNHEX → flash window 0x$LWIN"
+    # Plan §10: record the commit the ROM and its cbfstool came from (derived).
+    note "oracle+ROM commit: $(git -C "$CB" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
     # expected listing from cbfstool (region-relative offset → name|size), the
     # SAME parse the read `cbfs` track uses; the firmware prints region-relative offs.
@@ -3821,13 +3837,20 @@ PY
 import socket, sys, time, re
 sock, addr, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 s = socket.socket(socket.AF_UNIX)
+# A bounded observer: an unbounded recv on a stalled monitor would hang the whole
+# track with no verdict (the killed-run trap). Timeouts print ERR and let the
+# assertion below fail by name instead.
+s.settimeout(10)
 for _ in range(20):
     try: s.connect(sock); break
     except OSError: time.sleep(0.25)
 else: print("ERR"); sys.exit(0)
-time.sleep(0.3); s.recv(1<<16)
-s.sendall(f"xp /{n}xb {addr}\n".encode()); time.sleep(1.0)
-out = s.recv(1<<20).decode(errors="replace")
+try:
+    time.sleep(0.3); s.recv(1<<16)
+    s.sendall(f"xp /{n}xb {addr}\n".encode()); time.sleep(1.0)
+    out = s.recv(1<<20).decode(errors="replace")
+except (socket.timeout, OSError):
+    print("ERR"); sys.exit(0)
 by=[m.lower() for ln in out.splitlines() if ":" in ln for m in re.findall(r'0x([0-9a-fA-F]{2})', ln)]
 print("".join(by[:n]))
 PY
@@ -3923,6 +3946,12 @@ PY
     EO="$EA/OUT.EVT"
     [[ -f "$EO" ]] \
       || fail "event-log author: write-file produced no log at $EO — the firmware persisted nothing. Firmware said: $(printf '%s' "$EALOG" | tail -3 | tr '\n' '|')"
+    # The bytes on disk must be exactly the length the author computed (LEN=, hex):
+    # a short write would still parse as SOME log and could pass the oracle greps.
+    ELEN="$(sed -n 's/.*LEN=\([0-9a-f]\+\).*/\1/p' <<<"$EALOG" | tail -1)"
+    [[ -n "$ELEN" ]] || fail "event-log author: the firmware never printed LEN= — the author did not run: $(printf '%s' "$EALOG" | tail -3 | tr '\n' '|')"
+    [[ "$(wc -c <"$EO")" -eq $((16#$ELEN)) ]] \
+      || fail "event-log author: OUT.EVT is $(wc -c <"$EO") bytes but the firmware authored 0x$ELEN — write-file wrote a short or long file"
     # tpm2_eventlog must PARSE it (rc 0) and SEE the entries the firmware intended.
     tpm2_eventlog "$EO" > "$EA/oracle.yaml" 2>"$EA/oracle.err"; ETRC=$?
     [[ $ETRC -eq 0 ]] \
@@ -3952,7 +3981,17 @@ PY
       || fail "event-log self-consistency: the firmware's own walk did not reach EVLOG-END — an eventSize does not land on the next entry: $(printf '%s' "$ERT" | tail -3 | tr '\n' '|')"
     [[ "$ERTN" -eq 3 ]] \
       || fail "event-log self-consistency: the firmware walked $ERTN entries of its own 3-entry log — the parse and the author disagree on the record boundaries"
-    note "self-consistency: the firmware's own reader walks its authored log to EVLOG-END, all 3 entries, boundaries agree"
+    # …and the CONTENT, not just the count: pcr, event type and digest count per
+    # entry must be what was authored. Three garbage lines plus EVLOG-END would
+    # satisfy the count alone (found in review, 2026-09-02). This is also the plan's
+    # "count digests present" pass, per entry.
+    for want in 'evt| pcr=0  type=crtm-versn  digests=1  size=4' \
+                'evt| pcr=0  type=post-code   digests=1  size=4' \
+                'evt| pcr=1  type=separator   digests=1  size=4'; do
+      grep -qF -- "$want" <<<"$ERT" \
+        || fail "event-log self-consistency: the firmware's walk did not print [$want] — the entry it read back is not the entry it authored: $(grep 'evt|' <<<"$ERT" | tr '\n' '|')"
+    done
+    note "self-consistency: the firmware's own reader walks its authored log to EVLOG-END — all 3 entries, each with the authored pcr/type/digest-count/size"
 
     # ── ROW B: the negative control — a byte-order slip must be CAUGHT ───────────
     # The log is little-endian. Author correctly, then re-store one entry's eventSize

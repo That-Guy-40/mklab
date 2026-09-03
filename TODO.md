@@ -616,6 +616,23 @@ requires of any other cached fact.
       is proven; the hardware-signed AK **quote is UNKNOWN and cannot be faked here** (linked to
       metal-as-a-service `DEFERRED.md`) — a verdict distinct from PASS. tpm2-tools is a host
       prereq (`apt install tpm2-tools`); the track SKIPs without it.
+    - **Review of #379–#381 (2026-09-02) — six defects fixed, two plan gaps closed.** All
+      found by re-reading the shipped code, not by a red run: (1) `cbfs-payload`'s byte-order
+      control was **blind to the CODE segment** — every `grep '^pseg'` dropped the first line,
+      which prints inline with the echoed command, so the x86/amd64/ppc-vs-unix identity never
+      compared the load address it exists to guard (it stayed green by coincidence: one inline
+      line and one ENTR per log made "drop first" equal "exclude ENTR"); now `grep -o 'pseg| .*'`.
+      (2) A grader crash left `SIG[]` empty and one empty among four still counted as "four
+      distinct" — now a shape guard. (3) `eventlog.fth`'s `.event2` left a `?do` loop by bare
+      `exit` on an unknown algorithm — return-stack corruption; now `unloop exit` + an `ev-err`
+      flag that stops the walk. (4) `cbfs-live`'s monitor-`xp` observer did an unbounded `recv`
+      — a stalled monitor would hang the track with no verdict; now a 10 s timeout. (5) Two pass
+      lines (`cbfs`, `cbfs-write`) still said "STILL TO DO: the live form" after #380 — stale
+      present-tense claims. (6) `event-log` self-consistency counted entries but not content
+      (three garbage lines + EVLOG-END would pass) and never checked the written size — now
+      asserts each authored pcr/type/digest-count line and `wc -c == LEN`. Plan gaps: §10's
+      "record the commit" — the three CBFS tracks now note the coreboot commit; the Spike 2
+      deliverable's "declared hash" half is **N/A and now stated** (no ROM here declares one).
     - [ ] **⏭ NEXT STEP — Spike 1b (the replay, the payoff — needs SHA-256).** Replay each PCR,
       `PCR = SHA256(PCR‖digest)`, and verify the replayed value equals a claimed final PCR.
       **Two independent oracles for the claim, both already available:** `tpm2_eventlog` prints
