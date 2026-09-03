@@ -616,7 +616,7 @@ point (POC-4). Needs `genisoimage` + a kernel/initrd pair (defaults:
 
 [`showcase-preboot-toolkit.sh`](showcase-preboot-toolkit.sh), documented in
 [SHOWCASE-PREBOOT-TOOLKIT.md](SHOWCASE-PREBOOT-TOOLKIT.md). Where the showcase
-above ends in an OS, this one never leaves the firmware: four acts at the `0 >`
+above ends in an OS, this one never leaves the firmware: five acts at the `0 >`
 prompt of the amd64 payload booted from a coreboot ROM, with two FCode
 option-ROM cards on the bus and every `dsl/` reader delivered over a CD.
 
@@ -647,13 +647,21 @@ $ ./showcase-preboot-toolkit.sh
   - PCR0 = the same extend chain computed on the host: SHA256(PCR ‖ digest), twice
      UNKNOWN, and it stays UNKNOWN …
 
+══ ACT V — the firmware hands its world over: the live tree, flattened ══
+  - FDTL=1cde NODES=1f PROPS=d3 — the firmware's own count of what it wrote
+  - QMP pmemsave pulled 7390 bytes out of the guest at 0x17978
+  - dtc parses it: 31 nodes, 211 properties — equal to the firmware's own count
+  - 100e8086 — Act III's card, asking who it is, answered INTO the tree; dtc's own fdtget reads it back
+  - …and fcode-card@3, the node Act III's FCode renamed, is a node in the blob
+     THIS IS THE HANDOFF FORMAT: what a kernel would be given.
+
 PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
 ```
 
 **It is graded, not narrated.** Every act asserts its outcome and the run exits
 1 if one does not happen — verified 2026-09-03 by making `lb-walk` a no-op,
 which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
-≈ 40 s under KVM (measured 2026-09-03: 39 s wall, one boot).
+≈ 45 s under KVM (measured 2026-09-03: 44.6 s wall, one boot, five acts).
 
 ## 5. The firmware as a Unix process (no QEMU)
 

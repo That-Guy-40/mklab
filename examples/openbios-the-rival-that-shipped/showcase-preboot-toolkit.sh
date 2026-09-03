@@ -19,6 +19,11 @@
 #   ACT IV  — MEASURED-BOOT ARITHMETIC with no TPM and no OS: SHA-256 as a pure
 #             Forth function, a TCG event log authored in RAM, and PCR0 replayed
 #             as SHA256(PCR ‖ digest) — graded against python's hashlib.
+#   ACT V   — the firmware HANDS ITS WORLD OVER: the live device tree — the one
+#             the earlier acts just changed — flattened into a device tree blob,
+#             pulled out of the guest by QEMU's QMP, and read by the device-tree
+#             compiler itself. dtc finds fcode-card@3 and the second card's
+#             cfg-id in it: the evidence of Act III, in the boot-handoff format.
 #
 # Everything is delivered over a CD to a firmware booted from a coreboot ROM;
 # nothing is compiled into the firmware for the occasion. The verdict is real:
@@ -39,10 +44,11 @@ the bus and the dsl/ readers on a CD, then drives four acts at the 0 > prompt:
   II   re-run the firmware's own coreboot-table parser and diff memory
   III  read a card's option ROM at its live BAR and run its FCode from there
   IV   SHA-256 in Forth, a TCG event log authored in RAM, PCR0 replayed
+  V    flatten the live device tree to a DTB; dtc reads Act III's cards out of it
 
 Prereqs: ./build-openbios.sh amd64 && ./build-coreboot-openbios.sh amd64,
-qemu-system-x86_64, genisoimage, python3, and toke (built on demand from the
-pinned fcode-utils clone).
+qemu-system-x86_64, genisoimage, python3, device-tree-compiler (dtc, fdtdump,
+fdtget), and toke (built on demand from the pinned fcode-utils clone).
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP.
 USAGE
@@ -64,8 +70,8 @@ say()  { echo "     $*"; }
 # single-quoted trap body; shellcheck does not carry it into the uses that follow.
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: showcase exited early (rc=$rc)"' EXIT
 
-for c in qemu-system-x86_64 genisoimage python3; do
-  command -v "$c" >/dev/null || skip "$c not installed"
+for c in qemu-system-x86_64 genisoimage python3 dtc fdtdump fdtget; do
+  command -v "$c" >/dev/null || skip "$c not installed$( [[ $c == dtc || $c == fdt* ]] && echo ' (apt: device-tree-compiler)')"
 done
 ACCEL=$([[ -w /dev/kvm ]] && echo kvm || echo tcg)
 ROM="$CB/build-openbios-amd64/coreboot.rom"
@@ -90,7 +96,7 @@ fi
 [[ -x "$TOKE" ]] || skip "no toke at $TOKE — run ./build-openbios.sh (it clones fcode-utils) or set FCODE_UTILS="
 
 FX="$HERE/fixtures/optrom"
-DSL=(struct.fth cbfs.fth region.fth lbregion.fth optrom.fth sha256.fth eventlog.fth)
+DSL=(struct.fth cbfs.fth region.fth lbregion.fth optrom.fth sha256.fth eventlog.fth fdt.fth)
 for f in "${DSL[@]}"; do
   [[ -f "$HERE/dsl/$f" ]] || fail "missing $HERE/dsl/$f — the showcase stages the SHIPPED readers"
 done
@@ -118,7 +124,7 @@ note "cards: fcode-card.fth and fcode-card-cfg.fth → toke → $(stat -c%s "$WD
 # ── the readers, on a CD ─────────────────────────────────────────────────────
 declare -A DOS=( [struct.fth]=STRUCT [cbfs.fth]=CBFS [region.fth]=REGION
                  [lbregion.fth]=LBREGION [optrom.fth]=OPTROM [sha256.fth]=SHA
-                 [eventlog.fth]=EVLOG )
+                 [eventlog.fth]=EVLOG [fdt.fth]=FDT )
 for f in "${DSL[@]}"; do cp "$HERE/dsl/$f" "$WD/stage/${DOS[$f]}.FTH"; done
 genisoimage -quiet -o "$WD/dsl.iso" -V TOOLKIT -r -J "$WD/stage" 2>/dev/null \
   || fail "genisoimage failed to stage the readers"
@@ -145,13 +151,14 @@ PY
 )"
 
 # ── ONE BOOT ─────────────────────────────────────────────────────────────────
-SER="/tmp/scts-$$.sock"; MON="/tmp/sctm-$$.sock"; LOG="$WD/boot.log"
-rm -f "$SER" "$MON" "$LOG"
+SER="/tmp/scts-$$.sock"; MON="/tmp/sctm-$$.sock"; QMP="/tmp/sctq-$$.sock"; LOG="$WD/boot.log"
+rm -f "$SER" "$MON" "$QMP" "$LOG"
 P="/pci8086,1237@0"      # the pc machine's host bridge, as this firmware names it
 qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -bios "$ROM" -nic none \
   -device "e1000,romfile=$WD/fcode.rom" -device "e1000,romfile=$WD/cfgcard.rom" \
   -cdrom "$WD/dsl.iso" -display none \
   -serial "unix:$SER,server=on,wait=off" -monitor "unix:$MON,server=on,wait=off" \
+  -qmp "unix:$QMP,server=on,wait=off" \
   -no-reboot >"$WD/qemu.log" 2>&1 &
 Q=$!
 echo; echo "  booting… (one QEMU, one serial console, everything below is typed at 0 >)"
@@ -178,11 +185,34 @@ python3 "$REPO/tools/drive-serial-repl.py" "$SER" "$LOG" --timeout 400 \
   --send 'evbuf dup evlog-author value evlen drop\r'  --expect "0 > " \
   --send '." EVLEN=" evlen . cr\r'                    --expect "EVLEN="    --expect "0 > " \
   --send '." PCR0=" evbuf evbuf evlen + 40 0 evlog-replay .digest cr\r' \
-                                                      --expect "PCR0="     --expect "0 > "
+                                                      --expect "PCR0="     --expect "0 > " \
+  --send '/fdt-buf alloc-mem value fb  fb dt>fdt .fdt-counts\r' --expect "PROPS=" --expect "0 > " \
+  --send '." FDTP=" fb >phys u. cr\r'                --expect "FDTP="    --expect "0 > "
 RC=$?
+# ACT V's bytes leave the guest through QMP while it is still up — QMP, not the
+# HMP monitor, whose parser reads a filename as an expression (a trap this repo's
+# memory carries, and which still cost the fdt track a run).
+FDTP="$(grep -aoE 'FDTP=[0-9a-f]+' "$LOG" | head -1 | cut -d= -f2)"; FDTL="$(grep -aoE 'FDTL=[0-9a-f]+' "$LOG" | head -1 | cut -d= -f2)"
+FQR=""
+if [[ -n "$FDTP" && -n "$FDTL" ]]; then
+  FQR="$(python3 - "$QMP" "$FDTP" "$FDTL" "$WD/tree.dtb" <<'PY'
+import socket, sys, json, time
+s = socket.socket(socket.AF_UNIX); s.settimeout(15)
+for _ in range(20):
+    try: s.connect(sys.argv[1]); break
+    except OSError: time.sleep(0.5)
+else: print("ERR: no qmp"); sys.exit(0)
+s.recv(65536)
+def cmd(o): s.sendall((json.dumps(o)+"\n").encode()); return s.recv(65536).decode()
+cmd({"execute": "qmp_capabilities"})
+r = cmd({"execute": "pmemsave", "arguments": {"val": int(sys.argv[2], 16), "size": int(sys.argv[3], 16), "filename": sys.argv[4]}})
+print("ERR: " + r.strip() if '"error"' in r else "ok")
+PY
+)"
+fi
 kill "$Q" 2>/dev/null   # by PID, never by pattern
 G="$(tr -d '\r\000' < "$LOG" 2>/dev/null)"
-[[ $RC -eq 0 ]] || fail "the firmware did not finish the four acts (rc=$RC) — see $LOG"
+[[ $RC -eq 0 ]] || fail "the firmware did not finish the five acts (rc=$RC) — see $LOG"
 
 mk() { grep -aoE "$1=[0-9a-fA-F]+" <<<"$G" | head -1 | cut -d= -f2; }
 
@@ -297,4 +327,36 @@ say  "UNKNOWN, and it stays UNKNOWN: this replays a log against itself. Whether 
 say  "machine really measured those events needs a hardware-signed quote, which"
 say  "nothing here can produce — a verdict distinct from PASS."
 
-pass "the B.3 preboot structure toolkit, end to end, in ONE boot of the amd64 firmware from a coreboot ROM. (I) It walked the CBFS of the very ROM that delivered it — $NFILE entries out of the mapped flash window at 0x$WIN, fallback/payload among them, which is the firmware doing the reading; coreboot's cbfstool reads the same $OFILES entries in that ROM from the host. (II) It re-ran its OWN coreboot-table parser and diffed memory around it: the table it reads came back byte-identical (the negative control), while the allocator's next block moved 0x$STEP bytes and $((16#$HEAP)) bytes inside it changed — a change the firmware caused, from a code path in its own tree, with the instrument calibrated first (SELFTEST=1). (III) It read a PCI option ROM's 0x55AA/PCIR header at the card's live BAR 0x$PHYS, byte-loaded the card's FCode straight out of it — the card's own program renamed e1000@3 to fcode-card@3 and stamped FCODE-FROM-CARD-RAN — and a second card computed cfg-id=$CFGID about ITSELF through my-space + config-l@ on its parent bus. (IV) It computed SHA-256 as a pure Forth function matching python and NIST, authored a $EVLEN-byte TCG crypto-agile event log in RAM, and replayed PCR0 to the same value the host's hashlib computes for the same extend chain. Every reader came over a CD; nothing was compiled in for the occasion; and acts I and II are positions no hosted tool can occupy at all. THE BOUNDARY: act IV proves internal consistency, not that any machine is trustworthy — the hardware-signed quote is UNKNOWN"
+# ══ ACT V ════════════════════════════════════════════════════════════════════
+act "ACT V — the firmware hands its world over: the live tree, flattened"
+FN="$(mk NODES)"; FP="$(mk PROPS)"
+[[ -n "$FN" && -n "$FP" && -n "$FDTP" ]] || fail "ACT V: dt>fdt never printed its counts or the buffer's physical address — see $LOG"
+say "typed: /fdt-buf alloc-mem value fb  fb dt>fdt .fdt-counts"
+note "FDTL=$FDTL NODES=$FN PROPS=$FP — the firmware's own count of what it wrote"
+say "typed: .\" FDTP=\" fb >phys u. cr            (…and where, for an observer outside)"
+[[ "$FQR" == ok && -s "$WD/tree.dtb" ]] \
+  || fail "ACT V: QMP pmemsave of 0x$FDTL bytes at guest-physical 0x$FDTP did not deliver the blob (${FQR:-no reply})"
+note "QMP pmemsave pulled $(stat -c%s "$WD/tree.dtb") bytes out of the guest at 0x$FDTP"
+DTCOUT="$(dtc -I dtb -O dts -o "$WD/tree.dts" "$WD/tree.dtb" 2>&1)"; DTCRC=$?
+[[ $DTCRC -eq 0 ]] || fail "ACT V: dtc REFUSED the flattened tree (rc=$DTCRC): $(grep -v Warning <<<"$DTCOUT" | head -2 | tr '\n' '|')"
+DN=$(fdtdump "$WD/tree.dtb" 2>/dev/null | grep -cE '\{$'); DP=$(fdtdump "$WD/tree.dtb" 2>/dev/null | grep -cE '^\s+[^ {}]+( = .*)?;$')
+[[ "$DN" -eq $((16#$FN)) && "$DP" -eq $((16#$FP)) ]] \
+  || fail "ACT V: fdtdump reads $DN nodes / $DP properties, the firmware said 0x$FN / 0x$FP — see $WD/tree.dtb"
+say "host: dtc -I dtb -O dts tree.dtb"
+note "dtc parses it: $DN nodes, $DP properties — equal to the firmware's own count"
+# the evidence of ACT III, read back out of the blob by a FOREIGN tool
+DCFG="$(fdtget -t x "$WD/tree.dtb" "$P/cfg-card@4" cfg-id 2>/dev/null | tr -d ' ')"
+[[ "$DCFG" == 100e8086 ]] \
+  || fail "ACT V: fdtget reads cfg-id=${DCFG:-<absent>} at $P/cfg-card@4 — the second card's own answer from Act III is not in the flattened tree as 100e8086"
+grep -q 'fcode-card@3 {' "$WD/tree.dts" \
+  || fail "ACT V: the flattened tree has no fcode-card@3 node — the rename the card's FCode did in Act III did not reach the blob"
+DMEM="$(fdtget "$WD/tree.dtb" /memory reg 2>/dev/null | tr '\n' ' ')"
+[[ -n "$DMEM" ]] || fail "ACT V: fdtget cannot read /memory reg from the blob"
+say "host: fdtget -t x tree.dtb $P/cfg-card@4 cfg-id"
+note "$DCFG — Act III's card, asking who it is, answered INTO the tree; dtc's own fdtget reads it back"
+note "…and fcode-card@3, the node Act III's FCode renamed, is a node in the blob"
+note "/memory reg = $DMEM(two cells per address: the 64-bit root of patch 43)"
+say  "THIS IS THE HANDOFF FORMAT: what a kernel would be given. Every earlier act's"
+say  "effect is in it, and the reader is the device-tree compiler, not this firmware."
+
+pass "the B.3 preboot structure toolkit, end to end, in ONE boot of the amd64 firmware from a coreboot ROM. (I) It walked the CBFS of the very ROM that delivered it — $NFILE entries out of the mapped flash window at 0x$WIN, fallback/payload among them, which is the firmware doing the reading; coreboot's cbfstool reads the same $OFILES entries in that ROM from the host. (II) It re-ran its OWN coreboot-table parser and diffed memory around it: the table it reads came back byte-identical (the negative control), while the allocator's next block moved 0x$STEP bytes and $((16#$HEAP)) bytes inside it changed — a change the firmware caused, from a code path in its own tree, with the instrument calibrated first (SELFTEST=1). (III) It read a PCI option ROM's 0x55AA/PCIR header at the card's live BAR 0x$PHYS, byte-loaded the card's FCode straight out of it — the card's own program renamed e1000@3 to fcode-card@3 and stamped FCODE-FROM-CARD-RAN — and a second card computed cfg-id=$CFGID about ITSELF through my-space + config-l@ on its parent bus. (IV) It computed SHA-256 as a pure Forth function matching python and NIST, authored a $EVLEN-byte TCG crypto-agile event log in RAM, and replayed PCR0 to the same value the host's hashlib computes for the same extend chain. (V) It flattened its LIVE device tree — the tree the earlier acts had just changed — into a $(stat -c%s "$WD/tree.dtb")-byte version-17 DTB, QEMU's QMP pulled it out of the guest, and the device-tree compiler itself parsed it: $DN nodes and $DP properties, equal to the firmware's own count, with fcode-card@3 (Act III's rename) a node in it and the second card's cfg-id=$DCFG read back by fdtget — the boot-handoff format, carrying every earlier act's evidence, read by a foreign tool. Every reader came over a CD; nothing was compiled in for the occasion; and acts I and II are positions no hosted tool can occupy at all. THE BOUNDARY: act IV proves internal consistency, not that any machine is trustworthy — the hardware-signed quote is UNKNOWN"
