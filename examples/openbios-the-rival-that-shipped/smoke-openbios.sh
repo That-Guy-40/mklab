@@ -4534,8 +4534,11 @@ PY
     OAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; OADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
     OXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   OXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
     for f in "$OAMB" "$OADI" "$OXMB" "$OXDI"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"; done
+    OPPCELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f "$OPPCELF" ]] || skip "missing $OPPCELF — run ./build-openbios.sh ppc first"
     OFX="$HERE/fixtures/optrom"
-    for f in "$OFX/fcode-card.fth" "$OFX/build-fcode-rom.py" "$HERE/dsl/struct.fth" "$HERE/dsl/optrom.fth"; do
+    for f in "$OFX/fcode-card.fth" "$OFX/fcode-card-cfg.fth" "$OFX/build-fcode-rom.py" "$HERE/dsl/struct.fth" "$HERE/dsl/optrom.fth"; do
       [[ -f "$f" ]] || fail "missing $f — this track stages the SHIPPED files, it does not re-implement them"
     done
     OWD="$WORKDIR/optrom"; rm -rf "$OWD"; mkdir -p "$OWD/stage"
@@ -4547,6 +4550,13 @@ PY
     python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card.fc" "$OWD/fcode.rom" >/dev/null || fail "optrom: build-fcode-rom.py failed on the subject"
     python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card.fc" "$OWD/x86type.rom" --code-type 0 >/dev/null || fail "optrom: could not build the x86-typed control"
     python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card.fc" "$OWD/badsig.rom" --bad-sig >/dev/null || fail "optrom: could not build the bad-signature control"
+    # …and the SECOND card, which reads its own config space from inside its own
+    # bytecode (`my-space " config-l@" $call-parent`) — the row patch 56 and 57 exist
+    # for. Tokenised the same way, from the shipped source.
+    cp "$OFX/fcode-card-cfg.fth" "$OWD/"
+    ( cd "$OWD" && "$OTOKE" fcode-card-cfg.fth ) >"$OWD/toke-cfg.log" 2>&1 \
+      || fail "optrom: toke failed on fcode-card-cfg.fth — the config-space driver did not tokenise: $(tail -2 "$OWD/toke-cfg.log" | tr '\n' '|')"
+    python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card-cfg.fc" "$OWD/cfgcard.rom" >/dev/null || fail "optrom: could not build the config-space card's ROM"
     # a control must differ from the subject in EXACTLY one byte, or its refusal
     # could be about something else
     for c in x86type badsig; do
@@ -4593,6 +4603,7 @@ PY
       qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" -nic none \
         -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/x86type.rom" \
         -device "e1000,romfile=" -device "e1000,romfile=$OWD/badsig.rom" \
+        -device "e1000,romfile=$OWD/cfgcard.rom" \
         -cdrom "$OWD/dsl.iso" -display none -serial "unix:$OSER,server=on" \
         -monitor "unix:$OMON,server=on,wait=off" -no-reboot >"$OWD/$A.qemu.log" 2>&1 &
       OQ=$!
@@ -4607,6 +4618,8 @@ PY
         --send "dev $OP/e1000@3 optrom-disable optrom-sig optrom-cfg\r" --expect "0 > " \
         --send 'optrom-enable optrom-sig optrom-cfg\r' --expect "0 > " \
         --send 'optrom-run .fcode-marker\r' --expect "0 > " \
+        --send "dev $OP/e1000@3 .probe-addr\r" --expect "0 > " \
+        --send "dev $OP/e1000@7 .probe-addr optrom-run .cfg-id\r" --expect "0 > " \
         --send "dev $OP ls\r" --expect "0 > "
       ORC=$?
       OG="$(tr -d '\r' < "$OLOG" 2>/dev/null)"
@@ -4663,9 +4676,67 @@ PY
       grep -q 'fcode-card@3' <<<"$S10" || fail "optrom on $A: the bus listing still names slot 3 '$(grep -oE '[A-Za-z0-9,-]+@3' <<<"$S10" | head -1)' — the card's device-name did not rename its node"
       grep -q 'e1000@4' <<<"$S10" || fail "optrom on $A: e1000@4 (a control, never byte-loaded) is gone from the bus listing"
       note "$A: byte-load straight out of the ROM — the card's own FCode renamed e1000@3 to fcode-card@3 and stamped fcode-marker=FCODE-FROM-CARD-RAN (the OFW lab's success signature, on the rival); e1000@4/5/6 untouched"
+      # ── the SECOND card: a driver that reads its OWN config space (patches 56+57) ──
+      # my-space answers from the node's probe-addr, and config-l@ is reached through
+      # the PARENT BUS NODE ($call-parent) — the two halves the 1275 PCI binding
+      # requires and this firmware lacked. The assertion is the OUTCOME: the number
+      # the card computed about ITSELF, checked against QEMU's own view of that slot.
+      # BOTH FAILURE VALUES ARE NAMED, because each was a real state of this firmware:
+      # nothing at all (patch 56 missing → the driver threw -21 and left no property),
+      # and 0x12378086 — the HOST BRIDGE — which is what a card reads when probe-addr
+      # is 0 (patch 57 missing) while every mechanism looks like it worked.
+      SPA="$(grep -oE 'PA=[0-9a-f]+' <<<"$(osec "e1000@3 .probe-addr")" | head -1 | cut -d= -f2)"
+      [[ -n "$SPA" && "$SPA" != 0 ]] \
+        || fail "optrom on $A: e1000@3's probe-addr is ${SPA:-<absent>} — my-space would answer 0, so a card's driver reads bus 0 device 0 (the host bridge) believing it read itself"
+      S11="$(osec "e1000@7 .probe-addr optrom-run")"
+      OCID="$(grep -oE 'CFGID=[0-9a-f]+' <<<"$S11" | head -1 | cut -d= -f2)"
+      [[ -n "$OCID" ]] \
+        || fail "optrom on $A: the config-space card left no cfg-id property — its driver could not reach config space (before patch 56 this is a -21 throw from \" config-l@\" \$call-parent, with the global words sitting right there): $(grep -oE 'CFGID=[a-z]+|byte-load.*' <<<"$S11" | head -2 | tr '\n' '|')"
+      [[ "$OCID" != 12378086 ]] \
+        || fail "optrom on $A: the card read 12378086 — the HOST BRIDGE's 8086:1237, which is what config address 0 returns when the node's probe-addr was never set (patch 57). The driver ran and described the wrong device"
+      [[ "$OCID" == 100e8086 ]] \
+        || fail "optrom on $A: the config-space card computed cfg-id=$OCID about itself, but its slot is 8086:100e (QEMU's info pci) — so 100e8086 is the only right answer"
+      grep -qE '^  Bus  0, device   7,' <<<"$OPCI" \
+        || fail "optrom on $A: QEMU reports no device 7 — the config-space card is not on the bus this run, so its cfg-id proves nothing"
+      note "$A: the config-space card — my-space (probe-addr $SPA) + \" config-l@\" \$call-parent, both from inside the card's own FCode — computed cfg-id=$OCID about ITSELF, which is 8086:100e, not the host bridge's 8086:1237 that a zero probe-addr returns"
     done
-    note "ppc: the patched firmware publishes the entry there too (assigned-addresses 02001030 … 800a0000, size 800) and config-l@ answers rom=800a0001 — measured 2026-09-03; the ROM READ on ppc needs pci-map-in (a bus address on mac99), which is NOT done: a named gap, not a skip"
-    pass "B.3 Spike 3, the row that was UNCOVERED: a PCI option ROM read from REAL device memory, on x86 AND amd64. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. ppc publishes and answers config-l@; its ROM read (pci-map-in) is a NAMED GAP"
+
+    # ── ROW F: the BIG-ENDIAN arch does all of it too ────────────────────────────
+    # ppc is where a little-endian ROM header is a real byte-order question rather
+    # than a native read (`le-dev-field:`, rb@ bytewise), and where this lab's own
+    # "gap" was WRONG: the TODO recorded that the ppc read needed the parent bus's
+    # `pci-map-in` because the published address is a PCI bus address. Measured
+    # 2026-09-03: the header reads DIRECTLY at that address on mac99 and the card's
+    # FCode byte-loads from it — what the first ppc attempt actually lacked was the
+    # instance scaffold (`my-space`/`$call-parent` need a current instance), not a
+    # mapping. `optrom-map` is kept and exercised here for what it does say.
+    OPSER="$OWD/ppc.log"; rm -f "$OPSER"
+    python3 "$REPO/tools/drive-pty-repl.py" "$OPSER" --timeout 400 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\OPTROM.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'dev /pci/e1000@2 .probe-addr optrom-report\r' --expect "> " \
+      --send '." MAP=" optrom-map u. cr\r' --expect "> " \
+      --send 'optrom-run .fcode-marker\r' --expect "> " \
+      --send 'dev /pci/e1000@3 optrom-run .cfg-id\r' --expect "> " \
+      -- qemu-system-ppc -bios "$OPPCELF" -nographic -vga none -cdrom "$OWD/dsl.iso" \
+         -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/cfgcard.rom"
+    OPRC=$?
+    OPG="$(tr -d '\r' < "$OPSER" 2>/dev/null)"
+    [[ $OPRC -eq 0 ]] || fail "optrom on ppc: the prompt driver did not complete (rc=$OPRC) — see $OPSER"
+    grep -q 'sig=aa55 pcir=50434952' <<<"$OPG" \
+      || fail "optrom on ppc: the little-endian ROM header did not parse at the live BAR on the BIG-endian arch — this is the byte-order row, so a failure here is a real le-dev-field: bug: $(grep -o 'optrom|.*' <<<"$OPG" | head -1)"
+    grep -q 'type=1 open-firmware' <<<"$OPG" || fail "optrom on ppc: the PCIR code type did not read as Open Firmware"
+    OPPA="$(grep -oE 'PA=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
+    [[ -n "$OPPA" && "$OPPA" != 0 ]] || fail "optrom on ppc: probe-addr is ${OPPA:-<absent>}"
+    grep -q 'MARK=FCODE-FROM-CARD-RAN' <<<"$OPG" \
+      || fail "optrom on ppc: byte-load from the live ROM left no fcode-marker — the card's FCode did not run on the big-endian arch: $(grep -oE 'MARK=[^ ]*|NO-INSTANCE|NOT-FCODE' <<<"$OPG" | head -2 | tr '\n' '|')"
+    OPCID="$(grep -oE 'CFGID=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
+    [[ "$OPCID" == 100e8086 ]] \
+      || fail "optrom on ppc: the config-space card computed cfg-id=${OPCID:-<none>}, not its own 100e8086 — config-l@ is not reachable as a bus method here"
+    note "ppc (BIG-endian): the same little-endian ROM header parses at the live BAR with no mapping call (probe-addr $OPPA, which ppc already set — the defect patch 57 fixes is x86/amd64-only), the card's FCode byte-loads from it (MARK), and the config-space card reads its own 100e8086"
+    note "optrom-map (the parent bus's pci-map-in, the portable form) returns $(grep -oE 'MAP=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2) on ppc — the same address the property published, so nothing is gained by it here; and a SECOND call for the same region does not return a readable address (measured 2026-09-03), so it is call-once-and-keep, not a getter"
+    pass "B.3 Spike 3 COMPLETE — a PCI option ROM read from REAL device memory and its FCode run from there, on x86, amd64 AND ppc. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. THE BIG-ENDIAN ROW: ppc parses the same little-endian header at its own live BAR with NO mapping call, byte-loads the card from it, and reads its own id too — the TODO's "ppc needs pci-map-in" gap was wrong, and what the first attempt actually lacked was an INSTANCE. AND THE CARD THAT ASKS WHO IT IS: a second FCode driver doing my-space + a \" config-l@\" call to the parent bus — the 1275 PCI binding's own route, since config-l@ has no FCode number at all — computes cfg-id=100e8086 about ITSELF on all three arches. That needed patch 56 (the config words as PCI BUS-NODE methods, not just globals: a card cannot see a global word) and patch 57 (every probed node's probe-addr, which only ppc had: on x86/amd64 my-space answered 0, so a card read the HOST BRIDGE's 8086:1237 while every mechanism looked like it worked)"
     ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's

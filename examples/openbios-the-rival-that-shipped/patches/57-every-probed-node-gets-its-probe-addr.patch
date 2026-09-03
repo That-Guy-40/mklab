@@ -1,0 +1,67 @@
+Subject: [PATCH 57/57] drivers/pci: every probed node gets its probe-addr, so my-space answers
+
+Arch-tested: x86 amd64 ppc unix
+
+`my-space` is the word by which every 1275 PCI card driver locates ITSELF, and
+it is `?my-self >in.device-node @ >dn.probe-addr @` -- a field of the DEVICE
+NODE. The only writer in the tree is `set-args` (forth/device/other.fs), which
+stores through `my-self ihandle>phandle`: the node of the CURRENT INSTANCE.
+ob_configure_pci_device() does call set-args, and on x86/amd64 there is no
+instance of the node being built at that moment, so the store does not land on
+it and probe-addr stays 0.
+
+WHAT THAT COSTS, MEASURED 2026-09-03 on amd64: every e1000 node reads
+probe-addr 0, so a card's FCode driver asking `my-space " config-l@"
+$call-parent` is handed config address 0 -- bus 0, device 0 -- and reads the
+HOST BRIDGE (8086:1237) while believing it read itself. Nothing errors. The
+driver simply describes the wrong device, which is the failure mode this repo
+keeps naming: a mechanism that looks like it worked.
+
+THE ARCH MATRIX IS WHAT FOUND IT. ppc's nodes come out with probe-addr set
+(0x1000 for device 2), so on ppc the card reads its own id with or without this
+patch; on x86 and amd64 it does not. One arch answering differently is the
+whole reason this lab drives four.
+
+The value stored is the config-space address the node's own `reg` property
+already carries (pci_set_reg: phys.hi = config->dev), so this stores exactly
+what set-args would have, and ppc keeps the number it already had.
+
+After: probe-addr 0x1800 for device 3 on x86 and amd64, and the config-space
+card publishes cfg-id = 0x100e8086 -- itself -- on all three arches.
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+index 3c68753..33fc3d2 100644
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -1892,6 +1926,31 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+ 
+     phandle = get_cur_dev();
+ 
++    /* -- mklab, B.3 Spike 3 (patch 57): MY-SPACE MUST ANSWER --------------------
++     * `my-space` -- the word by which every 1275 PCI card driver locates ITSELF --
++     * is `?my-self >in.device-node @ >dn.probe-addr @`: a field of the DEVICE NODE,
++     * written only by `set-args` (forth/device/other.fs), which stores it through
++     * `my-self ihandle>phandle`. The set-args call a few lines above therefore
++     * lands wherever the CURRENT INSTANCE points -- and during enumeration on x86
++     * and amd64 there is no instance of the node being built, so nothing is stored
++     * and probe-addr stays 0. Measured 2026-09-03 on amd64: every e1000 node reads
++     * probe-addr 0, so a card's FCode driver asking `my-space " config-l@"
++     * $call-parent` is handed config address 0 and reads BUS 0 DEVICE 0 -- it gets
++     * the HOST BRIDGE's 8086:1237 while believing it read itself. Nothing errors;
++     * the driver simply describes the wrong device. (ppc does not have this: its
++     * nodes come out with probe-addr set -- 0x1000 for dev 2 -- which is why the
++     * arch matrix is the thing that found it.)
++     *
++     * The value is the config-space address the `reg` property's first entry
++     * already carries (pci_set_reg: phys.hi = config->dev), so this stores what
++     * set-args would have and ppc keeps the same number it had.
++     */
++    if (!is_host_bridge) {
++        PUSH(config.dev);
++        PUSH(phandle);
++        feval(">dn.probe-addr !");
++    }
++
+     switch (class) {
+     case PCI_BASE_CLASS_BRIDGE:
+         if (subclass != PCI_SUBCLASS_BRIDGE_HOST) {

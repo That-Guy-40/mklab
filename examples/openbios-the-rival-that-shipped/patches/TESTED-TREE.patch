@@ -5150,7 +5150,7 @@ index f6abb7b..c277f18 100644
  #define WIN_PACKET		0xA0
  #define WIN_IDENTIFY_PACKET	0xA1
 diff --git a/drivers/pci.c b/drivers/pci.c
-index f30e427..3c68753 100644
+index f30e427..33fc3d2 100644
 --- a/drivers/pci.c
 +++ b/drivers/pci.c
 @@ -60,13 +60,41 @@ const pci_arch_t *arch;
@@ -5215,7 +5215,54 @@ index f30e427..3c68753 100644
  
  	return 3;
  }
-@@ -499,8 +527,8 @@ static void pci_set_bus_range(const pci_config_t *config)
+@@ -454,12 +482,46 @@ ob_pci_dma_sync(int *idx)
+     call_parent_method("dma-sync");
+ }
+ 
++/* forward declarations: the bodies live beside ob_pci_bind_config_words() (patch
++ * 55), after the node tables. */
++static void forth_config_b_read(void);
++static void forth_config_w_read(void);
++static void forth_config_l_read(void);
++static void forth_config_b_write(void);
++static void forth_config_w_write(void);
++static void forth_config_l_write(void);
++
++/* -- mklab, B.3 Spike 3 (patch 56): the same six, as BUS-NODE METHODS -----------
++ * Patch 55 bound config-{b,w,l}@/! as global words, which is enough for a Forth
++ * prompt and INVISIBLE TO A CARD. The 1275 PCI Bus Binding places them as methods
++ * of the PCI bus node, and that placement is not decoration: an FCode driver on an
++ * option ROM has no access to global words by name -- it reaches its bus with
++ * `my-space " config-l@" $call-parent` (FCode 0x209), which resolves the method on
++ * the PARENT NODE. Measured 2026-09-03: `config-l@` has no FCode number at all
++ * (neither toke nor detok knows the name), so $call-parent is the only route the
++ * binding leaves, and before this patch a card that took it threw -21 with the
++ * globals sitting right there. The bodies are the global words' -- one
++ * implementation, two placements -- so the prompt and a card cannot disagree.
++ */
++static void ob_pci_config_b_read(int *idx)  { forth_config_b_read(); }
++static void ob_pci_config_w_read(int *idx)  { forth_config_w_read(); }
++static void ob_pci_config_l_read(int *idx)  { forth_config_l_read(); }
++static void ob_pci_config_b_write(int *idx) { forth_config_b_write(); }
++static void ob_pci_config_w_write(int *idx) { forth_config_w_write(); }
++static void ob_pci_config_l_write(int *idx) { forth_config_l_write(); }
++
+ NODE_METHODS(ob_pci_bus_node) = {
+ 	{ "open",		ob_pci_open		},
+ 	{ "close",		ob_pci_close		},
+ 	{ "decode-unit",	ob_pci_decode_unit	},
+ 	{ "encode-unit",	ob_pci_encode_unit	},
+ 	{ "pci-map-in",		ob_pci_bus_map_in	},
++	{ "config-b@",		ob_pci_config_b_read	},
++	{ "config-w@",		ob_pci_config_w_read	},
++	{ "config-l@",		ob_pci_config_l_read	},
++	{ "config-b!",		ob_pci_config_b_write	},
++	{ "config-w!",		ob_pci_config_w_write	},
++	{ "config-l!",		ob_pci_config_l_write	},
+ 	{ "dma-alloc",		ob_pci_dma_alloc	},
+ 	{ "dma-free",		ob_pci_dma_free		},
+ 	{ "dma-map-in",		ob_pci_dma_map_in	},
+@@ -499,8 +561,8 @@ static void pci_set_bus_range(const pci_config_t *config)
  	phandle_t dev = find_dev(config->path);
  	u32 props[2];
  
@@ -5226,7 +5273,7 @@ index f30e427..3c68753 100644
  
  	PCI_DPRINTF("setting bus range for %s PCI device, "
  	        "package handle " FMT_ucellx " "
-@@ -854,11 +882,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
+@@ -854,11 +916,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
  			     ncells * sizeof(cell));
  }
  
@@ -5270,7 +5317,7 @@ index f30e427..3c68753 100644
  	int ncells;
  	int i;
  	uint32_t mask;
-@@ -877,9 +936,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
+@@ -877,9 +970,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
  				     PCI_BASE_ADDR_0 + (i * sizeof(uint32_t)),
  				     config->assigned[i] & ~mask);
  
@@ -5285,7 +5332,7 @@ index f30e427..3c68753 100644
  	if (ncells)
  		set_property(dev, "assigned-addresses", (char *)props,
  			     ncells * sizeof(props[0]));
-@@ -908,7 +970,7 @@ static void pci_set_reg(phandle_t phandle,
+@@ -908,7 +1004,7 @@ static void pci_set_reg(phandle_t phandle,
                          pci_config_t *config, int num_bars)
  {
  	phandle_t dev = phandle;
@@ -5294,7 +5341,7 @@ index f30e427..3c68753 100644
  	int ncells;
  	int i;
  	uint32_t mask;
-@@ -938,6 +1000,9 @@ static void pci_set_reg(phandle_t phandle,
+@@ -938,6 +1034,9 @@ static void pci_set_reg(phandle_t phandle,
  		/* set size */
  		ncells += pci_encode_size(props + ncells, config->sizes[i]);
  	}
@@ -5304,7 +5351,7 @@ index f30e427..3c68753 100644
  
  	set_property(dev, "reg", (char *)props, ncells * sizeof(props[0]));
      ob_pci_reload_device_path(dev, config);
-@@ -965,7 +1030,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -965,7 +1064,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* child address */
  
@@ -5313,7 +5360,7 @@ index f30e427..3c68753 100644
  
  		/* parent address */
  
-@@ -977,7 +1042,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -977,7 +1076,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* size */
  
@@ -5322,7 +5369,7 @@ index f30e427..3c68753 100644
    	}
  	set_property(dev, "ranges", (char *)props, ncells * sizeof(props[0]));
  }
-@@ -1096,15 +1161,15 @@ int ebus_config_cb(const pci_config_t *config)
+@@ -1096,15 +1195,15 @@ int ebus_config_cb(const pci_config_t *config)
          pci_decode_pci_addr(config->assigned[i],
                              &flags, &space_code, &mask);
  
@@ -5341,7 +5388,39 @@ index f30e427..3c68753 100644
  
          /* Store base of IO space for NVRAM */
          if (io_phys_base == 0x0 && space_code == IO_SPACE) {
-@@ -1834,6 +1899,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+@@ -1827,6 +1926,31 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+ 
+     phandle = get_cur_dev();
+ 
++    /* -- mklab, B.3 Spike 3 (patch 57): MY-SPACE MUST ANSWER --------------------
++     * `my-space` -- the word by which every 1275 PCI card driver locates ITSELF --
++     * is `?my-self >in.device-node @ >dn.probe-addr @`: a field of the DEVICE NODE,
++     * written only by `set-args` (forth/device/other.fs), which stores it through
++     * `my-self ihandle>phandle`. The set-args call a few lines above therefore
++     * lands wherever the CURRENT INSTANCE points -- and during enumeration on x86
++     * and amd64 there is no instance of the node being built, so nothing is stored
++     * and probe-addr stays 0. Measured 2026-09-03 on amd64: every e1000 node reads
++     * probe-addr 0, so a card's FCode driver asking `my-space " config-l@"
++     * $call-parent` is handed config address 0 and reads BUS 0 DEVICE 0 -- it gets
++     * the HOST BRIDGE's 8086:1237 while believing it read itself. Nothing errors;
++     * the driver simply describes the wrong device. (ppc does not have this: its
++     * nodes come out with probe-addr set -- 0x1000 for dev 2 -- which is why the
++     * arch matrix is the thing that found it.)
++     *
++     * The value is the config-space address the `reg` property's first entry
++     * already carries (pci_set_reg: phys.hi = config->dev), so this stores what
++     * set-args would have and ppc keeps the same number it had.
++     */
++    if (!is_host_bridge) {
++        PUSH(config.dev);
++        PUSH(phandle);
++        feval(">dn.probe-addr !");
++    }
++
+     switch (class) {
+     case PCI_BASE_CLASS_BRIDGE:
+         if (subclass != PCI_SUBCLASS_BRIDGE_HOST) {
+@@ -1834,6 +1958,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
          } else {
              BIND_NODE_METHODS(phandle, ob_pci_bus_node);
          }
@@ -5384,7 +5463,7 @@ index f30e427..3c68753 100644
          break;
      }
  
-@@ -2054,7 +2155,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2054,7 +2214,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
                  val = (u32 *)reg;
  
                  for (i = 0; i < (len / sizeof(u32)); i += 5) {
@@ -5394,7 +5473,7 @@ index f30e427..3c68753 100644
  
                      /* Device address is in 1st 32-bit word of encoded PCI address for config space */
                      if ((addr & PCI_RANGE_TYPE_MASK) == PCI_RANGE_CONFIG) {
-@@ -2080,6 +2182,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2080,6 +2241,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
      }
  }
  

@@ -592,9 +592,40 @@ success signature on the rival firmware from the same artifact. Controls differ
 from the subject by **one byte** and are refused by name (code type 0 →
 `NOT-FCODE`; signature `55ab` → `BAD-SIG`); a ROM-less device is `none` inside
 and has no BAR6 outside. `config-l!` clears the enable bit and the header
-vanishes at the same address, then returns. **ppc** publishes the entry and
-answers `config-l@` (`rom=800a0001`); its ROM *read* needs `pci-map-in` (a bus
-address on mac99) and is a **named gap**, not a skip.
+vanishes at the same address, then returns.
+
+**Closed 2026-09-03, and one of the two was a RETRACTION.** The row above left two
+named gaps. Neither survived being measured.
+
+- ***"the ppc ROM read needs `pci-map-in`, because the published address is a PCI
+  bus address"* — WRONG, retracted.** On mac99 the header parses at that address
+  directly and the card's FCode `byte-load`s from it (`MARK=FCODE-FROM-CARD-RAN`
+  on the big-endian arch, which is where a little-endian ROM header is a real
+  byte-order question). What the first ppc attempt actually lacked was an
+  **instance**: `my-space` and `$call-parent` are `?my-self`-rooted, and a
+  `byte-load` typed at the `0 >` prompt has no current instance, so the driver
+  aborted the moment it asked anything about itself. `dsl/optrom.fth` now builds
+  the instance chain the way a real probe does (`create-instance` on the parent
+  bus node first, so the card's `my-parent` exists). `optrom-map` (the parent's
+  `pci-map-in`) is kept as the portable form and returns the same address on ppc
+  — and a **second** call for the same region does not return a readable one, so
+  it is call-once-and-keep rather than a getter.
+- ***"FCode-table entries for `config-{b,w,l}@`/`!`"* — the wrong shape, and the
+  right one found two defects.** `config-l@` has **no FCode number at all**
+  (measured: neither `toke` nor `detok` knows the name; `$call-parent` is 0x209),
+  so there is no table entry to add — the binding's only route is a **method on
+  the PCI bus node**, which is **patch 56**. Proving it by *outcome* rather than
+  by mechanism then exposed **patch 57**: `my-space` reads the node's
+  `probe-addr`, which only `set-args` writes and only through the current
+  instance — so on x86/amd64 it was **0 for every probed node**, and a card asking
+  who it is read **bus 0, device 0: the host bridge's `8086:1237`**, while every
+  mechanism looked like it worked. ppc had `probe-addr` set all along, which is
+  what made the four-arch matrix the thing that found it.
+
+So the second card, [`fixtures/optrom/fcode-card-cfg.fth`](examples/openbios-the-rival-that-shipped/fixtures/optrom/README.md),
+does `my-space " config-l@" $call-parent` from inside its own bytecode and
+publishes `cfg-id = 0x100e8086` — itself, as QEMU reports that slot — on **x86,
+amd64 and ppc**.
 
 ---
 
