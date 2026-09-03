@@ -439,7 +439,19 @@ graded against **`readelf`** of the reconstituted ELF (every loadable segment's
 the BE reads (and the `u64` load split) one structural layer below the CBFS reader. This
 is §12's "the payload is the variable, the toolkit is the constant" on the ROMs on disk.
 
-**Still to do:** the live form (§12(1)).
+**The live form (§12(1)) — done and under a track (`cbfs-live`).** OpenBIOS booted **as the
+amd64 coreboot payload** walks the CBFS of the **very ROM that delivered it**, in its mapped
+flash window — the one thing a hosted `cbfstool` structurally cannot do, being unable to run
+inside the ROM it booted from. amd64 does not relocate (`virt_offset=0`), so the Forth address
+`0xffc01000` (derived as 4 GiB − romsize + the COREBOOT region offset) *is* the guest-physical
+flash the firmware runs from; `dsl/cbfs.fth` — delivered over CD, unchanged from the read track
+— lists all twelve files of its own container. **Three observers, none trusting the firmware
+alone:** its listing equals `cbfstool print` of the host ROM file entry for entry; QEMU monitor
+`xp` reads the same guest-physical bytes from *outside* the firmware and they equal the ROM file
+at the region offset (the mapped window *is* the ROM, not a CD copy); and the walk reaches
+`fallback/payload` — the SELF payload that *is* this running firmware — and `bootblock`. Spikes
+2 and 3 collapse here into one live demo: the firmware dissecting its own container from inside,
+before any OS exists. **Spike 2 is complete** (read · write/surgery · payload kinds · live).
 
 **Why it converges with Spike 1:** coreboot is *where measured boot happens* — its
 vboot extends PCRs and writes the very event-log format Spike 1 handles. And CBFS
