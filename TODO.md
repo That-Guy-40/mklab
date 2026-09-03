@@ -602,12 +602,31 @@ requires of any other cached fact.
       monitor `xp` reads the same guest-physical bytes from OUTSIDE and they equal the ROM file
       at the region offset (the mapped window IS the ROM, not a CD copy); (3) the walk reaches
       `fallback/payload` — the SELF payload that IS this running firmware — and `bootblock`.
-    - [ ] **⏭ NEXT STEP — Spike 1 (the TCG event log)** — attestation without a TPM, stopping
-      honestly at the quote (the AK-signed quote stays UNKNOWN, §2's boundary). Its subject is a
-      swtpm guest's `binary_bios_measurements`, since no ROM here measures anything (review F4:
-      nothing sets `CONFIG_VBOOT`/`CONFIG_TPM*`). Replay the log, recompute the PCR extends, and
-      say plainly what is proven (the log is self-consistent) and what is not (that the machine
-      really measured those, without a hardware root of trust).
+    - **Spike 1a (TCG event-log STRUCTURE) DONE 2026-09-02.** `dsl/eventlog.fth` + an
+      `event-log` track. The firmware AUTHORS a crypto-agile TCG measured-boot log (a
+      `Spec ID Event03` header declaring SHA-256, then `TCG_PCR_EVENT2` entries) through the
+      Spike-0 cursor, `write-file` persists it, and the TPM community's own **`tpm2_eventlog`**
+      — never our reader — parses it (SpecID + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR,
+      entry for entry). **LITTLE-endian, the deliberate complement to CBFS's big-endian** — the
+      same cursor walks both, so ppc byte-swaps here where it read CBFS native. The firmware's
+      own reader round-trips the log to `EVLOG-END` (every `eventSize` lands on the next entry),
+      and the negative control — one `eventSize` stored **big-endian** (`l!-be`) — makes
+      `tpm2_eventlog` refuse the whole log (the byte-order slip the LE format guards against).
+      unix workbench (`write-file` hosted-only). **1c stated on every run:** the log STRUCTURE
+      is proven; the hardware-signed AK **quote is UNKNOWN and cannot be faked here** (linked to
+      metal-as-a-service `DEFERRED.md`) — a verdict distinct from PASS. tpm2-tools is a host
+      prereq (`apt install tpm2-tools`); the track SKIPs without it.
+    - [ ] **⏭ NEXT STEP — Spike 1b (the replay, the payoff — needs SHA-256).** Replay each PCR,
+      `PCR = SHA256(PCR‖digest)`, and verify the replayed value equals a claimed final PCR.
+      **Two independent oracles for the claim, both already available:** `tpm2_eventlog` prints
+      the replayed `pcrs: sha256:` itself, and python `hashlib` recomputes it. Crux dependency:
+      OpenBIOS Forth has no SHA-256 — implement `dsl/sha256.fth` (NIST test vectors as the
+      control) or a hosted-only bound C word; a pure function is the cleanest thing to validate
+      across the matrix. Negative control: flip one digest byte, watch the replay diverge and the
+      check fire. If SHA-256 in Forth is too slow/large for the bare-metal arches, 1b runs on
+      unix and says so (an honest partition). The AK quote stays UNKNOWN (1c).
+      Optional extension: parse a CAPTURED real edk2/swtpm `binary_bios_measurements` (the
+      multi-bank SHA1+SHA256 path) — `swtpm`+OVMF are on this host; 1a's reader is format-ready.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

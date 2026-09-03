@@ -81,6 +81,10 @@ TRACK (default multiboot):
                               payload walks the CBFS of the VERY ROM that delivered
                               it, in its mapped flash window — graded vs cbfstool
                               and a QEMU-monitor xp observer (needs the amd64 ROM)
+  event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
+                              crypto-agile TCG measured-boot event log (little-
+                              endian, the complement to CBFS), graded vs the TPM
+                              community's tpm2_eventlog; quote stays UNKNOWN (1c)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -3867,6 +3871,115 @@ PY
 
     pass "B.3 Spike 2 (live, §12(1)): OpenBIOS booted AS the coreboot payload walks the CBFS of the VERY ROM that delivered it, in its mapped flash window — the one thing a hosted cbfstool structurally cannot do, being unable to run inside the ROM it booted from. The amd64 payload does not relocate, so the Forth address 0x$LWIN IS the guest-physical flash the firmware runs from; dsl/cbfs.fth (delivered over CD, unchanged from the read track) lists every file of its own container — $lmatched entries MATCHING coreboot's cbfstool print of the host ROM file entry for entry, including fallback/payload (the SELF payload that IS this firmware) and bootblock. THREE observers, none trusting the firmware alone: its listing == cbfstool (the derived oracle, review F2); QEMU monitor xp read the same guest-physical bytes from OUTSIDE and they equal the ROM file at the region offset (the mapped window IS the ROM, not a CD copy); and the walk reached its own payload. Spike 2 (CBFS) and Spike 3 (real device memory) collapsed into one live demo — the firmware dissecting its own container from inside, before any OS exists"
     ;;
+  event-log)
+    # B.3 Spike 1a: the TCG measured-boot EVENT LOG, as a STRUCTURE (no crypto yet).
+    # dsl/eventlog.fth parses and AUTHORS a crypto-agile TCG_PCR_EVENT2 log, and the
+    # grader is the TPM community's own tpm2_eventlog — the foreign oracle, never our
+    # reader. This is the author→persist→independent-decoder ladder the ELF and CBFS
+    # work used, aimed at the attestation format.
+    #
+    # LITTLE-ENDIAN, THE DELIBERATE COMPLEMENT TO CBFS. CBFS metadata is big-endian;
+    # this log is little-endian. The SAME Spike-0 cursor walks both, so the arch
+    # matrix earns its keep from the other side — ppc byte-swaps HERE (le-l@) where it
+    # read CBFS native. write-file is hosted-only, so like cbfs-write this is a unix
+    # workbench; the byte-order property is defended by ROW B's negative control.
+    #
+    # 1b (the SHA-256 REPLAY of PCR = SHA256(PCR‖digest) vs a claimed PCR) is a
+    # separate increment — it needs SHA-256 in Forth. 1a's digests are placeholder
+    # fills, so tpm2_eventlog validates STRUCTURE and warns (expected) that they are
+    # not SHA-256 of the payload; that warning is not a failure.
+    command -v tpm2_eventlog >/dev/null || skip "tpm2_eventlog not installed (apt install tpm2-tools) — it is the foreign oracle this track grades against"
+    EUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    EUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    [[ -x "$EUBIN"  ]] || skip "missing $EUBIN — run ./build-openbios.sh unix first"
+    [[ -f "$EUDICT" ]] || skip "missing $EUDICT — run ./build-openbios.sh unix first"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    ESTRUCT="$HERE/dsl/struct.fth"; EEVLOG="$HERE/dsl/eventlog.fth"
+    for f in "$ESTRUCT" "$EEVLOG"; do
+      [[ -f "$f" ]] || fail "the reader/author is missing at $f — this track stages the SHIPPED files, it does not re-implement them"
+    done
+
+    EWD="$WORKDIR/event-log"; rm -rf "$EWD"; mkdir -p "$EWD/stage"
+    cp "$ESTRUCT" "$EWD/stage/STRUCT.FTH"; cp "$EEVLOG" "$EWD/stage/EVLOG.FTH"
+    genisoimage -quiet -o "$EWD/ev.iso" -V EVLOG "$EWD/stage" 2>/dev/null \
+      || fail "event-log: genisoimage failed to stage the DSL"
+
+    ev_run() {  # ev_run <run-subdir> <forth-line>...
+      local d="$EWD/$1"; shift; rm -rf "$d"; mkdir -p "$d"
+      { printf '%s\n' \
+          '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+          'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+          'load hd:\EVLOG.FTH'  'load-base load-size evaluate' \
+          '1000 alloc-mem value evbuf'
+        printf '%s\n' "$@"
+        printf 'bye\n'
+      } | ( cd "$d" && "$EUBIN" -f "$EWD/ev.iso" "$EUDICT" ) 2>&1 | tr -d '\r'
+    }
+
+    # ── ROW A: the firmware AUTHORS a crypto-agile log; tpm2_eventlog accepts it ──
+    EA="$EWD/author"
+    EALOG="$(ev_run author \
+      'evbuf dup evlog-author ." LEN=" dup . cr s" OUT.EVT" write-file ." WROTE=" . cr')"
+    EO="$EA/OUT.EVT"
+    [[ -f "$EO" ]] \
+      || fail "event-log author: write-file produced no log at $EO — the firmware persisted nothing. Firmware said: $(printf '%s' "$EALOG" | tail -3 | tr '\n' '|')"
+    # tpm2_eventlog must PARSE it (rc 0) and SEE the entries the firmware intended.
+    tpm2_eventlog "$EO" > "$EA/oracle.yaml" 2>"$EA/oracle.err"; ETRC=$?
+    [[ $ETRC -eq 0 ]] \
+      || fail "event-log author: tpm2_eventlog REJECTED the firmware-authored log (rc=$ETRC) — a field the firmware wrote is wrong: $(head -1 "$EA/oracle.err")"
+    grep -q 'Signature: Spec ID Event03' "$EA/oracle.yaml" \
+      || fail "event-log author: tpm2_eventlog did not find the crypto-agile Spec ID Event03 header — the firmware's header is malformed: $(grep -m1 Signature "$EA/oracle.yaml")"
+    for et in EV_S_CRTM_VERSION EV_POST_CODE EV_SEPARATOR; do
+      grep -q "EventType: $et" "$EA/oracle.yaml" \
+        || fail "event-log author: tpm2_eventlog's parse is missing the $et entry the firmware authored — see $EA/oracle.yaml"
+    done
+    # the oracle reads back the digest algorithm the header declared…
+    grep -q 'algorithmId: sha256' "$EA/oracle.yaml" \
+      || fail "event-log author: tpm2_eventlog did not read the SHA-256 algorithm declaration — the crypto-agile digest set is wrong"
+    note "author: tpm2_eventlog parses the firmware-authored log — SpecID(sha256) header + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR entries"
+
+    # SELF-CONSISTENCY: the firmware's OWN reader walks its authored log and every
+    # eventSize lands on the next entry (it reaches EVLOG-END with the 3 entries).
+    cp "$EO" "$EWD/stage/OUT.BIN"; genisoimage -quiet -o "$EWD/ev.iso" -V EVLOG "$EWD/stage" 2>/dev/null
+    ERT="$(ev_run rt \
+      'load hd:\OUT.BIN' \
+      'load-base load-base load-size + 40 evlog-list')"
+    # count 'evt| pcr=' anywhere on a line, NOT anchored at column 0 — the first
+    # entry prints on the same line as the echoed `evlog-list` command, so a `^evt|`
+    # anchor silently drops it and undercounts by one (measured 2026-09-02).
+    ERTN="$(grep -c 'evt| pcr=' <<<"$ERT")"
+    grep -q 'EVLOG-END' <<<"$ERT" \
+      || fail "event-log self-consistency: the firmware's own walk did not reach EVLOG-END — an eventSize does not land on the next entry: $(printf '%s' "$ERT" | tail -3 | tr '\n' '|')"
+    [[ "$ERTN" -eq 3 ]] \
+      || fail "event-log self-consistency: the firmware walked $ERTN entries of its own 3-entry log — the parse and the author disagree on the record boundaries"
+    note "self-consistency: the firmware's own reader walks its authored log to EVLOG-END, all 3 entries, boundaries agree"
+
+    # ── ROW B: the negative control — a byte-order slip must be CAUGHT ───────────
+    # The log is little-endian. Author correctly, then re-store one entry's eventSize
+    # BIG-endian (l!-be) — the exact slip a hidden-BE writer would make. tpm2_eventlog
+    # then reads a huge event that overruns the log and must refuse it. If it still
+    # accepts, "tpm2_eventlog parses it" above proved nothing about byte order.
+    EB="$EWD/neg"
+    EBLOG="$(ev_run neg \
+      'evbuf dup evlog-author' \
+      '4 ev-size-adr @ l!-be' \
+      's" NEG.EVT" write-file drop')"
+    ENO="$EB/NEG.EVT"
+    [[ -f "$ENO" ]] \
+      || fail "event-log neg: the byte-order-slip run wrote no log — cannot tell whether tpm2_eventlog would catch it. Firmware: $(printf '%s' "$EBLOG" | tail -3 | tr '\n' '|')"
+    if tpm2_eventlog "$ENO" >/dev/null 2>&1; then
+      fail "event-log NEGATIVE CONTROL: tpm2_eventlog still accepted the log after an eventSize was stored BIG-endian — the oracle did not catch a byte-order slip, which is the exact bug the little-endian format and the arch matrix exist to prevent"
+    fi
+    note "negative control: an eventSize stored big-endian makes tpm2_eventlog refuse the log — so the positive parse is a real byte-order result"
+
+    # ── ROW C (1c): the boundary, stated OUT LOUD on every run ───────────────────
+    # The event log and its replay are 100% software; the one thing a real TPM adds —
+    # a hardware-signed QUOTE over the PCRs (the AK signature) — this lab does not and
+    # cannot fake here. Naming it UNKNOWN is the deliverable's honesty.
+    note "QUOTE: UNKNOWN — this track verified the log STRUCTURE (1a); the SHA-256 replay is 1b; the hardware-signed AK quote over the PCRs is NOT verified here and cannot be faked (see examples/metal-as-a-service/DEFERRED.md). UNKNOWN is a verdict, distinct from PASS."
+
+    pass "B.3 Spike 1a (event-log structure): dsl/eventlog.fth AUTHORS a crypto-agile TCG measured-boot event log (a Spec ID Event03 header declaring SHA-256, then TCG_PCR_EVENT2 entries) through the Spike-0 cursor, write-file persists it, and the TPM community's own tpm2_eventlog — never our reader — parses it: SpecID(sha256) header + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR entries, entry for entry. The format is LITTLE-endian, the deliberate complement to CBFS's big-endian: the same cursor walks both, so ppc byte-swaps here where it read CBFS native. The firmware's OWN reader round-trips the log to EVLOG-END with every eventSize landing on the next entry, and the negative control — one eventSize stored BIG-endian — makes tpm2_eventlog refuse the whole log, so the parse is a real byte-order result. write-file is hosted-only, so this is a unix workbench. THE BOUNDARY IS STATED: 1a proves the log STRUCTURE; the SHA-256 replay is 1b; the hardware-signed AK quote is UNKNOWN and cannot be faked here — a verdict distinct from PASS. STILL TO DO for Spike 1: 1b, the replay (needs SHA-256 in Forth)"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -5261,5 +5374,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|unix]" >&2; exit 1 ;;
 esac
