@@ -674,6 +674,48 @@ does `my-space " config-l@" $call-parent` from inside its own bytecode and
 publishes `cfg-id = 0x100e8086` — itself, as QEMU reports that slot — on **x86,
 amd64 and ppc**.
 
+
+### Spike 4 — the live device tree, flattened (✅ 2026-09-03)
+
+**The named first candidate, taken** ([§6](#6-what-this-is-not-scope-guards),
+[review F7](REVIEW-preboot-structure-toolkit-plan.md#f7--spike-0s-synthetic-record-is-weaker-than-the-real-subject-already-on-disk)):
+OpenBIOS's device tree is the one subject every arch has natively, and a
+`dt>fdt` flatten is the boot-handoff structure `DESIGN-NOTES` §8 lists first.
+[`dsl/fdt.fth`](examples/openbios-the-rival-that-shipped/dsl/fdt.fth) walks the
+firmware's own tree (`child`/`peer`/`next-property` from `/`, `pnodename` for
+the `name@unit`) and writes a **version-17 FDT** — header, rsvmap, the
+`BEGIN_NODE`/`PROP`/`END_NODE` token stream, the strings block — every field
+big-endian through `l!-be`. It is the Spike-0 cursor vocabulary plus one BE
+32-bit store, and CBFS-write's byte-order axis again: ppc stores native, the
+three little-endian arches swap.
+
+**The oracle is `dtc`** — the device-tree compiler — never our reader, and the
+outcome is graded rather than the walk: on every arch `fdtdump`'s node and
+property counts must equal the counts the firmware says it wrote, the property
+every consumer asks for first must decode (`/memory reg`; `/chosen stdin` on
+the hosted target, which has no `/memory` node), and the four trees must
+**differ** — a fixture would flatten the same everywhere.
+
+| door | bytes out | tree |
+|---|---|---|
+| unix | `write-file` | 21 nodes / 63 props, 2325 B |
+| x86 | `fb >phys` → QEMU **QMP** `pmemsave` — an observer outside the guest | 30 / 175, 5952 B |
+| amd64 | same (the two-cell root of patch 43 shows in `/memory reg`) | 29 / 171, 5892 B |
+| ppc | pty-only console: the firmware's own `dump`, parsed back on the host | 46 / 280, 10314 B |
+
+**Two things it cost, both worth keeping.** The x86/amd64 door had to be QMP,
+because HMP `pmemsave` reads its *filename* as an expression (`invalid char
+'t'` — the `t` of `/tmp`; this repo's memory already carried that trap, and it
+still cost a run). And OpenBIOS's root carries a `name` property
+(`OpenBiosTeam,OpenBIOS`) where FDT's root base name must be `""`; `dtc`'s
+`name_properties` check refuses the disagreement, so the root's `name` is the
+one property skipped — by name, in the source.
+
+**Controls, watched to bite:** the magic stored little-endian is refused by
+`dtc` as `incorrect magic`; the struct bound shrunk to 0x100 makes `dt>fdt`
+refuse with `OVERFLOW` and answer 0 instead of writing property values over
+its own strings block. Track: `fdt` (CI installs `device-tree-compiler`).
+
 ---
 
 ## 6. What this is NOT (scope guards)
@@ -692,7 +734,7 @@ amd64 and ppc**.
   4-byte-aligned), and a `dt>fdt` flatten is the boot-handoff structure
   `DESIGN-NOTES` §8 lists first — OpenBIOS's device tree being the one subject
   every arch has natively. Deferred because it adds a third format before the
-  first two have paid; it is the named first candidate once they have.
+  first two have paid; it was the named first candidate once they had — **taken 2026-09-03 as Spike 4**, above.
 - **Not a dictionary budget nobody measured.** Spike −1's doors made the
   bake-into-the-dictionary option unnecessary, so the budget stays unmeasured —
   and no claim is made about it. If a future spike wants the dsl compiled in,
@@ -781,6 +823,10 @@ Docs, `link_check.py`, and the patch record stay green at every step.
   files as `$OBJDIR/cbfstool print`, on all four arches, the `ppc` row proving the
   big-endian reads and telling the payload kinds apart; an authored `raw` entry
   round-trips through `cbfstool`.
+- **Spike 4 (✅ 2026-09-03):** the live device tree flattens to a v17 FDT that
+  `dtc` accepts on `unix`, `x86`, `amd64` and `ppc`; `fdtdump`'s node/property
+  counts equal the firmware's on each; the four trees differ; an LE magic is
+  refused by name and a shrunk bound makes the writer refuse.
 - **Spike 3 (✅ met 2026-09-03, every clause):** the **live** CBFS walk from the
   mapped ROM window on `amd64`/`x86` matches both the host-side file walk and
   `cbfstool print` (`cbfs-live`); a region diff shows a firmware-caused change —

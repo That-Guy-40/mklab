@@ -61,7 +61,7 @@ env:
   # (three boots and a screendump) and is here anyway, because it carries the
   # regression guard for patch 49 — the six 1275 device-register words that
   # shipped EMPTY, whose failure mode is a silent stack shift in an FCode driver.
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.
@@ -114,7 +114,7 @@ jobs:
         run: |
           set -u
           { echo "## Tier B environment"; } | tee -a "$GITHUB_STEP_SUMMARY"
-          for c in podman qemu-system-i386 qemu-system-x86_64 qemu-system-ppc genisoimage python3; do
+          for c in podman qemu-system-i386 qemu-system-x86_64 qemu-system-ppc dtc fdtdump genisoimage python3; do
             if command -v "$c" >/dev/null 2>&1; then
               printf -- '- `%s` present (%s)\n' "$c" "$(command -v "$c")" | tee -a "$GITHUB_STEP_SUMMARY"
             else
@@ -135,7 +135,7 @@ jobs:
           # eat the runner's hour, and a failed one must be visible rather than
           # turning into a sweep of SKIPs two steps later.
           timeout 180 sudo apt-get update || echo "::warning::apt-get update failed"
-          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc genisoimage \
+          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc device-tree-compiler genisoimage \
             || echo "::warning::install failed — the artifact gate below will say what that cost"
 
       - name: Build x86, amd64 and ppc
