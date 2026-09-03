@@ -85,6 +85,11 @@ TRACK (default multiboot):
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
                               community's tpm2_eventlog; quote stays UNKNOWN (1c)
+  event-replay                B.3 Spike 1b: dsl/sha256.fth (SHA-256 in Forth, NIST
+                              vectors on ALL FOUR arches) + evlog-replay recompute
+                              PCR = SHA256(PCR‖digest) and match tpm2_eventlog's
+                              own pcrs AND python hashlib; a flipped digest byte
+                              moves the PCR (negative control); quote UNKNOWN
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -4019,6 +4024,186 @@ PY
 
     pass "B.3 Spike 1a (event-log structure): dsl/eventlog.fth AUTHORS a crypto-agile TCG measured-boot event log (a Spec ID Event03 header declaring SHA-256, then TCG_PCR_EVENT2 entries) through the Spike-0 cursor, write-file persists it, and the TPM community's own tpm2_eventlog — never our reader — parses it: SpecID(sha256) header + EV_S_CRTM_VERSION/EV_POST_CODE/EV_SEPARATOR entries, entry for entry. The format is LITTLE-endian, the deliberate complement to CBFS's big-endian: the same cursor walks both, so ppc byte-swaps here where it read CBFS native. The firmware's OWN reader round-trips the log to EVLOG-END with every eventSize landing on the next entry, and the negative control — one eventSize stored BIG-endian — makes tpm2_eventlog refuse the whole log, so the parse is a real byte-order result. write-file is hosted-only, so this is a unix workbench. THE BOUNDARY IS STATED: 1a proves the log STRUCTURE; the SHA-256 replay is 1b; the hardware-signed AK quote is UNKNOWN and cannot be faked here — a verdict distinct from PASS. STILL TO DO for Spike 1: 1b, the replay (needs SHA-256 in Forth)"
     ;;
+  event-replay)
+    # B.3 Spike 1b: the REPLAY — the attestation payoff, and it needs SHA-256.
+    # A PCR is an iterated hash, PCR = SHA256(PCR ‖ digest); replaying a measured-
+    # boot event log recomputes the final PCRs from nothing but the log — 100%
+    # software, no TPM. dsl/sha256.fth is that hash, written once as a PURE
+    # FUNCTION in Forth, and dsl/eventlog.fth's evlog-replay is the extend chain
+    # over the SAME (event2) parse the 1a reader prints from.
+    #
+    # THE ORACLES — two, independent, and neither is our own reader:
+    #   1. tpm2_eventlog computes the replayed PCRs itself (`pcrs: sha256:`) from
+    #      the log the firmware wrote — a foreign implementation of the extend chain;
+    #   2. python hashlib recomputes them from the same log bytes — a foreign
+    #      implementation of SHA-256 AND the chain.
+    # The firmware's PCR0/PCR1 must equal both. The NIST FIPS 180-4 vectors are the
+    # control for the hash itself, run on unix AND on x86, amd64 and ppc: a pure
+    # function is the cleanest thing to validate across the width × byte-order
+    # matrix (a 32-bit-masking slip shows only on 64-bit cells; a byte-order slip in
+    # the word loads only across BE/LE), so one wrong arch names a real bug.
+    #
+    # THE NEGATIVE CONTROL is the thing that makes a replay attestation rather than
+    # theatre: flip ONE byte of one digest and the affected PCR must DIVERGE from the
+    # original — while still agreeing with tpm2_eventlog's replay of the FLIPPED log
+    # (the replay tracks the change; it does not merely differ), and the other PCR
+    # must not move.
+    command -v tpm2_eventlog >/dev/null || skip "tpm2_eventlog not installed (apt install tpm2-tools) — oracle 1"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    RUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; RUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    RAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; RADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    RXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   RXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    RPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$RUBIN" "$RUDICT" "$RAMB" "$RADI" "$RXMB" "$RXDI" "$RPELF"; do
+      [[ -e "$f" ]] || skip "missing $f — run ./build-openbios.sh all first (the hash is validated on all four arches)"
+    done
+    RSTRUCT="$HERE/dsl/struct.fth"; RSHA="$HERE/dsl/sha256.fth"; REVLOG="$HERE/dsl/eventlog.fth"
+    for f in "$RSTRUCT" "$RSHA" "$REVLOG"; do
+      [[ -f "$f" ]] || fail "missing $f — this track stages the SHIPPED files, it does not re-implement them"
+    done
+    # NIST FIPS 180-4 test vectors — the control for the hash. Constants, not derived:
+    # a control derived from the subject would agree with any bug the subject has.
+    N_ABC=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    N_EMPTY=e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    N_56=248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1
+
+    RWD="$WORKDIR/event-replay"; rm -rf "$RWD"; mkdir -p "$RWD/stage"
+    cp "$RSTRUCT" "$RWD/stage/STRUCT.FTH"; cp "$RSHA" "$RWD/stage/SHA.FTH"; cp "$REVLOG" "$RWD/stage/EVLOG.FTH"
+    printf 'abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq' > "$RWD/stage/V56.BIN"
+    genisoimage -quiet -o "$RWD/rp.iso"       -V RP       "$RWD/stage" 2>/dev/null || fail "event-replay: genisoimage failed (plain)"
+    genisoimage -quiet -o "$RWD/rp-rj.iso"    -V RP -r -J "$RWD/stage" 2>/dev/null || fail "event-replay: genisoimage failed (-r -J)"
+
+    # LOAD ORDER MATTERS: sha256.fth BEFORE eventlog.fth — evlog-replay names `sha256`,
+    # and this Forth aborts a definition that names an unknown word, leaving the
+    # interpreter mid-compile so every later line cascades (measured 2026-09-03).
+    rp_run() {  # rp_run <run-subdir> <forth-line>...
+      local d="$RWD/$1"; shift; rm -rf "$d"; mkdir -p "$d"
+      { printf '%s\n' \
+          '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+          'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+          'load hd:\SHA.FTH'    'load-base load-size evaluate' \
+          'load hd:\EVLOG.FTH'  'load-base load-size evaluate'
+        printf '%s\n' "$@"
+        printf 'bye\n'
+      } | ( cd "$d" && "$RUBIN" -f "$RWD/rp.iso" "$RUDICT" ) 2>&1 | tr -d '\r'
+    }
+    # extract a 64-hex value printed after `<tag>=`, from anywhere on a line (the
+    # first output shares a line with the echoed command — never anchor on ^).
+    rp_val() { grep -oE "$2=[0-9a-f]{64}" <<<"$1" | tail -1 | cut -d= -f2; }
+
+    # ── ROW A: the hash itself, on unix, against the NIST vectors ────────────────
+    RA="$(rp_run nist \
+      '." H_abc=" s" abc" sha256 .digest cr' \
+      '." H_empty=" here 0 sha256 .digest cr' \
+      'load hd:\V56.BIN' \
+      '." H_56=" load-base load-size sha256 .digest cr')"
+    [[ "$(rp_val "$RA" H_abc)"   == "$N_ABC"   ]] || fail "event-replay: SHA-256(\"abc\") on unix is $(rp_val "$RA" H_abc), not the NIST value $N_ABC — the hash is wrong"
+    [[ "$(rp_val "$RA" H_empty)" == "$N_EMPTY" ]] || fail "event-replay: SHA-256(\"\") on unix is $(rp_val "$RA" H_empty), not the NIST value — the padding of an empty message is wrong"
+    [[ "$(rp_val "$RA" H_56)"    == "$N_56"    ]] || fail "event-replay: SHA-256 of the 56-byte NIST vector on unix is $(rp_val "$RA" H_56), not $N_56 — the two-block padding case is wrong"
+    note "unix: SHA-256 matches all three NIST FIPS 180-4 vectors (\"abc\", \"\", 56-byte two-block)"
+
+    # ── ROW B: author the log, replay PCR0/PCR1 in the firmware, grade vs BOTH oracles
+    RB="$(rp_run replay \
+      '1000 alloc-mem value evbuf  evbuf dup evlog-author value evlen' \
+      'evbuf evlen s" OUT.EVT" write-file drop' \
+      '." PCR0=" evbuf evbuf evlen + 40 0 evlog-replay .digest cr' \
+      '." PCR1=" evbuf evbuf evlen + 40 1 evlog-replay .digest cr' \
+      'ev-dig-adr @ c@ 1 xor ev-dig-adr @ c!' \
+      'evbuf evlen s" FLIP.EVT" write-file drop' \
+      '." PCR1flip=" evbuf evbuf evlen + 40 1 evlog-replay .digest cr' \
+      '." PCR0same=" evbuf evbuf evlen + 40 0 evlog-replay .digest cr')"
+    RO="$RWD/replay/OUT.EVT"; RF="$RWD/replay/FLIP.EVT"
+    [[ -f "$RO" && -f "$RF" ]] || fail "event-replay: the firmware wrote no OUT.EVT/FLIP.EVT — the author did not run: $(printf '%s' "$RB" | grep -E 'undefined|TOO-LONG' | head -2 | tr '\n' '|')"
+    FP0="$(rp_val "$RB" PCR0)"; FP1="$(rp_val "$RB" PCR1)"; FP1F="$(rp_val "$RB" PCR1flip)"; FP0S="$(rp_val "$RB" PCR0same)"
+    [[ -n "$FP0" && -n "$FP1" && -n "$FP1F" && -n "$FP0S" ]] \
+      || fail "event-replay: the firmware did not print all four PCR values (PCR0/PCR1/PCR1flip/PCR0same): $(printf '%s' "$RB" | grep -E 'PCR|undefined' | tr '\n' '|')"
+    # ORACLE 1: tpm2_eventlog's own replayed PCRs of the log the firmware wrote.
+    rp_oracle1() { tpm2_eventlog "$1" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E "^\s+$2\s*:" | grep -oE '0x[0-9a-f]{64}' | cut -c3-; }
+    O1P0="$(rp_oracle1 "$RO" 0)"; O1P1="$(rp_oracle1 "$RO" 1)"; O1P1F="$(rp_oracle1 "$RF" 1)"; O1P0F="$(rp_oracle1 "$RF" 0)"
+    [[ -n "$O1P0" && -n "$O1P1" && -n "$O1P1F" ]] || fail "event-replay: tpm2_eventlog printed no pcrs for the firmware's log — oracle 1 unavailable, grading would be meaningless"
+    # ORACLE 2: python hashlib, walking the SAME log bytes independently.
+    rp_oracle2() { python3 - "$1" "$2" <<'PY'
+import sys, struct, hashlib
+d=open(sys.argv[1],'rb').read(); want=int(sys.argv[2]); o=0
+o+=8+20; sz,=struct.unpack_from('<I',d,o); o+=4+sz                 # skip the SpecID header
+pcr=b'\0'*32
+while o<len(d):
+    p,t,n=struct.unpack_from('<III',d,o); o+=12
+    dig=None
+    for _ in range(n):
+        alg,=struct.unpack_from('<H',d,o); o+=2
+        L={4:20,0xb:32,0xc:48,0xd:64}[alg]
+        if alg==0xb: dig=d[o:o+L]
+        o+=L
+    sz,=struct.unpack_from('<I',d,o); o+=4+sz
+    if p==want and dig is not None: pcr=hashlib.sha256(pcr+dig).digest()
+print(pcr.hex())
+PY
+    }
+    O2P0="$(rp_oracle2 "$RO" 0)"; O2P1="$(rp_oracle2 "$RO" 1)"; O2P1F="$(rp_oracle2 "$RF" 1)"
+    [[ "$FP0" == "$O1P0" ]] || fail "event-replay: firmware PCR0 $FP0 != tpm2_eventlog's replayed PCR0 $O1P0 — the extend chain (or SHA-256 over 64 bytes) is wrong"
+    [[ "$FP1" == "$O1P1" ]] || fail "event-replay: firmware PCR1 $FP1 != tpm2_eventlog's replayed PCR1 $O1P1"
+    [[ "$FP0" == "$O2P0" ]] || fail "event-replay: firmware PCR0 $FP0 != python hashlib's replayed PCR0 $O2P0 — the two oracles disagree with the firmware; suspect the firmware first"
+    [[ "$FP1" == "$O2P1" ]] || fail "event-replay: firmware PCR1 $FP1 != python hashlib's replayed PCR1 $O2P1"
+    [[ "$O1P0" == "$O2P0" && "$O1P1" == "$O2P1" ]] || fail "event-replay: the two ORACLES disagree with each other (tpm2 $O1P0/$O1P1 vs hashlib $O2P0/$O2P1) — one oracle is wrong, and grading against either alone would be meaningless"
+    note "replay: firmware PCR0/PCR1 == tpm2_eventlog's replayed pcrs == python hashlib (three-way agreement, two independent oracles)"
+
+    # ── ROW C: the NEGATIVE CONTROL — one flipped digest byte must MOVE the PCR ──
+    [[ "$FP1F" != "$FP1" ]] \
+      || fail "event-replay NEGATIVE CONTROL: flipping a byte of the last digest left PCR1 unchanged ($FP1) — the replay is not reading the digests it claims to extend; this would be attestation theatre"
+    [[ "$FP1F" == "$O1P1F" ]] \
+      || fail "event-replay: the firmware's replay of the FLIPPED log ($FP1F) != tpm2_eventlog's replay of it ($O1P1F) — the replay diverged but not the way the oracle says it should (it differs without tracking the change)"
+    [[ "$FP1F" == "$O2P1F" ]] \
+      || fail "event-replay: the firmware's replay of the FLIPPED log ($FP1F) != hashlib's ($O2P1F)"
+    [[ "$FP0S" == "$FP0" && "$O1P0F" == "$O1P0" ]] \
+      || fail "event-replay: flipping a PCR1 digest changed PCR0 ($FP0 -> $FP0S; oracle $O1P0 -> $O1P0F) — the replay is not scoping extends to the right PCR"
+    note "negative control: one flipped digest byte moves PCR1 ($FP1 -> $FP1F), tracking tpm2_eventlog's replay of the flipped log exactly; PCR0 does not move"
+
+    # ── ROW D: the hash on x86, amd64 AND ppc — the width × byte-order control ──
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$RAMB"; DI="$RADI"; else MB="$RXMB"; DI="$RXDI"; fi
+      RSOCK="$RWD/sha-$A.sock"; RALOG="$RWD/sha-$A.log"; rm -f "$RSOCK" "$RALOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$RWD/rp-rj.iso" -display none -serial "unix:$RSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+      RQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$RSOCK" "$RALOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\SHA.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send '." H_abc=" s" abc" sha256 .digest cr\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\V56.BIN\r' --expect "0 > " \
+        --send '." H_56=" load-base load-size sha256 .digest cr\r' --expect "0 > "
+      RRC=$?
+      kill "$RQ" 2>/dev/null   # by PID, never by pattern
+      [[ $RRC -eq 0 ]] || fail "event-replay on $A: the hash run did not complete (rc=$RRC) — see $RALOG"
+      RG="$(tr -d '\r' < "$RALOG")"
+      [[ "$(rp_val "$RG" H_abc)" == "$N_ABC" ]] || fail "event-replay on $A: SHA-256(\"abc\") is $(rp_val "$RG" H_abc), not the NIST value — the hash is wrong on $A (a width/masking or byte-order slip that unix cannot show)"
+      [[ "$(rp_val "$RG" H_56)"  == "$N_56"  ]] || fail "event-replay on $A: the 56-byte vector is $(rp_val "$RG" H_56), not the NIST value — wrong on $A"
+      note "$A: SHA-256 == NIST vectors"
+    done
+    RPLOG="$RWD/sha-ppc.log"; rm -f "$RPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$RPLOG" --timeout 600 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send 'load cd:\\SHA.FTH;1\r'    --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
+      --send '." H_abc=" s" abc" sha256 .digest cr\r' --expect "> " \
+      --send 'load cd:\\V56.BIN;1\r' --expect "> " \
+      --send '." H_56=" load-base load-size sha256 .digest cr\r' --expect "> " \
+      -- qemu-system-ppc -bios "$RPELF" -nographic -vga none -cdrom "$RWD/rp.iso"
+    RPRC=$?
+    [[ $RPRC -eq 0 ]] || fail "event-replay on ppc: the hash run did not complete (rc=$RPRC) — see $RPLOG"
+    RPG="$(tr -d '\r' < "$RPLOG")"
+    [[ "$(rp_val "$RPG" H_abc)" == "$N_ABC" ]] || fail "event-replay on ppc: SHA-256(\"abc\") is $(rp_val "$RPG" H_abc), not the NIST value — the BIG-endian row disagrees: a byte-order slip in the word loads/stores, exactly what this row exists to catch"
+    [[ "$(rp_val "$RPG" H_56)"  == "$N_56"  ]] || fail "event-replay on ppc: the 56-byte vector is $(rp_val "$RPG" H_56), not the NIST value — wrong on ppc"
+    note "ppc: SHA-256 == NIST vectors (the big-endian row agrees — no byte-order slip in the word loads)"
+
+    # ── ROW E (1c): the boundary, out loud, every run ──────────────────────────
+    note "QUOTE: UNKNOWN — the replay proves the log is INTERNALLY CONSISTENT with the PCRs it implies (and two foreign implementations agree). It does NOT prove a machine measured these events: that needs the hardware-signed AK quote over the PCRs, which is not verified here and cannot be faked (see examples/metal-as-a-service/DEFERRED.md). UNKNOWN is a verdict, distinct from PASS."
+
+    pass "B.3 Spike 1b (the replay): dsl/sha256.fth is SHA-256 (FIPS 180-4) in OpenBIOS Forth as a pure function, and it matches all three NIST test vectors on unix, amd64, x86 AND ppc — the width × byte-order control that only a pure function can run this cleanly (a 32-bit-masking slip would show on the 64-bit cells alone, a byte-order slip on the big-endian row alone; neither did). dsl/eventlog.fth's evlog-replay recomputes each PCR as SHA256(PCR ‖ digest) over the SAME (event2) parse the 1a reader prints from, and the firmware's PCR0/PCR1 of its own authored log equal TWO independent foreign oracles — tpm2_eventlog's own replayed pcrs and python hashlib's — which also agree with each other. The negative control that makes this attestation rather than theatre: flipping one byte of one digest moves PCR1 to exactly the value tpm2_eventlog replays for the flipped log, while PCR0 does not move. THE BOUNDARY IS STATED: the replay proves internal consistency; the hardware-signed AK quote is UNKNOWN and cannot be faked here. Spike 1 is COMPLETE (1a structure · 1b replay · 1c boundary)"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -5413,5 +5598,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|unix]" >&2; exit 1 ;;
 esac

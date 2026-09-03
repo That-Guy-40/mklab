@@ -385,6 +385,19 @@ Split deliberately, because only half needs crypto:
   Forth proves too slow/large for the bare-metal arches, `1b` runs on `unix` and
   is documented as such — an honest partition, not a silent skip.
 
+  **1b — DONE 2026-09-03 (`dsl/sha256.fth`, `evlog-replay` in `dsl/eventlog.fth`,
+  `event-replay` track).** SHA-256 written once as a pure function in Forth — and
+  the partition above was **not needed**: it matches all three NIST FIPS 180-4
+  vectors on **unix, amd64, x86 and ppc**, so the hash validates across the whole
+  width × byte-order matrix (a 32-bit-masking slip would show only on the 64-bit
+  cells, a byte-order slip only on the big-endian row; neither did). The firmware
+  replays its own authored log and its PCR0/PCR1 equal **two independent foreign
+  oracles** — `tpm2_eventlog`'s own replayed `pcrs:` and python `hashlib` — which
+  agree with each other; flipping one digest byte moves PCR1 to exactly the value
+  `tpm2_eventlog` replays for the flipped log while PCR0 stays put. The replay
+  reuses the reader's single `(event2)` parse, so "what is read" and "what is
+  extended" cannot drift. The quote stays UNKNOWN (1c), stated on every run.
+
 - **1c — the boundary, stated out loud.** The hardware-signed **quote** is
   **UNKNOWN** and printed as such: the lab measured the log and the replay; it did
   **not** and cannot verify a hardware root of trust here. Naming it is the
