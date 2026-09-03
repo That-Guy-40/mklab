@@ -4611,6 +4611,7 @@ PY
         -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/x86type.rom" \
         -device "e1000,romfile=" -device "e1000,romfile=$OWD/badsig.rom" \
         -device "e1000,romfile=$OWD/cfgcard.rom" \
+        -device "pci-bridge,chassis_nr=1,id=obr1" -device "e1000,bus=obr1,addr=1,romfile=$OWD/cfgcard.rom" \
         -cdrom "$OWD/dsl.iso" -display none -serial "unix:$OSER,server=on" \
         -monitor "unix:$OMON,server=on,wait=off" -no-reboot >"$OWD/$A.qemu.log" 2>&1 &
       OQ=$!
@@ -4627,6 +4628,7 @@ PY
         --send 'optrom-run .fcode-marker\r' --expect "0 > " \
         --send "dev $OP/e1000@3 .probe-addr\r" --expect "0 > " \
         --send "dev $OP/e1000@7 .probe-addr optrom-run .cfg-id\r" --expect "0 > " \
+        --send "dev $OP/pci1b36,1@8/e1000@1 .probe-addr optrom-run .cfg-id\r" --expect "0 > " \
         --send "dev $OP ls\r" --expect "0 > "
       ORC=$?
       OG="$(tr -d '\r' < "$OLOG" 2>/dev/null)"
@@ -4706,6 +4708,23 @@ PY
       grep -qE '^  Bus  0, device   7,' <<<"$OPCI" \
         || fail "optrom on $A: QEMU reports no device 7 — the config-space card is not on the bus this run, so its cfg-id proves nothing"
       note "$A: the config-space card — my-space (probe-addr $SPA) + \" config-l@\" \$call-parent, both from inside the card's own FCode — computed cfg-id=$OCID about ITSELF, which is 8086:100e, not the host bridge's 8086:1237 that a zero probe-addr returns"
+      # ── the same card BEHIND A PCI-PCI BRIDGE (patch 59) ──────────────────────
+      # Its parent is the bridge node, not the bus, so `$call-parent` resolves
+      # config-l@ on ob_pci_bridge_node — which patch 56 had left without it.
+      # Measured 2026-09-03 (audit): probe-addr 0x10800 and the ROM header were
+      # fine, the global config-l@ read 100e8086 from the prompt, and the card's
+      # own cfg-id came back NONE — the -21 patch 56 removed, one bus level down.
+      # The bridge chains config space to its parent the way it chains pci-map-in.
+      S12="$(osec "pci1b36,1@8/e1000@1 .probe-addr")"
+      OBPA="$(grep -oE 'PA=[0-9a-f]+' <<<"$S12" | head -1 | cut -d= -f2)"
+      [[ "$OBPA" == 10800 ]] \
+        || fail "optrom on $A: the card behind the bridge has probe-addr ${OBPA:-<absent>}, not 10800 (bus 1 << 16 | device 1 << 11) — patch 57's store is wrong for a secondary bus"
+      OBCID="$(grep -oE 'CFGID=[0-9a-f]+' <<<"$S12" | head -1 | cut -d= -f2)"
+      [[ "$OBCID" == 100e8086 ]] \
+        || fail "optrom on $A: the card behind the PCI-PCI bridge computed cfg-id=${OBCID:-<none>} — its \" config-l@\" \$call-parent resolves on the BRIDGE node, and a bridge without the config methods (patch 56 alone) leaves the driver with nothing to call: $(grep -oE 'CFGID=[a-z]+' <<<"$S12" | head -1)"
+      grep -qE '^  Bus  1, device   1,' <<<"$OPCI" \
+        || fail "optrom on $A: QEMU reports no bus 1 device 1 — the bridged card is not where the firmware says it read it"
+      note "$A: the same card BEHIND a PCI-PCI bridge (bus 1, device 1 per QEMU; probe-addr $OBPA) reads its own $OBCID through the bridge — config space chained to the parent bus (patch 59)"
     done
 
     # ── ROW F: the BIG-ENDIAN arch does all of it too ────────────────────────────
@@ -4720,12 +4739,13 @@ PY
     OPSER="$OWD/ppc.log"; rm -f "$OPSER"
     python3 "$REPO/tools/drive-pty-repl.py" "$OPSER" --timeout 400 --echo-gate \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
-      --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
-      --send 'load cd:\\OPTROM.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
-      --send 'dev /pci/e1000@2 .probe-addr optrom-report\r' --expect "> " \
-      --send '." MAP=" optrom-map u. cr\r' --expect "> " \
-      --send 'optrom-run .fcode-marker\r' --expect "> " \
-      --send 'dev /pci/e1000@3 optrom-run .cfg-id\r' --expect "> " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\OPTROM.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'dev /pci/e1000@2 .probe-addr optrom-report\r' --expect "0 > " \
+      --send 'optrom-map dup ." MAP=" u. cr optrom-unmap\r' --expect "0 > " \
+      --send 'optrom-run-mapped .fcode-marker\r' --expect "0 > " \
+      --send 'optrom-map ." MAPX=" u. cr optrom-map ." MAPY=" u. cr\r' --expect "0 > " \
+      --send 'dev /pci/e1000@3 optrom-run .cfg-id\r' --expect "0 > " \
       -- qemu-system-ppc -bios "$OPPCELF" -nographic -vga none -cdrom "$OWD/dsl.iso" \
          -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/cfgcard.rom"
     OPRC=$?
@@ -4737,13 +4757,29 @@ PY
     OPPA="$(grep -oE 'PA=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
     [[ -n "$OPPA" && "$OPPA" != 0 ]] || fail "optrom on ppc: probe-addr is ${OPPA:-<absent>}"
     grep -q 'MARK=FCODE-FROM-CARD-RAN' <<<"$OPG" \
-      || fail "optrom on ppc: byte-load from the live ROM left no fcode-marker — the card's FCode did not run on the big-endian arch: $(grep -oE 'MARK=[^ ]*|NO-INSTANCE|NOT-FCODE' <<<"$OPG" | head -2 | tr '\n' '|')"
+      || fail "optrom on ppc: byte-load from the MAPPED ROM left no fcode-marker — the card's FCode did not run on the big-endian arch: $(grep -oE 'MARK=[^ ]*|NO-INSTANCE|NOT-FCODE|NO-MAP' <<<"$OPG" | head -2 | tr '\n' '|')"
+    # ── map-in / map-out are a PAIR (patch 60), measured in both directions ──
+    # MAP: the first map-in. It is released; then optrom-run-mapped maps the SAME
+    # region again and must succeed (above) — a release lets a region be re-mapped.
+    # MAPX/MAPY: two map-ins with NO release between them. On ppc ob_pci_map()
+    # claims the range through ofmem, so the second claim fails and the answer is
+    # ffffffff: the leak the first version of this track called "call-once-and-
+    # keep, not a getter". It is named here so the fix stays attached to it.
+    OMAP="$(grep -oE 'MAP=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
+    OMAPX="$(grep -oE 'MAPX=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
+    OMAPY="$(grep -oE 'MAPY=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
+    [[ -n "$OMAP" && "$OMAP" != 0 && "$OMAP" != ffffffff ]] \
+      || fail "optrom on ppc: the first pci-map-in answered ${OMAP:-<absent>} — no usable mapping, so nothing below about map-out means anything"
+    [[ "$OMAPX" == "$OMAP" ]] \
+      || fail "optrom on ppc: after a map-out, mapping the region again answered ${OMAPX:-<absent>}, not $OMAP — pci-map-out (patch 60) did not release the claim, so a released region cannot be re-mapped"
+    [[ "$OMAPY" == ffffffff ]] \
+      || fail "optrom on ppc CONTROL: two map-ins with no release between them answered $OMAP then ${OMAPY:-<absent>} — expected ffffffff for the second (ofmem refuses the duplicate claim). If this passes now, ob_pci_map stopped claiming, and the map-out row above proves nothing"
     OPCID="$(grep -oE 'CFGID=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
     [[ "$OPCID" == 100e8086 ]] \
       || fail "optrom on ppc: the config-space card computed cfg-id=${OPCID:-<none>}, not its own 100e8086 — config-l@ is not reachable as a bus method here"
     note "ppc (BIG-endian): the same little-endian ROM header parses at the live BAR with no mapping call (probe-addr $OPPA, which ppc already set — the defect patch 57 fixes is x86/amd64-only), the card's FCode byte-loads from it (MARK), and the config-space card reads its own 100e8086"
-    note "optrom-map (the parent bus's pci-map-in, the portable form) returns $(grep -oE 'MAP=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2) on ppc — the same address the property published, so nothing is gained by it here; and a SECOND call for the same region does not return a readable address (measured 2026-09-03), so it is call-once-and-keep, not a getter"
-    pass "B.3 Spike 3 COMPLETE — a PCI option ROM read from REAL device memory and its FCode run from there, on x86, amd64 AND ppc. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. THE BIG-ENDIAN ROW: ppc parses the same little-endian header at its own live BAR with NO mapping call, byte-loads the card from it, and reads its own id too — the TODO's "ppc needs pci-map-in" gap was wrong, and what the first attempt actually lacked was an INSTANCE. AND THE CARD THAT ASKS WHO IT IS: a second FCode driver doing my-space + a \" config-l@\" call to the parent bus — the 1275 PCI binding's own route, since config-l@ has no FCode number at all — computes cfg-id=100e8086 about ITSELF on all three arches. That needed patch 56 (the config words as PCI BUS-NODE methods, not just globals: a card cannot see a global word) and patch 57 (every probed node's probe-addr, which only ppc had: on x86/amd64 my-space answered 0, so a card read the HOST BRIDGE's 8086:1237 while every mechanism looked like it worked)"
+    note "ppc: pci-map-in answered $OMAP (the address the property published — mac99 maps PCI memory 1:1); RELEASED with pci-map-out (patch 60), the same region mapped again and its FCode byte-loaded from the mapped address; two map-ins with no release in between: $OMAPX then $OMAPY — the claim conflict that a missing map-out had been hiding under 'call-once-and-keep'"
+    pass "B.3 Spike 3 COMPLETE — a PCI option ROM read from REAL device memory and its FCode run from there, on x86, amd64 AND ppc. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. THE BIG-ENDIAN ROW: ppc parses the same little-endian header at its own live BAR with NO mapping call, byte-loads the card from it, and reads its own id too — the TODO's \"ppc needs pci-map-in\" gap was wrong, and what the first attempt actually lacked was an INSTANCE. And map-in is now HALF OF A PAIR: pci-map-out (patch 60) releases a mapping, a released region maps again and byte-loads from the mapped address, while two map-ins with no release between them leave the second at ffffffff — the leak the first version of this track had called call-once-and-keep. BEHIND A PCI-PCI BRIDGE (patch 59): the config-space card's parent is the bridge node, which patch 56 had left without the config methods; it now chains them to its parent the way it chains pci-map-in, and the bridged card reads its own 100e8086 on x86 and amd64. AND THE CARD THAT ASKS WHO IT IS: a second FCode driver doing my-space + a \" config-l@\" call to the parent bus — the 1275 PCI binding's own route, since config-l@ has no FCode number at all — computes cfg-id=100e8086 about ITSELF on all three arches. That needed patch 56 (the config words as PCI BUS-NODE methods, not just globals: a card cannot see a global word) and patch 57 (every probed node's probe-addr, which only ppc had: on x86/amd64 my-space answered 0, so a card read the HOST BRIDGE's 8086:1237 while every mechanism looked like it worked)"
     ;;
   region-diff)
     # B.3 Spike 3's OTHER half, and the last unmet line of plan §9: "a region
@@ -4842,7 +4878,12 @@ PY
       RHEAPP="$(rmark "$RLOG" HEAPP)"
       RXP=""
       if [[ -n "$RHEAPP" ]]; then
-        RXP="$(python3 - "$RMON" "0x$RHEAPP" 32 <<'PY'
+        # 256 bytes — the SNAPSHOT's length — not the 32 the first version read: LAST
+        # can legally land anywhere inside STEP, and a dump shorter than that would
+        # index an empty string and turn a real disagreement into a bash arithmetic
+        # error with no verdict (audit 2026-09-03). The memrange decode below still
+        # uses the first 32.
+        RXP="$(python3 - "$RMON" "0x$RHEAPP" 256 <<'PY'
 import socket, sys, time, re
 sock, addr, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
 s = socket.socket(socket.AF_UNIX)

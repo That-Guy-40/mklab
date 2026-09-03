@@ -1,6 +1,6 @@
 # Showcase — the preboot structure toolkit, in one boot
 
-`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~2 minutes on KVM.
+`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~40 s on KVM (measured, not guessed: 39 s wall).
 
 Every B.3 smoke track proves one reader against one foreign oracle. This is the
 other view: **one machine, one boot, four acts**, in the order a real preboot

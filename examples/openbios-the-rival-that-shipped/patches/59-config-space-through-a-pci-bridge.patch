@@ -1,0 +1,91 @@
+Subject: [PATCH 59/60] drivers/pci: config space through a PCI-PCI bridge -- patch 56 stopped one level short
+
+Arch-tested: x86 amd64 ppc unix
+
+Patch 56 put config-{b,w,l}@/! on ob_pci_bus_node, because the 1275 PCI Bus
+Binding says a card reaches its config space as a METHOD ON ITS PARENT. Then it
+stopped. A card behind a PCI-PCI bridge has the BRIDGE node as its parent, and
+ob_pci_bridge_node had none of the six -- so the card's
+
+    my-space " config-l@" $call-parent
+
+resolved against the bridge, found nothing, and threw the very -21 patch 56 was
+written to remove.
+
+MEASURED 2026-09-03 (the audit of the two PRs that landed 56/57 and 58), on
+amd64 with QEMU's pci-bridge and the config-space card behind it: the child IS
+enumerated (/pci8086,1237@0/pci1b36,1@3/e1000@1), its probe-addr is right
+(0x10800 = bus 1 << 16 | device 1 << 11, so patch 57 holds on a secondary bus),
+its ROM header parses at the live BAR, and the GLOBAL config-l@ typed at the
+prompt reads 0x100e8086 -- while the card's own bytecode came back with
+cfg-id = NONE. Every mechanism looked fine; the outcome was missing. That is the
+shape 56/57's own commit message names, one bus level down.
+
+THE FIX IS THE SHAPE THE BRIDGE ALREADY HAD. ob_pci_bridge_map_in answers
+pci-map-in by call_parent_method("pci-map-in") -- chain up until the host
+bridge's bus node does the work. The config address carries the bus number, so
+config space chains the same way: six one-line methods, each calling its
+parent's. (The bridge's chained pci-map-out rides in this same hunk; the bus
+node's pci-map-out is patch 60.)
+
+AND THE FIRST RUN OF THE FIX CRASHED THE FIRMWARE, which is worth keeping.
+dsl/optrom.fth's instance scaffold built ONE parent level, so the bridge
+instance's own my-parent was 0 -- and a chained $call-parent from an instance
+with no parent is a general protection fault (amd64: "Unexpected Exception:
+general protection fault @ 08:...102d93"), not a -21. A real probe's open-dev
+opens every node on the path; the scaffold now does the same, root-first. The
+firmware's own behaviour there -- faulting rather than throwing when
+$call-parent has no parent -- is left as it is and named: a driver at the top
+of a chain would hit it too.
+
+After: the bridged card publishes cfg-id = 0x100e8086 on x86 and amd64 (the
+`optrom` track now keeps a pci-bridge with the card behind it), and QEMU's
+info pci puts that card at bus 1 device 1.
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -538,12 +562,43 @@
+ 	call_parent_method("pci-map-in");
+ }
+ 
++/* -- mklab, B.3 Spike 3 (patch 59): config space THROUGH A BRIDGE ---------------
++ * Patch 56 put config-{b,w,l}@/! on the bus node and stopped there. A card behind
++ * a PCI-PCI bridge has the BRIDGE as its parent, so its `my-space " config-l@"
++ * $call-parent` resolved against ob_pci_bridge_node -- which had no such method
++ * -- and threw the very -21 patch 56 was written to remove. Measured 2026-09-03
++ * on amd64 with QEMU's pci-bridge: probe-addr 0x10800 (bus 1, dev 1) and the ROM
++ * header read fine, and the card's own cfg-id came back NONE while the global
++ * config-l@ read 0x100e8086 from the prompt. The config address already carries
++ * the bus number, so a bridge answers the way it answers pci-map-in: by chaining
++ * to its parent until the host bridge's bus node does the access. */
++static void ob_pci_bridge_config_b_read(int *idx)  { call_parent_method("config-b@"); }
++static void ob_pci_bridge_config_w_read(int *idx)  { call_parent_method("config-w@"); }
++static void ob_pci_bridge_config_l_read(int *idx)  { call_parent_method("config-l@"); }
++static void ob_pci_bridge_config_b_write(int *idx) { call_parent_method("config-b!"); }
++static void ob_pci_bridge_config_w_write(int *idx) { call_parent_method("config-w!"); }
++static void ob_pci_bridge_config_l_write(int *idx) { call_parent_method("config-l!"); }
++
++/* ( virt size -- ) -- mklab, B.3 Spike 3 (patch 60): the binding's map-out, chained */
++static void
++ob_pci_bridge_map_out(int *idx)
++{
++	call_parent_method("pci-map-out");
++}
++
+ NODE_METHODS(ob_pci_bridge_node) = {
+ 	{ "open",		ob_pci_open		},
+ 	{ "close",		ob_pci_close		},
+ 	{ "decode-unit",	ob_pci_decode_unit	},
+ 	{ "encode-unit",	ob_pci_encode_unit	},
+ 	{ "pci-map-in",		ob_pci_bridge_map_in	},
++	{ "pci-map-out",	ob_pci_bridge_map_out	},
++	{ "config-b@",		ob_pci_bridge_config_b_read	},
++	{ "config-w@",		ob_pci_bridge_config_w_read	},
++	{ "config-l@",		ob_pci_bridge_config_l_read	},
++	{ "config-b!",		ob_pci_bridge_config_b_write	},
++	{ "config-w!",		ob_pci_bridge_config_w_write	},
++	{ "config-l!",		ob_pci_bridge_config_l_write	},
+ 	{ "dma-alloc",		ob_pci_dma_alloc	},
+ 	{ "dma-free",		ob_pci_dma_free		},
+ 	{ "dma-map-in",		ob_pci_dma_map_in	},
