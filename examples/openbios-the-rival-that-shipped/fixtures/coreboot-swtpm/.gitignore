@@ -1,4 +1,5 @@
 # build artifacts of build-rom.sh — regenerable, and the initramfs is 1 MiB
 capture-initramfs.cpio.gz
 capture-initramfs.cpio.xz
+cbmem-static
 *.out

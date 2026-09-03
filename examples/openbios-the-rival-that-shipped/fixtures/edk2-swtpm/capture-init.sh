@@ -1,13 +1,16 @@
 #!/bin/busybox sh
 # shellcheck shell=dash  # busybox ash — no bashisms (there is no bash in this initramfs)
 # capture-init.sh — the /init of a throwaway guest that does ONE thing: read the
-# TCG event log the firmware (OVMF/edk2) wrote to the (swtpm) TPM, and the PCRs the
-# TPM itself holds, and hand both to the host over the serial console. Then power
-# off. It is the subject-acquisition step for the openbios lab's `event-real` track:
-# "a claim from a machine that really measured", captured once and vendored.
+# TCG event log the firmware (OVMF/edk2, or measured coreboot) wrote as it booted,
+# and the PCRs the (swtpm) TPM itself holds, and hand both to the host over the
+# serial console. Then power off. It is the subject-acquisition step for the openbios
+# lab's `event-real` and `event-bench` tracks: "a claim from a machine that really
+# measured", captured once per firmware substrate and vendored — the SAME reader
+# behind every substrate, so nothing but the firmware differs between captures.
 #
-# WHAT IS REAL HERE. The log is written by edk2 as it boots (the firmware measures
-# itself, its config, the boot device and what it loads); the PCR values are read
+# WHAT IS REAL HERE. The log is written by the firmware as it boots (edk2 measures
+# itself, its config, the boot device and what it loads into PCR0-7; coreboot
+# measures each stage and its payload into its SRTM PCR 2); the PCR values are read
 # from the TPM device through the kernel (/sys/class/tpm/tpm0/pcr-sha256/N), and
 # nothing in this script can influence either. WHAT IS NOT: the TPM is swtpm, so the
 # machine's "claim" is a software TPM's — good enough to be a foreign, non-authored

@@ -696,13 +696,14 @@ requires of any other cached fact.
       it is **Tier A of `examples/linuxboot-uefi-kexec/`** (a coreboot ROM carrying
       linux-6.3 + u-root, ✅-verified to an AlmaLinux install). The host has **four**
       coreboot ROMs with three payload kinds, so the "which payload" subject set is on disk
-      today. What is *not* built is the **comparison bench** (same Linux via three
-      substrates) — and its measured-boot leg needs a coreboot build with
-      `CONFIG_VBOOT` + a TPM (today's ROMs measure nothing; review F4). Two items, both
-      after Spike 0: **(1)** the *"firmware reads its own ROM"* demo (Spike 2 + Spike 3
-      collapsed and made live — the `LB_TAG` parser is already in
+      today. What was *not* built (when this was written) is the **comparison bench**
+      (same Linux via three substrates) — and its measured-boot leg needs a coreboot
+      build with `CONFIG_VBOOT` + a TPM (today's ROMs measure nothing; review F4). Two
+      items, both after Spike 0: **(1)** the *"firmware reads its own ROM"* demo (Spike 2
+      + Spike 3 collapsed and made live — the `LB_TAG` parser is already in
       `libopenbios/linuxbios_info.c`); **(2)** the bench. Its own lab plan only once Spike
-      0 lands.
+      0 lands. *Both landed 2026-09-03 — see the DONE entries above; and the prerequisite
+      was measured to be `TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2`, not VBOOT.*
 
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 
