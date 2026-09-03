@@ -552,30 +552,34 @@ requires of any other cached fact.
       while the LE arches byte-swap via `l@-be`. The oracle is DERIVED (`cbfstool` from
       the ROM's own build tree, review F2), not vendored. The `unix` row (256 KiB window,
       un-aligned `alloc-mem` load-base) caught a region-relative-vs-absolute `align_up`
-      bug the aligned QEMU arches would have hidden. STILL TO DO for Spike 2: the
-      WRITE/surgery direction (author/patch a raw entry, require `cbfstool` to still
-      accept the whole ROM — §10), the other three ROMs, and the live form (§12(1)).
-      Then the TCG event log (Spike 1 — attestation without a TPM, stopping honestly at
-      the quote; its subject is a swtpm guest's `binary_bios_measurements`, since no ROM
-      here measures anything).
-    - [ ] **⏭ NEXT STEP — Spike 2, the rest** (read direction merged; each item below is a
-      natural next increment, in order):
-        1. **The WRITE / surgery direction (§10) — the harder and more interesting half.**
-           Author or patch a **raw** CBFS entry with `write-file`, then require **coreboot's
-           own `cbfstool` to still accept the WHOLE ROM afterward** — `print` lists a
-           coherent archive, the master-header and per-file fields still validate, and
-           `extract` returns our bytes unchanged. The test is NOT that our own reader
-           accepts it: a parser and a writer wrong the same way agree with each other, so
-           the oracle must be `cbfstool`, not `dsl/cbfs.fth`. Scope byte-compares to **raw**
-           entries — the SELF payload's `extract` is a *reconstituted* ELF (review F2). A
-           patch our reader loves and `cbfstool` rejects is a silent corruption, and
-           catching it is the whole point.
-        2. **The other three ROMs**, telling payload kinds apart by what they carry under
+      bug the aligned QEMU arches would have hidden.
+    - **Spike 2 (coreboot CBFS) — WRITE/surgery direction DONE 2026-09-02.** `dsl/cbfs-write.fth`
+      + a `cbfs-write` smoke track (unix only — `write-file` is hosted-only). Two origins,
+      each graded by **coreboot's own `cbfstool`, never our reader**: **PATCH** — `cbfs-find`
+      locates a `raw` entry and `cbfs-fill` rewrites its content in place (same length, no
+      offset moves), and cbfstool accepts the whole image with byte-identical `print` metadata
+      and `extract` == our bytes; **AUTHOR** — `cbfs-find-empty`/`cbfs-author` compose a whole
+      `cbfs_file` (the big-endian `len`/`type`/`offset` fields + name) in the free space through
+      the SAME `u32be t!+` (= `l!-be`) cursor the reader was graded on, relink a fresh `(empty)`,
+      and cbfstool accepts a coherent 3-entry archive with the prior entry untouched. TWO
+      negative controls **bite** (an all-accept oracle proves nothing): a wrong-offset patch
+      (patches at the entry base, forgetting `offset` → stomps `LARCHIVE` → cbfstool refuses),
+      and a little-endian `len` on the author (the byte-order slip the four-arch matrix exists
+      to prevent → cbfstool reads a wrong size) — both re-injected and watched to bite. Subject
+      is a 128 KiB legacy CBFS (`cbfstool create -m x86 -s 0x20000`) that fits the 4 MiB arena;
+      oracle DERIVED (review F2). The one-line surgery was truncated by openbios-unix's 80-col
+      stdin editor mid-`s"` (the file-writer caveat) → split into short REPL lines.
+      STILL TO DO for Spike 2: the other three ROMs and the live form (§12(1)). Then the TCG
+      event log (Spike 1 — attestation without a TPM, stopping honestly at the quote; its
+      subject is a swtpm guest's `binary_bios_measurements`, since no ROM here measures anything).
+    - [ ] **⏭ NEXT STEP — Spike 2, the rest** (read + write directions merged; each item below
+      is a natural next increment, in order):
+        1. **The other three ROMs**, telling payload kinds apart by what they carry under
            `fallback/payload`: `build/coreboot.rom` (LinuxBoot kernel+u-root),
            `build-ofw/coreboot.rom` (Firmworks), `build-openbios-amd64/coreboot.rom`
            (OpenBIOS SELF). §12's thesis — the payload is the variable, the toolkit the
            constant — has its subject set on disk.
-        3. **The live form (§12(1)) — the uniquely-afforded demo.** OpenBIOS-as-coreboot-
+        2. **The live form (§12(1)) — the uniquely-afforded demo.** OpenBIOS-as-coreboot-
            payload walking the CBFS of the **very ROM that delivered it**, at the `0 >`
            prompt, on the mapped flash window (`flash-writer` already reads that window
            through `>virt`) — Spike 2 (CBFS) and Spike 3 (real device memory) collapsed

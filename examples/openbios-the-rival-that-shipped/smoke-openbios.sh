@@ -67,6 +67,11 @@ TRACK (default multiboot):
                               CBFS (big-endian 'ORBC'/'LARCHIVE') and lists its
                               files matching cbfstool, on ALL FOUR arches — ppc
                               reads the BE metadata native (needs the coreboot ROM)
+  cbfs-write                  B.3 Spike 2 (WRITE): dsl/cbfs-write.fth PATCHES and
+                              AUTHORS raw CBFS entries with write-file, then makes
+                              coreboot's own cbfstool accept the whole image — with
+                              a wrong-offset and a byte-order negative control that
+                              cbfstool must reject (unix only; needs cbfstool)
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -3366,7 +3371,174 @@ PY
       note "$A: $cmatched entries match cbfstool (payload seen$( [[ "$A" != unix ]] && printf ', bootblock seen'))"
     done
     unset CEXPNAME CEXPSZ
-    pass "B.3 Spike 2 (read): dsl/cbfs.fth walks the real coreboot ROM's CBFS and lists every file — offset, type, size and name — MATCHING coreboot's own cbfstool entry for entry, on unix, amd64, x86 AND ppc. The reader is the Spike 0 cursor vocabulary (type:/>rec/t@+/vbytes) plus one big-endian u32be type and nothing else, which is the point: CBFS metadata is big-endian ('ORBC'/'LARCHIVE'), so ppc reads len/type/offset natively while the LE arches byte-swap them through l@-be, and all four reproduce cbfstool's listing — so 'the walk is correct' means the byte order is correct too, the negative control a single-machine tool (cbfstool, poke) structurally cannot run. The oracle is DERIVED — the cbfstool the ROM's own build tree produced, pinned to its commit by construction (review F2), not vendored. unix reads the ROM's first 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file through (empty); the QEMU arches load the whole ROM and additionally reach bootblock. STILL TO DO for Spike 2: the WRITE/surgery direction — author or patch a raw CBFS entry with write-file and require cbfstool to still accept the whole ROM (§10), and the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    pass "B.3 Spike 2 (read): dsl/cbfs.fth walks the real coreboot ROM's CBFS and lists every file — offset, type, size and name — MATCHING coreboot's own cbfstool entry for entry, on unix, amd64, x86 AND ppc. The reader is the Spike 0 cursor vocabulary (type:/>rec/t@+/vbytes) plus one big-endian u32be type and nothing else, which is the point: CBFS metadata is big-endian ('ORBC'/'LARCHIVE'), so ppc reads len/type/offset natively while the LE arches byte-swap them through l@-be, and all four reproduce cbfstool's listing — so 'the walk is correct' means the byte order is correct too, the negative control a single-machine tool (cbfstool, poke) structurally cannot run. The oracle is DERIVED — the cbfstool the ROM's own build tree produced, pinned to its commit by construction (review F2), not vendored. unix reads the ROM's first 256 KiB (its 4 MiB arena cannot hold a 4 MiB ROM) and lists every named file through (empty); the QEMU arches load the whole ROM and additionally reach bootblock. The WRITE/surgery direction is the sibling cbfs-write track; STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
+    ;;
+  cbfs-write)
+    # B.3 Spike 2, WRITE direction: dsl/cbfs-write.fth PATCHES and AUTHORS raw
+    # CBFS entries with write-file, and the grader is coreboot's own cbfstool —
+    # NEVER our own reader. A parser and a writer wrong the same way agree with
+    # each other, so "cbfs.fth still reads it" proves nothing; the test is that
+    # cbfstool accepts the WHOLE image afterward (§10).
+    #
+    # UNIX ONLY, AND WHY. write-file is bound hosted-only (arch/unix/unix.c, patch
+    # 54) — the QEMU arches have no host filesystem to persist to — so unlike the
+    # read track this one is a single-arch workbench, not a four-arch matrix. The
+    # byte-order property the matrix defends is instead defended by a NEGATIVE
+    # CONTROL: authoring the length little-endian (the exact slip a hidden-LE
+    # writer would make) must make cbfstool read a wrong size. An all-accept
+    # oracle proves nothing, so both directions ship with a control that BITES.
+    #
+    # THE SUBJECT IS A SMALL LEGACY CBFS, not the 4 MiB ROM: openbios-unix's arena
+    # is 4 MiB total (MEMORY_SIZE), so the whole image must fit with room for the
+    # dictionary. cbfstool `create -m x86 -s 0x20000` builds a 128 KiB master-
+    # header CBFS — a complete, self-contained image cbfstool validates end to
+    # end — and we add one `raw` entry to patch. The oracle is DERIVED: the same
+    # cbfstool that would build the real ROM (review F2), never a vendored copy.
+    UBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
+    UDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    CBT="$CB/build-openbios/cbfstool"
+    [[ -x "$UBIN"  ]] || skip "missing $UBIN — run ./build-openbios.sh unix first"
+    [[ -f "$UDICT" ]] || skip "missing $UDICT — run ./build-openbios.sh unix first"
+    [[ -x "$CBT"   ]] || skip "no cbfstool at $CBT — the derived oracle, built by the coreboot tree; run ./build-coreboot-openbios.sh first"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    CSTRUCT="$HERE/dsl/struct.fth"; CCBFS="$HERE/dsl/cbfs.fth"; CCBW="$HERE/dsl/cbfs-write.fth"
+    for f in "$CSTRUCT" "$CCBFS" "$CCBW"; do
+      [[ -f "$f" ]] || fail "the writer is missing at $f — this track stages the SHIPPED files, it does not re-implement them"
+    done
+
+    CWD="$WORKDIR/cbfs-write"; rm -rf "$CWD"; mkdir -p "$CWD"
+    PAY="$CWD/payload.bin"
+    printf 'PATCH-ME-000000000000000000000000000000000000000\n' > "$PAY"
+    PAYLEN=$(wc -c < "$PAY")   # 49 bytes — the raw entry we will surgically rewrite
+    SMALL="$CWD/small.cbfs"
+    "$CBT" "$SMALL" create -m x86 -s 0x20000 >/dev/null 2>&1 \
+      || fail "cbfs-write: cbfstool create failed — cannot build the subject CBFS to operate on"
+    "$CBT" "$SMALL" add -f "$PAY" -n patchme -t raw -c none >/dev/null 2>&1 \
+      || fail "cbfs-write: cbfstool add failed — cannot place the raw entry to patch"
+    # BASELINE the oracle before trusting it: it must list patchme raw/49 and an (empty).
+    CBFS_BASE="$("$CBT" "$SMALL" print 2>/dev/null | grep -E '^patchme|^\(empty\)')"
+    grep -qE "^patchme[[:space:]].*[[:space:]]raw[[:space:]].*[[:space:]]${PAYLEN}[[:space:]]" <<<"$CBFS_BASE" \
+      || fail "cbfs-write: cbfstool does not list the freshly-built patchme as raw/$PAYLEN — the oracle baseline is wrong, so grading against it would be meaningless: $CBFS_BASE"
+
+    ST="$CWD/stage"; mkdir -p "$ST"
+    cp "$CSTRUCT" "$ST/STRUCT.FTH"; cp "$CCBFS" "$ST/CBFS.FTH"; cp "$CCBW" "$ST/CBFSW.FTH"
+    cp "$SMALL" "$ST/SMALL.BIN"
+    genisoimage -quiet -o "$CWD/cbw.iso" -V CBFSW "$ST" 2>/dev/null \
+      || fail "cbfs-write: genisoimage failed to stage the DSL + subject image"
+
+    # cbw_run <run-subdir> <forth-line>... -> firmware stdout; the surgery lines
+    # write OUT.BIN into $CWD/<run-subdir>/ (write-file names it with a bare path,
+    # so the firmware runs with CWD there — the 80-col line-editor caveat again).
+    #
+    # EACH SURGERY LINE MUST STAY UNDER ~80 COLUMNS. openbios-unix reads stdin
+    # through an 80-column line editor that silently TRUNCATES past ~82 (measured
+    # in the file-writer track); a long one-liner is cut mid-`s"` and throws with
+    # no hint. The Forth REPL keeps the data stack across lines, so a surgery is
+    # split into short lines with no change in meaning — the first draft here was
+    # one 100-col line and lost `s" OUT.BIN" write-file` off the end.
+    cbw_run() {
+      local d="$CWD/$1"; shift; rm -rf "$d"; mkdir -p "$d"
+      { printf '%s\n' \
+          '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+          'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+          'load hd:\CBFS.FTH'   'load-base load-size evaluate' \
+          'load hd:\CBFSW.FTH'  'load-base load-size evaluate' \
+          'load hd:\SMALL.BIN'
+        printf '%s\n' "$@"
+        printf 'bye\n'
+      } | ( cd "$d" && "$UBIN" -f "$CWD/cbw.iso" "$UDICT" ) 2>&1 | tr -d '\r'
+    }
+
+    # ── ROW A: PATCH a raw entry in place (same length) — cbfstool must ACCEPT ──
+    # Find patchme, overwrite its 49 content bytes with 0x5a, persist the whole
+    # image. Same length ⇒ no offset moves ⇒ the metadata must be untouched.
+    PA="$CWD/patch-pos"
+    PLOG="$(cbw_run patch-pos \
+      'load-base 20 s" patchme" cbfs-find drop 5a cbfs-fill' \
+      'load-base load-size s" OUT.BIN" write-file drop')"
+    PO="$PA/OUT.BIN"
+    [[ -f "$PO" ]] \
+      || fail "cbfs-write patch: write-file produced no image at $PO — the firmware persisted nothing. Firmware said: $(printf '%s' "$PLOG" | tail -3 | tr '\n' '|')"
+    [[ "$(wc -c <"$PO")" -eq 131072 ]] \
+      || fail "cbfs-write patch: the patched image is $(wc -c <"$PO") bytes, not 131072 — write-file wrote a short/long file, so the whole image did not round-trip"
+    # metadata unchanged: cbfstool print of the patch == the baseline, line for line
+    diff <(printf '%s\n' "$CBFS_BASE") <("$CBT" "$PO" print 2>/dev/null | grep -E '^patchme|^\(empty\)') >/dev/null 2>&1 \
+      || fail "cbfs-write patch: cbfstool print of the patched image differs from the baseline — a same-length content patch must move NO metadata: $("$CBT" "$PO" print 2>/dev/null | grep -E '^patchme|^\(empty\)' | tr '\n' '|')"
+    "$CBT" "$PO" extract -n patchme -f "$PA/got.bin" 2>/dev/null \
+      || fail "cbfs-write patch: cbfstool REFUSED to extract patchme from the patched image — our surgery corrupted the entry cbfstool built (a patch our own reader might still love, which is why the oracle is foreign)"
+    python3 -c 'import sys; b=open(sys.argv[1],"rb").read(); sys.exit(0 if b==b"\x5a"*int(sys.argv[2]) else 1)' "$PA/got.bin" "$PAYLEN" \
+      || fail "cbfs-write patch: cbfstool extracted patchme but the bytes are not $PAYLEN×0x5a — the firmware wrote the wrong bytes or the wrong place (extract gave $(wc -c <"$PA/got.bin") bytes)"
+    note "patch: cbfstool accepts the same-length content patch, its print is byte-identical to the baseline, and extract returns exactly our $PAYLEN bytes"
+
+    # ── ROW B: the PATCH negative control — a wrong-offset surgery must be REJECTED
+    # Patch at the ENTRY BASE instead of base+offset — forgetting the `offset`
+    # field, the exact thing the reader computes cf-coff to avoid. It stomps the
+    # LARCHIVE magic, so cbfstool can no longer find the entry. If it still can,
+    # "cbfstool accepts" above proved nothing.
+    NLOG="$(cbw_run patch-neg \
+      'load-base 20 s" patchme" cbfs-find drop nip' \
+      'cbw-ent @ swap 5a fill' \
+      'load-base load-size s" OUT.BIN" write-file drop')"
+    NPO="$CWD/patch-neg/OUT.BIN"
+    [[ -f "$NPO" ]] \
+      || fail "cbfs-write patch neg: the wrong-offset run wrote no image — cannot tell whether cbfstool would catch it. Firmware: $(printf '%s' "$NLOG" | tail -3 | tr '\n' '|')"
+    if "$CBT" "$NPO" extract -n patchme -f /dev/null 2>/dev/null; then
+      fail "cbfs-write patch NEGATIVE CONTROL: cbfstool still extracted patchme after we patched at the ENTRY BASE instead of its content offset — the oracle did not catch a wrong-offset surgery, so the positive accept above is meaningless"
+    fi
+    note "patch negative control: a wrong-offset surgery stomps LARCHIVE and cbfstool refuses the entry — so the positive accept is a real result"
+
+    # ── ROW C: AUTHOR a brand-new raw entry — cbfstool must ACCEPT the archive ──
+    # The firmware composes a whole cbfs_file (big-endian len/type/offset + name)
+    # in the free space and relinks a fresh (empty). This is the write side of the
+    # STRUCTURE toolkit: fields the firmware itself wrote, that cbfstool validates.
+    # Content = 32 bytes of 0x41 staged past the image (load-base+0x20000).
+    AA="$CWD/author-pos"
+    ALOG="$(cbw_run author-pos \
+      'load-base 20000 + 20 41 fill' \
+      'load-base 20 cbfs-find-empty drop' \
+      'load-base 20000 + 20 s" forth-made" cbfs-author' \
+      'load-base load-size s" OUT.BIN" write-file drop')"
+    AO="$AA/OUT.BIN"
+    [[ -f "$AO" ]] \
+      || fail "cbfs-write author: write-file produced no image — the firmware persisted nothing. Firmware said: $(printf '%s' "$ALOG" | tail -3 | tr '\n' '|')"
+    [[ "$(wc -c <"$AO")" -eq 131072 ]] \
+      || fail "cbfs-write author: the authored image is $(wc -c <"$AO") bytes, not 131072 — the whole image did not round-trip"
+    AP="$("$CBT" "$AO" print 2>/dev/null)"
+    grep -qE '^forth-made[[:space:]].*[[:space:]]raw[[:space:]].*[[:space:]]32[[:space:]]' <<<"$AP" \
+      || fail "cbfs-write author: cbfstool does not list the authored forth-made as raw/32 — a field the firmware wrote (magic/len/type/offset/name) did not validate: $(printf '%s' "$AP" | tr '\n' '|')"
+    grep -qE "^patchme[[:space:]].*[[:space:]]raw[[:space:]].*[[:space:]]${PAYLEN}[[:space:]]" <<<"$AP" \
+      || fail "cbfs-write author: the pre-existing patchme entry is gone after authoring — authoring must consume only free space, never move a prior entry: $(printf '%s' "$AP" | tr '\n' '|')"
+    grep -qiE '^\(empty\)' <<<"$AP" \
+      || fail "cbfs-write author: no (empty) free-space entry remains — the firmware did not relink the free space after its entry, so cbfstool cannot walk the archive to its end: $(printf '%s' "$AP" | tr '\n' '|')"
+    "$CBT" "$AO" extract -n forth-made -f "$AA/got.bin" 2>/dev/null \
+      || fail "cbfs-write author: cbfstool refused to extract the authored forth-made — a field the firmware wrote is wrong"
+    python3 -c 'import sys; b=open(sys.argv[1],"rb").read(); sys.exit(0 if b==b"\x41"*32 else 1)' "$AA/got.bin" \
+      || fail "cbfs-write author: cbfstool extracted forth-made but the bytes are not 32×0x41 — the content the firmware placed at base+offset is wrong (extract gave $(wc -c <"$AA/got.bin") bytes)"
+    "$CBT" "$AO" extract -n patchme -f "$AA/pp.bin" 2>/dev/null && cmp -s "$PAY" "$AA/pp.bin" \
+      || fail "cbfs-write author: the pre-existing patchme content changed after authoring — the surgery disturbed an entry it must not touch"
+    note "author: the firmware composed a whole cbfs_file (BE len/type/offset + name) in free space; cbfstool accepts the 3-entry archive, extract returns our 32 bytes, and patchme is byte-identical"
+
+    # ── ROW D: the AUTHOR negative control — a byte-order slip must be CAUGHT ────
+    # Author correctly, then re-store the len field LITTLE-endian (le-l!) — the
+    # exact slip a hidden-LE writer would make, the bug the four-arch matrix exists
+    # to prevent. cbfstool reads the swapped bytes as a huge BE length, so the size
+    # it reports is no longer 32. If it still reports 32, the BE store was never
+    # what cbfstool validated in ROW C.
+    DLOG="$(cbw_run author-neg \
+      'load-base 20000 + 20 41 fill' \
+      'load-base 20 cbfs-find-empty drop' \
+      'load-base 20000 + 20 s" forth-made" cbfs-author' \
+      'au-clen @ au-base @ 8 + le-l!' \
+      'load-base load-size s" OUT.BIN" write-file drop')"
+    DO="$CWD/author-neg/OUT.BIN"
+    [[ -f "$DO" ]] \
+      || fail "cbfs-write author neg: the byte-order-slip run wrote no image — cannot tell whether cbfstool would catch it. Firmware: $(printf '%s' "$DLOG" | tail -3 | tr '\n' '|')"
+    if "$CBT" "$DO" print 2>/dev/null | grep -qE '^forth-made[[:space:]].*[[:space:]]raw[[:space:]].*[[:space:]]32[[:space:]]'; then
+      fail "cbfs-write author NEGATIVE CONTROL: cbfstool still reports forth-made as size 32 after we stored its len LITTLE-endian — the oracle did not catch a byte-order slip in the writer, which is the exact bug the big-endian CBFS metadata makes the four-arch toolkit prevent"
+    fi
+    note "author negative control: storing the len little-endian makes cbfstool read a wrong size — so the BE fields the firmware authored are what cbfstool actually validated in the positive row"
+
+    pass "B.3 Spike 2 (WRITE): dsl/cbfs-write.fth performs CBFS surgery in OpenBIOS Forth and coreboot's own cbfstool — never our reader — grades every result. PATCH: the firmware finds a raw entry, rewrites its content in place through write-file, and cbfstool accepts the whole image with byte-identical metadata and extract == our $PAYLEN bytes; the negative control patches at the ENTRY BASE (forgetting the offset field) and cbfstool refuses the stomped entry. AUTHOR: the firmware composes a whole cbfs_file — the big-endian len/type/offset fields and the name — in the free space through the SAME width/endian-aware cursor the reader was graded on (u32be t!+ is l!-be), relinks a fresh (empty), and cbfstool accepts a coherent 3-entry archive with the prior entry untouched and extract == our 32 bytes; the negative control stores that len LITTLE-endian and cbfstool reads the wrong size — the byte-order slip the four-arch matrix exists to prevent, here caught by the foreign oracle. write-file is hosted-only, so this is a unix workbench; the arch matrix's byte-order property is defended by the author negative control instead. The subject is a 128 KiB legacy CBFS that fits the 4 MiB arena; the oracle is DERIVED (the ROM's own cbfstool, review F2), not vendored. STILL TO DO for Spike 2: the live form (the firmware walking the CBFS of the ROM that booted it, §12(1))"
     ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
@@ -4762,5 +4934,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|unix]" >&2; exit 1 ;;
 esac
