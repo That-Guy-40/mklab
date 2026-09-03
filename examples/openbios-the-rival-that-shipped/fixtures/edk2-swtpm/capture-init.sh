@@ -45,12 +45,33 @@ fi
 # over a 6345-byte log (2026-09-03) — the mechanism (inode size) standing in for
 # the outcome (bytes readable). Read it.
 LOGSZ="$(/bin/busybox wc -c < "$LOG" 2>/dev/null || echo 0)"
+LOGSRC=securityfs
 if [ ! -r "$LOG" ] || [ "${LOGSZ:-0}" -eq 0 ]; then
-    say "CAPTURE-FAILED: $LOG is unreadable or reads as 0 bytes — securityfs not mounted, or the firmware handed the kernel no event log"
-    /bin/busybox ls -la /sys/kernel/security/tpm0/ 2>&1
-    exec /bin/busybox sh
+    # COREBOOT'S TPM 2.0-FORMAT LOG IS NOT WHAT ACPI PUBLISHES. src/acpi/acpi.c points
+    # the TPM2 table's log area at CBMEM_ID_TCPA_TCG_LOG (the TPM 1.2-format id) and
+    # creates an EMPTY one when absent, while TPM_LOG_TPM2 writes the real log under
+    # CBMEM_ID_TPM2_TCG_LOG (0x54504d32). So a coreboot guest reads 0 bytes here even
+    # though coreboot measured everything (measured 2026-09-03). Read that cbmem entry
+    # directly with coreboot's own tool instead — the same bytes coreboot wrote; the
+    # kernel needs iomem=relaxed on the cmdline for /dev/mem to reach RAM.
+    if [ -x /bin/cbmem ]; then
+        /bin/cbmem -r 54504d32 > /tmp/evlog.bin 2>/tmp/cbmem.err
+        RAWSZ="$(/bin/busybox wc -c < /tmp/evlog.bin 2>/dev/null || echo 0)"
+        if [ "${RAWSZ:-0}" -gt 0 ]; then
+            LOG=/tmp/evlog.bin; LOGSZ="$RAWSZ"; LOGSRC=cbmem
+            say "EVLOG-NOTE: securityfs log was empty; read coreboot's TPM2 log from cbmem id 54504d32 ($RAWSZ raw bytes, host trims)"
+        else
+            say "CAPTURE-FAILED: securityfs log empty AND cbmem -r 54504d32 returned nothing: $(/bin/busybox cat /tmp/cbmem.err 2>/dev/null | /bin/busybox head -1) (is iomem=relaxed on the cmdline?)"
+            exec /bin/busybox sh
+        fi
+    else
+        say "CAPTURE-FAILED: $LOG is unreadable or reads as 0 bytes — securityfs not mounted, or the firmware handed the kernel no event log (and no /bin/cbmem to read coreboot's cbmem log)"
+        /bin/busybox ls -la /sys/kernel/security/tpm0/ 2>&1
+        exec /bin/busybox sh
+    fi
 fi
 
+say "EVLOG-SRC=$LOGSRC"
 say "EVLOG-SIZE=$LOGSZ"
 say "EVLOG-B64-BEGIN"
 /bin/busybox base64 -w0 "$LOG"; say ""

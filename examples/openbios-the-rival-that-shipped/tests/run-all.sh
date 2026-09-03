@@ -54,6 +54,7 @@ tracks=(
     test-smoke-event-log.sh
     test-smoke-event-replay.sh
     test-smoke-event-real.sh
+    test-smoke-event-bench.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh

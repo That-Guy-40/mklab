@@ -875,6 +875,25 @@ the cell this section originally declared missing — in bold — is present.**
    `DEFERRED.md` already measured where that road leads (*"a PCR policy over a
    BIOS boot blesses any payload"*).
 
+**Item 2 — the comparison bench — DONE 2026-09-03 (`fixtures/coreboot-swtpm/`,
+`event-bench` track).** Three legs, one Linux reader, the firmware substrate the only
+variable: UEFI (edk2, `fixtures/edk2-swtpm/`), **measured coreboot → Linux**, and
+**measured coreboot → OpenBIOS → Linux** (OpenBIOS `boot`s the same kernel off a
+`piix3-ide` CD on q35). The named prerequisite turned out to be **measured boot, not
+VBOOT**: `TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2` on q35 (which `select`s
+`MEMORY_MAPPED_TPM`; the lab's i440fx ROMs cannot), built by `build-rom.sh` into
+isolated objdirs. Two things only the build could teach: coreboot's TPM 2.0-format log
+is **not what its ACPI TPM2 table publishes** (`acpi.c` points the log area at the TPM
+1.2-format cbmem id and creates an empty one), so the capture reads it out of cbmem with
+coreboot's own `cbmem` tool; and coreboot extends **only its SRTM PCR (2)**. What the
+bench then shows: the two coreboot logs are identical in entries 1–5 (FMAP, bootblock,
+romstage, postcar, ramstage) and differ in exactly one, `CBFS: fallback/payload` — and so
+in PCR 2; each replay reproduces its leg's own PCR 2; and the Linux leg's log with that
+*one* digest swapped for OpenBIOS's replays, **in Forth**, to exactly the OpenBIOS leg's
+PCR 2. "Replay the log, see what differs" became a comparison, and the comparison is
+explained. UEFI extends PCR 0–7 and differs from both. The quote stays UNKNOWN: three
+software TPMs. With this, every item in §12 and every spike of this plan is landed.
+
 **Hold off on treating this as its own lab plan until B.3's Spike 0 lands** —
 both items lean on the CBFS reader, which does not exist until the primitives do.
 This section is the note that keeps the direction from being lost: Spikes 2–3 have

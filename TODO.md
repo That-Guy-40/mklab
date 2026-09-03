@@ -667,12 +667,27 @@ requires of any other cached fact.
       linuxboot kernels have no TPM drivers; the capture uses `~/.cache/mklab-kernel/vmlinuz`
       (Ubuntu generic, TCG_TIS/CRB + SECURITYFS built in). Boundary: swtpm is software; the AK
       quote stays UNKNOWN.
-    - [ ] **⏭ NEXT STEP — B.3's remaining edges** (all spikes + the real-log edge complete):
-        1. **Spike 3's named UNCOVERED row** (plan §3 / review F5): the PCI option-ROM read is
-           still blocked (no config-space/port-I/O words bound); the live flash window is done.
-        2. **The comparison bench** (plan §12(2)) — needs a coreboot build with `CONFIG_VBOOT` +
-           a TPM, since today's ROMs measure nothing (review F4). With `fixtures/edk2-swtpm/`
-           the event-log half of that bench now has a proven reader+replay waiting for it.
+    - **The §12(2) COMPARISON BENCH — DONE 2026-09-03** (`fixtures/coreboot-swtpm/`, `event-bench`
+      track). One Linux reader through THREE firmware substrates — UEFI (edk2), measured coreboot →
+      Linux, measured coreboot → OpenBIOS → Linux — the firmware the only variable. The prerequisite
+      was **measured boot, not VBOOT** (`TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2` on q35, whose
+      `MEMORY_MAPPED_TPM` the lab's i440fx ROMs cannot select; `build-rom.sh` builds each payload's
+      ROM into an isolated objdir). Measured on the way: coreboot's TPM 2.0-format log is **not what
+      its ACPI TPM2 table publishes** (`acpi.c` uses the TPM 1.2-format cbmem id and creates an EMPTY
+      area; the guest reads the real log with coreboot's own `cbmem -r 54504d32` + `iomem=relaxed`);
+      coreboot extends **only PCR 2**; a 16 MiB ROM needed an xz initramfs (32 MiB SIGABRTs cbfstool);
+      q35 needs a `piix3-ide` for OpenBIOS's CD at `/ide@0/cdrom@0`; the typed boot line must stay
+      under 80 columns; one swtpm cannot serve QEMU and a host TCTI at once. THE RESULT: the two
+      coreboot logs are identical in entries 1–5 and differ in exactly one, `CBFS: fallback/payload`
+      (`391fd6c6…` vs `75f5ef77…`), and so in PCR 2; each replay reproduces its leg's own PCR 2; and
+      the Linux leg's log with that ONE digest swapped for OpenBIOS's replays **in Forth** to exactly
+      the OpenBIOS leg's PCR 2 — the comparison is explained, not just observed. UEFI extends PCR 0–7
+      and differs from both. Quote UNKNOWN (three software TPMs). **Every B.3 spike and every §12 item
+      is now landed.**
+    - [ ] **⏭ NEXT STEP — B.3's last edge:** Spike 3's named UNCOVERED row (plan §3 / review F5) —
+      the PCI option-ROM read is still blocked (no config-space/port-I/O words bound); the live flash
+      window is done. Either bind the port-I/O words (a firmware patch, expected per review F8) or
+      leave the row UNCOVERED by name.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

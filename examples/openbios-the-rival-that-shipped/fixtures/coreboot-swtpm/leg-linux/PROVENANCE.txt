@@ -1,0 +1,15 @@
+# PROVENANCE — captured 2026-09-03T06:40:33Z by capture.sh
+firmware:  /home/sqs/linuxboot-lab/coreboot/build-bench-linux/coreboot.rom  sha256=eb230c82377ffa1941f7a489a65dab4b47eb66da8d383c3241d85a668dfe193c
+coreboot:  commit c583b0c4  (/home/sqs/linuxboot-lab/coreboot/build-bench-linux/.config-* : TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2, q35)
+payload:   fallback/payload 0x251c0 simple elf 16070166 none
+swtpm:     TPM emulator version 0.7.3, Copyright (c) 2014-2021 IBM Corp.
+qemu:      QEMU emulator version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+kernel:    /home/sqs/.cache/mklab-kernel/vmlinuz  (version 6.8.0-137-generic)  sha256=76a7f2ef15fcbd2f5c25cd7e7b413f903b2078396063557f1dffb4a0b089a964
+tpm-dev:   tpm-tis (QEMU), swtpm --tpm2 ctrl=unixio
+accel:     kvm
+log-src:   cbmem  (securityfs = /sys/kernel/security/tpm0/binary_bios_measurements; cbmem = coreboot's CBMEM_ID_TPM2_TCG_LOG read with cbmem -r, trimmed by walking)
+
+# sha256 of the captured files
+51d1829f6a563aafada47b5512618e346bc1ea52752b07858e1ac98c0b2a08f4  binary_bios_measurements
+d57c9ec402858d464e3458e6b423916ac868d0d4028c52d2ebae2237f87825e5  pcrs-sha256.txt
+c8f0c8525189240795bc6870abf6941a05193ec5d1e724d8315e0ce560387c35  pcrs-sha1.txt
