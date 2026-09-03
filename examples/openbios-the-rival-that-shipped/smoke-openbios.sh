@@ -81,6 +81,12 @@ TRACK (default multiboot):
                               payload walks the CBFS of the VERY ROM that delivered
                               it, in its mapped flash window — graded vs cbfstool
                               and a QEMU-monitor xp observer (needs the amd64 ROM)
+  optrom                      B.3 Spike 3, the row that was UNCOVERED: a PCI option
+                              ROM read from REAL device memory (dsl/optrom.fth at the
+                              live ROM BAR, patch 55 publishes it + binds config-l@)
+                              and its FCode byte-loaded from there — the card's own
+                              program renames the node; x86 + amd64, graded vs QEMU's
+                              info pci / xp and one-byte controls (needs toke)
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -4489,6 +4495,178 @@ PY
     note "QUOTE: UNKNOWN — every leg's TPM is swtpm and every claim is a software TPM's; the bench proves the replays reproduce three firmwares' measurements and explains their difference, not that any machine is trustworthy."
     pass "B.3 §12(2) comparison bench: the same Linux reader captured through THREE firmware substrates — UEFI (edk2), measured coreboot → Linux, measured coreboot → OpenBIOS → Linux (fixtures/edk2-swtpm, fixtures/coreboot-swtpm; the coreboot ROMs built with TPM2 + TPM_MEASURED_BOOT + TPM_LOG_TPM2 on q35, their TCG2 logs read out of cbmem because coreboot's ACPI table publishes only the TPM 1.2-format area). Each coreboot leg: dsl/eventlog.fth walks its log to EVLOG-END and the replay's PCR2 equals the machine's own PCR2 and tpm2_eventlog's, with PCR0/1/3-7 zero as SRTM-only measured boot implies. THE COMPARISON: the two coreboot legs agree entry for entry on FMAP/bootblock/romstage/postcar/ramstage and differ in exactly one entry, CBFS: fallback/payload — and so in PCR2. THE EXPLANATION, IN FORTH: the Linux leg's log with that one digest swapped for OpenBIOS's replays to exactly the OpenBIOS leg's PCR2. The UEFI leg extends PCR0-7 and differs from both. Every fixture is bound to its PROVENANCE. QUOTE UNKNOWN: three software TPMs; the bench explains what differs and why, not who to trust"
     ;;
+  optrom)
+    # B.3 Spike 3, THE ROW THAT WAS UNCOVERED: a PCI expansion ROM read from REAL
+    # device memory, and the FCode it carries run from there. The plan named two
+    # blockers -- "this firmware binds no config-space words" and "the only FCode
+    # ROM in the repo is attached to OFW" -- and both dissolved on measurement
+    # (2026-09-03): OpenBIOS's own PCI allocator maps AND enables every device's
+    # ROM BAR (ob_pci_configure_bar, reg == 6) and merely never published it;
+    # patch 55 puts the register-30 entry in reg/assigned-addresses as the 1275
+    # PCI binding lists it and binds config-{b,w,l}@/!; the OFW lab's ROM says
+    # vendor/device ffff, "any card", so it rides an e1000 here just as well.
+    #
+    # THREE OBSERVERS, none trusting the firmware alone: QEMU's `info pci` reports
+    # BAR6 from outside; `xp` reads the same physical bytes, which must equal the
+    # ROM FILE on the host; config space (patch 55's words) must agree with the
+    # property. THE OUTCOME, not the mechanism: after byte-load the card's OWN
+    # program has renamed the node and stamped fcode-marker -- the OFW lab's
+    # success signature, reproduced on the rival. CONTROLS are derived from the
+    # subject and differ from it in ONE byte each: the same ROM typed x86 BIOS is
+    # refused by name, the same ROM with a broken signature is refused by name,
+    # and a device given no ROM reports none and has no BAR6 outside either.
+    # Then config-l! clears the enable bit and the header vanishes at the same
+    # address; setting it brings the header back -- a config WRITE with an effect.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    OFCU="${FCODE_UTILS:-$WORKDIR/fcode-utils}"; OTOKE="$OFCU/toke/toke"
+    # toke is built INSIDE the build container (Containerfile installs it to the
+    # image's /usr/local/bin), so on a host that only ever ran build-openbios.sh --
+    # CI's runner -- the pinned fcode-utils clone is there and its toke is not.
+    # Build it from that clone, in place: plain C, plain make, nothing fetched.
+    # (Found by CI on the first run of this track, 2026-09-03: a SKIP on the runner
+    # where the dev box, which had built toke by hand for the OFW lab, passed.)
+    if [[ ! -x "$OTOKE" && -f "$OFCU/toke/Makefile" ]] && command -v make >/dev/null && command -v cc >/dev/null; then
+      make -C "$OFCU/toke" >"$WORKDIR/toke-build.log" 2>&1 \
+        || note "building toke from $OFCU/toke failed (see $WORKDIR/toke-build.log)"
+    fi
+    [[ -x "$OTOKE" ]] || skip "no toke at $OTOKE and it could not be built from $OFCU/toke — run ./build-openbios.sh (which clones fcode-utils) or set FCODE_UTILS="
+    OAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; OADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    OXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   OXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$OAMB" "$OADI" "$OXMB" "$OXDI"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"; done
+    OFX="$HERE/fixtures/optrom"
+    for f in "$OFX/fcode-card.fth" "$OFX/build-fcode-rom.py" "$HERE/dsl/struct.fth" "$HERE/dsl/optrom.fth"; do
+      [[ -f "$f" ]] || fail "missing $f — this track stages the SHIPPED files, it does not re-implement them"
+    done
+    OWD="$WORKDIR/optrom"; rm -rf "$OWD"; mkdir -p "$OWD/stage"
+    # ── the subject, and the controls DERIVED from it ─────────────────────────
+    cp "$OFX/fcode-card.fth" "$OWD/"
+    ( cd "$OWD" && "$OTOKE" fcode-card.fth ) >"$OWD/toke.log" 2>&1 \
+      || fail "optrom: toke failed to tokenise fcode-card.fth: $(tail -2 "$OWD/toke.log" | tr '\n' '|')"
+    [[ -s "$OWD/fcode-card.fc" ]] || fail "optrom: toke produced no fcode-card.fc"
+    python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card.fc" "$OWD/fcode.rom" >/dev/null || fail "optrom: build-fcode-rom.py failed on the subject"
+    python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card.fc" "$OWD/x86type.rom" --code-type 0 >/dev/null || fail "optrom: could not build the x86-typed control"
+    python3 "$OFX/build-fcode-rom.py" "$OWD/fcode-card.fc" "$OWD/badsig.rom" --bad-sig >/dev/null || fail "optrom: could not build the bad-signature control"
+    # a control must differ from the subject in EXACTLY one byte, or its refusal
+    # could be about something else
+    for c in x86type badsig; do
+      nd=$(cmp -l "$OWD/fcode.rom" "$OWD/$c.rom" 2>/dev/null | wc -l)
+      [[ "$nd" -eq 1 ]] || fail "optrom: the $c control differs from the subject in $nd bytes, not 1 — a refusal would not name one cause"
+    done
+    OROMH="${FCODE_UTILS:-$WORKDIR/fcode-utils}/romheaders/romheaders"
+    if [[ -x "$OROMH" ]]; then
+      "$OROMH" "$OWD/fcode.rom" 2>/dev/null | grep -q 'Code Type: 0x01' \
+        || fail "optrom: romheaders (fcode-utils) does not see an Open Firmware image in the subject ROM"
+      note "subject: fcode-card.fth → toke → $(stat -c%s "$OWD/fcode.rom")-byte PCI ROM (romheaders: Open Firmware image); controls: the same bytes with code type 0 / signature 55ab, one byte each"
+    else
+      note "subject built; romheaders not present, host-side validation skipped (the firmware and QEMU's monitor grade it below)"
+    fi
+    cp "$HERE/dsl/struct.fth" "$OWD/stage/STRUCT.FTH"; cp "$HERE/dsl/optrom.fth" "$OWD/stage/OPTROM.FTH"
+    genisoimage -quiet -o "$OWD/dsl.iso" -V DSL -r -J "$OWD/stage" 2>/dev/null || fail "optrom: genisoimage failed"
+    OSUBJ64="$(od -An -tx1 -N64 "$OWD/fcode.rom" | tr -d ' \n')"   # od, not xxd: coreutils only
+    _omon() {  # _omon <monitor-sock> <hmp command...> -> the monitor's raw reply
+      python3 - "$@" <<'PY'
+import socket, sys, time
+sock, cmd = sys.argv[1], " ".join(sys.argv[2:])
+s = socket.socket(socket.AF_UNIX)
+for _ in range(60):
+    try: s.connect(sock); break
+    except OSError: time.sleep(0.5)
+else: sys.exit("no monitor")
+time.sleep(0.3); s.recv(65536); s.sendall((cmd + "\n").encode()); time.sleep(1.2); s.settimeout(2)
+out = b""
+try:
+    while True:
+        b = s.recv(1 << 20)
+        if not b: break
+        out += b
+except socket.timeout: pass
+sys.stdout.write(out.decode(errors="replace"))
+PY
+    }
+    OP="/pci8086,1237@0"   # the pc machine's host bridge, as this firmware names it
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$OAMB"; DI="$OADI"; else MB="$OXMB"; DI="$OXDI"; fi
+      OSER="/tmp/or-$A-$$.sock"; OMON="/tmp/orm-$A-$$.sock"; OLOG="$OWD/$A.log"; rm -f "$OSER" "$OMON" "$OLOG"
+      # four e1000s in slots 3..6: the subject, the x86-typed control, NO ROM
+      # (romfile= empty is QEMU's "none"), and the broken-signature control
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" -nic none \
+        -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/x86type.rom" \
+        -device "e1000,romfile=" -device "e1000,romfile=$OWD/badsig.rom" \
+        -cdrom "$OWD/dsl.iso" -display none -serial "unix:$OSER,server=on" \
+        -monitor "unix:$OMON,server=on,wait=off" -no-reboot >"$OWD/$A.qemu.log" 2>&1 &
+      OQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$OSER" "$OLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\OPTROM.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send "dev $OP/e1000@3 .fcode-marker optrom-report optrom-cfg\r" --expect "0 > " \
+        --send "dev $OP/e1000@4 optrom-report optrom-cfg optrom-run\r" --expect "0 > " \
+        --send "dev $OP/e1000@5 optrom-report optrom-cfg\r" --expect "0 > " \
+        --send "dev $OP/e1000@6 optrom-report optrom-run\r" --expect "0 > " \
+        --send "dev $OP/e1000@3 optrom-disable optrom-sig optrom-cfg\r" --expect "0 > " \
+        --send 'optrom-enable optrom-sig optrom-cfg\r' --expect "0 > " \
+        --send 'optrom-run .fcode-marker\r' --expect "0 > " \
+        --send "dev $OP ls\r" --expect "0 > "
+      ORC=$?
+      OG="$(tr -d '\r' < "$OLOG" 2>/dev/null)"
+      # the observers outside, while QEMU is still up
+      OPCI="$(_omon "$OMON" info pci)"
+      osec()  { sed -n "\\|$1|,\\|^0 > |p" <<<"$OG"; }   # the echoed command through the next prompt
+      # "      BAR6: 32 bit memory at 0x41040000 [0x410407ff]." -> the 6th field
+      obar6() { awk -v d="device   $1," '$0 ~ d {f=1} f && /BAR6/ {print $6; exit} f && /^  Bus/ && $0 !~ d {f=0}' <<<"$OPCI"; }
+      [[ $ORC -eq 0 ]] || { kill "$OQ" 2>/dev/null; fail "optrom on $A: the prompt driver did not complete (rc=$ORC) — see $OLOG"; }
+      S3="$(osec "e1000@3 .fcode-marker")"
+      grep -q 'MARK=none' <<<"$S3" || { kill "$OQ" 2>/dev/null; fail "optrom on $A: fcode-marker is already on e1000@3 BEFORE any byte-load — the outcome would be pre-written: $(grep -o 'MARK=[^ ]*' <<<"$S3" | head -1)"; }
+      OPHYS="$(grep -oE 'optrom\| phys=[0-9a-f]+' <<<"$S3" | head -1 | cut -d= -f2)"
+      [[ -n "$OPHYS" ]] || { kill "$OQ" 2>/dev/null; fail "optrom on $A: the firmware found no expansion ROM in e1000@3's assigned-addresses — patch 55's register-30 entry is missing: $(grep -o 'optrom|.*' <<<"$S3" | head -1)"; }
+      OXPB="$(_omon "$OMON" "xp /64xb 0x$OPHYS" | grep -E '^[0-9a-f]{16}:' | grep -oE '0x[0-9a-f]{2}' | cut -c3- | tr -d '\n')"
+      kill "$OQ" 2>/dev/null   # by PID, never by pattern
+      OB6="$(obar6 3)"; OB6="${OB6#0x}"
+      [[ -n "$OB6" ]] || fail "optrom on $A: QEMU's info pci shows no BAR6 for device 3 — the ROM BAR was never assigned"
+      [[ "$OPHYS" == "$OB6" ]] || fail "optrom on $A: the firmware says the ROM is at $OPHYS but QEMU's own info pci puts BAR6 at $OB6 — the published entry is not the device's"
+      grep -q 'sig=aa55 pcir=50434952 vendor=ffff device=ffff imglen=800 indicator=80 type=1 open-firmware fcode@40' <<<"$S3" \
+        || fail "optrom on $A: the header read at the live BAR is not the subject's: $(grep -o 'optrom| sig=.*' <<<"$S3" | head -1)"
+      OWANT="$(printf '%x' $((16#$OPHYS | 1)))"
+      OCFG="$(grep -oE 'cfg\| id=[0-9a-f]+ rom=[0-9a-f]+' <<<"$S3" | head -1)"
+      [[ "$OCFG" == "cfg| id=100e8086 rom=$OWANT" ]] \
+        || fail "optrom on $A: config space (config-l@) disagrees with the property — got '$OCFG', want id=100e8086 (device 100e, vendor 8086) and rom=$OWANT (the same address with the ENABLE bit set)"
+      [[ "$OXPB" == "$OSUBJ64" ]] \
+        || fail "optrom on $A: QEMU's xp of 64 bytes at 0x$OPHYS [${OXPB:0:24}…] != the ROM file [${OSUBJ64:0:24}…] — the mapped window is not the ROM"
+      note "$A: e1000@3's ROM at 0x$OPHYS (= QEMU's BAR6); config-l@ reads id=100e8086 rom=$OWANT (enable bit set); header aa55/PCIR/ffff/ffff/type 1 at the live BAR; xp's 64 bytes == the ROM file"
+      # ── controls ──────────────────────────────────────────────────────────
+      S4="$(osec "e1000@4 optrom-report")"
+      grep -q 'type=0 x86-bios' <<<"$S4" || fail "optrom on $A: the x86-typed control did not read back as code type 0: $(grep -o 'optrom| sig=.*' <<<"$S4" | head -1)"
+      grep -q 'NOT-FCODE, not run' <<<"$S4" || fail "optrom CONTROL on $A: optrom-run did not refuse the x86-typed ROM by name — it would byte-load x86 code as FCode"
+      S5="$(osec "e1000@5 optrom-report")"
+      grep -q 'optrom| none' <<<"$S5" || fail "optrom on $A: the ROM-less device did not report none: $(grep -o 'optrom|.*' <<<"$S5" | head -1)"
+      grep -qE 'rom=0\b' <<<"$S5" || fail "optrom on $A: config space shows a ROM base register on the ROM-less device: $(grep -o 'cfg|.*' <<<"$S5" | head -1)"
+      [[ -z "$(obar6 5)" ]] || fail "optrom on $A: QEMU's info pci shows a BAR6 for device 5, which was given no ROM"
+      S6="$(osec "e1000@6 optrom-report")"
+      grep -q 'sig=ab55 BAD-SIG' <<<"$S6" || fail "optrom CONTROL on $A: the broken-signature ROM was not refused by name: $(grep -o 'optrom|.*' <<<"$S6" | head -1)"
+      grep -q 'NOT-FCODE, not run' <<<"$S6" || fail "optrom CONTROL on $A: optrom-run did not refuse the broken-signature ROM"
+      note "$A: controls — the x86-typed ROM reads as type 0 and is refused; the ROM-less device: none, rom=0, no BAR6 outside; the broken signature is refused as BAD-SIG"
+      # ── config-l!: the enable bit off and on, the header vanishing and returning ──
+      S7="$(osec "e1000@3 optrom-disable")"
+      { grep -qE 'sig=0\b' <<<"$S7" && grep -qE "rom=$OPHYS\b" <<<"$S7"; } \
+        || fail "optrom on $A: clearing the ROM enable bit through config-l! did not take: $(grep -oE 'sig=[0-9a-f]+|rom=[0-9a-f]+' <<<"$S7" | tr '\n' ' ')(want sig=0 and rom=$OPHYS)"
+      S8="$(osec "optrom-enable optrom-sig")"
+      { grep -qE 'sig=aa55\b' <<<"$S8" && grep -qE "rom=$OWANT\b" <<<"$S8"; } \
+        || fail "optrom on $A: setting the ROM enable bit back did not bring the header back: $(grep -oE 'sig=[0-9a-f]+|rom=[0-9a-f]+' <<<"$S8" | tr '\n' ' ')"
+      note "$A: config-l! cleared the ROM's enable bit and the header read 0 at 0x$OPHYS; set it again and aa55 is back — a config-space write with a device effect"
+      # ── THE OUTCOME: byte-load from the live ROM; the card names its node ─────
+      S9="$(osec "optrom-run .fcode-marker")"
+      grep -q 'byte-load fcode@' <<<"$S9" || fail "optrom on $A: optrom-run did not byte-load the subject: $(grep -o 'optrom|.*' <<<"$S9" | head -1)"
+      grep -q 'MARK=FCODE-FROM-CARD-RAN' <<<"$S9" \
+        || fail "optrom on $A: after byte-load from the live ROM, fcode-marker is '$(grep -o 'MARK=[^ ]*' <<<"$S9" | tail -1)' — the FCode did not run, or ran into the wrong node"
+      S10="$(osec "dev $OP ls")"
+      grep -q 'fcode-card@3' <<<"$S10" || fail "optrom on $A: the bus listing still names slot 3 '$(grep -oE '[A-Za-z0-9,-]+@3' <<<"$S10" | head -1)' — the card's device-name did not rename its node"
+      grep -q 'e1000@4' <<<"$S10" || fail "optrom on $A: e1000@4 (a control, never byte-loaded) is gone from the bus listing"
+      note "$A: byte-load straight out of the ROM — the card's own FCode renamed e1000@3 to fcode-card@3 and stamped fcode-marker=FCODE-FROM-CARD-RAN (the OFW lab's success signature, on the rival); e1000@4/5/6 untouched"
+    done
+    note "ppc: the patched firmware publishes the entry there too (assigned-addresses 02001030 … 800a0000, size 800) and config-l@ answers rom=800a0001 — measured 2026-09-03; the ROM READ on ppc needs pci-map-in (a bus address on mac99), which is NOT done: a named gap, not a skip"
+    pass "B.3 Spike 3, the row that was UNCOVERED: a PCI option ROM read from REAL device memory, on x86 AND amd64. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. ppc publishes and answers config-l@; its ROM read (pci-map-in) is a NAMED GAP"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -5883,5 +6061,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|unix]" >&2; exit 1 ;;
 esac

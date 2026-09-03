@@ -97,7 +97,7 @@ Per house rule, the load-bearing claims were measured first, not assumed:
 | the event log is verifiable without hardware | the extend is a pure function | ✅ replay `H(PCR‖digest)`; `tpm2_eventlog` is the external oracle. SHA-256 *was* the crux dependency (Spike 1 risk) — **landed 2026-09-03 as `dsl/sha256.fth`**, NIST vectors green on all four arches (`event-replay`). |
 | the oracle's verbs actually work ([review F2](REVIEW-preboot-structure-toolkit-plan.md#f2--10-rests-on-cbfstool-extract-which-this-repo-has-already-measured-failing)) | run `cbfstool print`/`extract` on the lab's own ROM | ✅ re-measured 2026-09-01: `print` works; `extract` works on `raw` entries (LZMA decompressed too) **and on the payload with `-m x86`** — the 2026-08-27 "cannot extract a payload at all" in `tools/openbios-rom-provenance.sh` was a run missing the `-m ARCH` flag the error itself names (now corrected there). The extracted payload is a **reconstituted** ELF (segments only — different size and sha256 than the input), so §10's surgery round-trip byte-compares are scoped to `raw` entries; the payload is graded by `print` metadata + reconstituted-extract parseability. |
 | the four-arch matrix has a door on every arch ([review F3](REVIEW-preboot-structure-toolkit-plan.md#f3--the-four-arch-matrix-does-not-exist-yet-and-two-of-its-rows-have-no-door)) | boot each arch, deliver `struct.fth`, run the G2 controls | ✅ **measured 2026-09-01 — Spike −1 below.** Both "missing" doors existed in the shipped builds; no reflow, no dictionary bake, no new C. |
-| Spike 3 has a reachable subject ([review F5](REVIEW-preboot-structure-toolkit-plan.md#f5--spike-3s-subject-is-the-one-feasibility-claim-3-did-not-check-and-the-reachable-one-is-121)) | the poke-engine review's did-not-prove list + the `flash-writer` track | ⚠️ the PCI option-ROM read is **blocked** (no config-space/port-I/O words bound) and stays a named UNCOVERED row; the reachable subject is §12(1)'s live ROM window (`flash-writer` already reads CFI at `0xffbe0000` through `>virt`) — Spike 3 is re-aimed there. |
+| Spike 3 has a reachable subject ([review F5](REVIEW-preboot-structure-toolkit-plan.md#f5--spike-3s-subject-is-the-one-feasibility-claim-3-did-not-check-and-the-reachable-one-is-121)) | the poke-engine review's did-not-prove list + the `flash-writer` track | ✅ **COVERED 2026-09-03** (`optrom` track, patch 55, `dsl/optrom.fth`): the read needed no port I/O at all — the allocator had already mapped *and enabled* every device's ROM BAR and only never published it; patch 55 publishes the register-30 entry and binds `config-{b,w,l}@`/`!`, and the OFW lab's FCode ROM byte-loads from the live BAR on x86 and amd64. *(Was: "blocked — no config-space/port-I/O words bound — and stays a named UNCOVERED row";)* the reachable subject is §12(1)'s live ROM window (`flash-writer` already reads CFI at `0xffbe0000` through `>virt`) — Spike 3 is re-aimed there. |
 
 ---
 
@@ -571,6 +571,31 @@ the mapped ROM window matches both the host-side file walk and `cbfstool print`;
 a `region-snap`/`region-diff` shows a firmware-caused change; the option-ROM row
 prints as UNCOVERED with its blockers named.
 
+**The option-ROM row — COVERED 2026-09-03 (`optrom` track, patch 55,
+`dsl/optrom.fth`, `fixtures/optrom/`).** Measured before anything was written:
+OpenBIOS's own PCI allocator already assigns *and enables* every device's
+expansion ROM base register (`ob_pci_configure_bar`, `reg == 6`) — QEMU's
+`info pci` showed BAR6 assigned and `xp` read the `0x55AA` header there — and
+then published nothing: `reg`/`assigned-addresses` stopped at the BARs. So the
+first blocker was not "no config-space words" but "nobody said where"; patch 55
+publishes the register-`30` entry as the 1275 PCI binding lists it **and** binds
+the binding's `config-{b,w,l}@`/`!` as global words (after `device_end()`, per
+patches 14/16). The second blocker was never one: the OFW lab's ROM says
+vendor/device `ffff`, "any card". On **x86 and amd64** the firmware finds the
+ROM from the property at the address QEMU reports for BAR6, reads the same
+address (enable bit set) and the vendor/device from config space, parses the
+ROM header and `PCIR` at the live BAR through the device-register backend —
+QEMU's `xp` of those bytes equals the ROM **file** — and **`byte-load`s the FCode
+straight out of the ROM**: the card's own program renames the node to
+`fcode-card` and stamps `fcode-marker = FCODE-FROM-CARD-RAN`, the OFW lab's
+success signature on the rival firmware from the same artifact. Controls differ
+from the subject by **one byte** and are refused by name (code type 0 →
+`NOT-FCODE`; signature `55ab` → `BAD-SIG`); a ROM-less device is `none` inside
+and has no BAR6 outside. `config-l!` clears the enable bit and the header
+vanishes at the same address, then returns. **ppc** publishes the entry and
+answers `config-l@` (`rom=800a0001`); its ROM *read* needs `pci-map-in` (a bus
+address on mac99) and is a **named gap**, not a skip.
+
 ---
 
 ## 6. What this is NOT (scope guards)
@@ -681,7 +706,9 @@ Docs, `link_check.py`, and the patch record stay green at every step.
 - **Spike 3:** the **live** CBFS walk from the mapped ROM window on `amd64`/`x86`
   matches both the host-side file walk and `cbfstool print`; a region diff shows a
   firmware-caused change; the option-ROM read prints as UNCOVERED with its blockers
-  named.
+  named. *(✅ 2026-09-03: the option-ROM row is no longer UNCOVERED — the `optrom`
+  track reads a real option ROM at its live BAR and byte-loads its FCode on
+  x86/amd64; see §5.)*
 
 ---
 

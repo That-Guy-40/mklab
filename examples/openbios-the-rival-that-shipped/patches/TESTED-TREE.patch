@@ -1871,7 +1871,7 @@ index 17cf202..bf0af39 100644
  
  #endif				/* ! ASM */
 diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
-index 15d3b62..dc47b27 100644
+index 15d3b62..2c2867f 100644
 --- a/arch/amd64/openbios.c
 +++ b/arch/amd64/openbios.c
 @@ -9,12 +9,23 @@
@@ -1949,7 +1949,7 @@ index 15d3b62..dc47b27 100644
  static void init_memory(void)
  {
  	/* push start and end of available memory to the stack
-@@ -35,19 +90,199 @@ static void init_memory(void)
+@@ -35,19 +90,202 @@ static void init_memory(void)
  	PUSH(0x9FFFF);
  }
  
@@ -2144,6 +2144,9 @@ index 15d3b62..dc47b27 100644
 +	amd64_publish_available();
 +
  	bind_func("platform-boot", boot );
++	/* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
++	 * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
++	ob_pci_bind_config_words();
 +
 +	/* Spike 2: expose the context-switch self-test at the prompt, so the
 +	 * checkpoint can be driven the same way every other one is. */
@@ -2151,7 +2154,7 @@ index 15d3b62..dc47b27 100644
  }
  
  extern struct _console_ops arch_console_ops;
-@@ -65,11 +300,48 @@ int openbios(void)
+@@ -65,11 +303,48 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -2204,7 +2207,7 @@ index 15d3b62..dc47b27 100644
  	forth_init();
  
  	relocate(&sys_info);
-@@ -106,3 +378,116 @@ int openbios(void)
+@@ -106,3 +381,116 @@ int openbios(void)
  
  	return 0;
  }
@@ -3119,6 +3122,20 @@ index 5b3fcc1..d2826e2 100644
      info->boot_arg = boot_ctx->param[0];
      debug("boot eax = %#lx\n", info->boot_type);
      debug("boot ebx = %#lx\n", info->boot_data);
+diff --git a/arch/ppc/qemu/init.c b/arch/ppc/qemu/init.c
+index 253394c..8670e9a 100644
+--- a/arch/ppc/qemu/init.c
++++ b/arch/ppc/qemu/init.c
+@@ -1220,6 +1220,9 @@ arch_of_init(void)
+     bind_func("(adler32)", adler32);
+     
+     bind_func("platform-boot", boot);
++    /* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
++     * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
++    ob_pci_bind_config_words();
+     bind_func("(arch-go)", arch_go);
+ 
+     /* Allocate 8MB memory at load-base */
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
 index cb9757e..26c37f3 100644
 --- a/arch/unix/unix.c
@@ -3846,7 +3863,7 @@ index fd0fe97..920a561 100644
  /* magic number passed by multiboot-compliant boot loader.  */
  #define MULTIBOOT_BOOTLOADER_MAGIC	0x2BADB002
 diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
-index 1274d2b..73eebd7 100644
+index 1274d2b..4e5f41d 100644
 --- a/arch/x86/openbios.c
 +++ b/arch/x86/openbios.c
 @@ -21,6 +21,15 @@
@@ -4288,7 +4305,7 @@ index 1274d2b..73eebd7 100644
  	modules_init();
  #ifdef CONFIG_DRIVER_PCI
  	arch = &default_pci_host;
-@@ -82,11 +495,85 @@ arch_init( void )
+@@ -82,11 +495,88 @@ arch_init( void )
  	init_video();
  	node_methods_init();
  #endif
@@ -4345,6 +4362,9 @@ index 1274d2b..73eebd7 100644
 +
  	bind_func("platform-boot", boot );
 -}
++	/* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
++	 * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
++	ob_pci_bind_config_words();
  
 -extern struct _console_ops arch_console_ops;
 +	/* x86 relocates itself by REBASING THE GDT data segment (see
@@ -4376,7 +4396,7 @@ index 1274d2b..73eebd7 100644
  
  int openbios(void)
  {
-@@ -101,10 +588,22 @@ int openbios(void)
+@@ -101,10 +591,22 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -5130,7 +5150,7 @@ index f6abb7b..c277f18 100644
  #define WIN_PACKET		0xA0
  #define WIN_IDENTIFY_PACKET	0xA1
 diff --git a/drivers/pci.c b/drivers/pci.c
-index f30e427..556fbee 100644
+index f30e427..3c68753 100644
 --- a/drivers/pci.c
 +++ b/drivers/pci.c
 @@ -60,13 +60,41 @@ const pci_arch_t *arch;
@@ -5206,7 +5226,51 @@ index f30e427..556fbee 100644
  
  	PCI_DPRINTF("setting bus range for %s PCI device, "
  	        "package handle " FMT_ucellx " "
-@@ -877,8 +905,8 @@ static void pci_set_assigned_addresses(phandle_t phandle,
+@@ -854,11 +882,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
+ 			     ncells * sizeof(cell));
+ }
+ 
++/* -- mklab, B.3 Spike 3: the expansion ROM, PUBLISHED --------------------------
++ * ob_pci_configure_bar() allocates the expansion ROM base register like any
++ * BAR and sets its ENABLE bit (`reg == 6` there), so under this firmware a
++ * device's option ROM is mapped and readable -- and then nothing says where:
++ * pci_set_reg() and pci_set_assigned_addresses() stop at the BARs. The 1275
++ * PCI bus binding (2.2.1.1 "reg", 4.1.2 "assigned-addresses") lists the ROM
++ * base register -- 0x30, or 0x38 in a bridge header -- beside them, and a
++ * Forth reader has no other way to learn the address short of config space,
++ * which this firmware did not bind either (ob_pci_bind_config_words, below).
++ * Measured 2026-09-03 on x86 and amd64: QEMU's `info pci` showed BAR6
++ * assigned at 0x41120000 and `xp` read the 0x55AA header there, while the
++ * node's assigned-addresses carried BAR0 and BAR1 only.
++ * The ROM slot is config->{regions,assigned,sizes}[num_bars], one past the
++ * BARs (ob_pci_configure()'s loop lands there, 64-bit BARs included). Its
++ * low bit is ENABLE, not I/O, so it must not go through pci_decode_pci_addr():
++ * a ROM is a 32-bit, non-prefetchable memory region with an 11-bit mask. */
++static int pci_encode_rom_entry(u32 *props, const pci_config_t *config,
++                                int num_bars, uint32_t value)
++{
++	int ncells;
++
++	if (!config->sizes[num_bars])
++		return 0;
++	ncells = pci_encode_phys_addr(props, 0, MEMORY_SPACE_32, config->dev,
++				      num_bars == 6 ? PCI_ROM_ADDRESS
++						    : PCI_ROM_ADDRESS1,
++				      value & PCI_ROM_ADDRESS_MASK);
++	ncells += pci_encode_size(props + ncells, config->sizes[num_bars]);
++	return ncells;
++}
++
+ static void pci_set_assigned_addresses(phandle_t phandle,
+                                        const pci_config_t *config, int num_bars)
+ {
+ 	phandle_t dev = phandle;
+-	u32 props[32];
++	u32 props[40];		/* 6 BARs + the ROM, 5 cells each (was 32: no room for the ROM) */
+ 	int ncells;
+ 	int i;
+ 	uint32_t mask;
+@@ -877,9 +936,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
  				     PCI_BASE_ADDR_0 + (i * sizeof(uint32_t)),
  				     config->assigned[i] & ~mask);
  
@@ -5215,9 +5279,32 @@ index f30e427..556fbee 100644
 +		props[ncells++] = __cpu_to_be32(0x00000000);
 +		props[ncells++] = __cpu_to_be32(config->sizes[i]);
  	}
++	/* mklab: the expansion ROM, as assigned (and enabled) above */
++	ncells += pci_encode_rom_entry(props + ncells, config, num_bars,
++				       config->assigned[num_bars]);
  	if (ncells)
  		set_property(dev, "assigned-addresses", (char *)props,
-@@ -965,7 +993,7 @@ static void pci_set_ranges(const pci_config_t *config)
+ 			     ncells * sizeof(props[0]));
+@@ -908,7 +970,7 @@ static void pci_set_reg(phandle_t phandle,
+                         pci_config_t *config, int num_bars)
+ {
+ 	phandle_t dev = phandle;
+-	u32 props[38];
++	u32 props[45];		/* config + 6 BARs + the ROM, 5 cells each (was 38) */
+ 	int ncells;
+ 	int i;
+ 	uint32_t mask;
+@@ -938,6 +1000,9 @@ static void pci_set_reg(phandle_t phandle,
+ 		/* set size */
+ 		ncells += pci_encode_size(props + ncells, config->sizes[i]);
+ 	}
++	/* mklab: the expansion ROM base register, as the binding lists it */
++	ncells += pci_encode_rom_entry(props + ncells, config, num_bars,
++				       config->regions[num_bars]);
+ 
+ 	set_property(dev, "reg", (char *)props, ncells * sizeof(props[0]));
+     ob_pci_reload_device_path(dev, config);
+@@ -965,7 +1030,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* child address */
  
@@ -5226,7 +5313,7 @@ index f30e427..556fbee 100644
  
  		/* parent address */
  
-@@ -977,7 +1005,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -977,7 +1042,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* size */
  
@@ -5235,7 +5322,7 @@ index f30e427..556fbee 100644
    	}
  	set_property(dev, "ranges", (char *)props, ncells * sizeof(props[0]));
  }
-@@ -1096,15 +1124,15 @@ int ebus_config_cb(const pci_config_t *config)
+@@ -1096,15 +1161,15 @@ int ebus_config_cb(const pci_config_t *config)
          pci_decode_pci_addr(config->assigned[i],
                              &flags, &space_code, &mask);
  
@@ -5254,7 +5341,7 @@ index f30e427..556fbee 100644
  
          /* Store base of IO space for NVRAM */
          if (io_phys_base == 0x0 && space_code == IO_SPACE) {
-@@ -1834,6 +1862,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+@@ -1834,6 +1899,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
          } else {
              BIND_NODE_METHODS(phandle, ob_pci_bus_node);
          }
@@ -5297,7 +5384,7 @@ index f30e427..556fbee 100644
          break;
      }
  
-@@ -2054,7 +2118,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2054,7 +2155,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
                  val = (u32 *)reg;
  
                  for (i = 0; i < (len / sizeof(u32)); i += 5) {
@@ -5307,6 +5394,81 @@ index f30e427..556fbee 100644
  
                      /* Device address is in 1st 32-bit word of encoded PCI address for config space */
                      if ((addr & PCI_RANGE_TYPE_MASK) == PCI_RANGE_CONFIG) {
+@@ -2080,6 +2182,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+     }
+ }
+ 
++/* -- mklab, B.3 Spike 3: config-space accessors --------------------------------
++ * The 1275 PCI bus binding's config-{b,w,l}@ ( config-addr -- data ) and
++ * config-{b,w,l}! ( data config-addr -- ), config-addr in the phys.hi form
++ * bus<<16 | dev<<11 | fn<<8 | reg -- the first cell of a node's own "reg"
++ * property, plus the register. The binding places them as PCI bus-node methods
++ * an FCode driver reaches through my-space; this firmware's FCode table has no
++ * entry for them and nothing else bound any config-space (or port-I/O) word on
++ * any arch here, so they are bound as GLOBAL words -- the seam a Forth reader
++ * can actually reach -- and the lab names that placement. Each arch calls
++ * ob_pci_bind_config_words() from arch_init AFTER device_end(): a bind_func
++ * inside ob_pci_init() would land before the dictionary is searchable, the
++ * exact shape of patches 14/16. Reads and writes go through the SAME
++ * pci_config_read{8,16,32}() and their write twins the enumerator uses, so what Forth sees
++ * is what ob_pci_configure() saw. */
++static pci_addr config_addr_to_pci_addr(ucell a)
++{
++	return PCI_ADDR(PCI_BUS(a), PCI_DEV(a), PCI_FN(a));
++}
++
++static void forth_config_b_read(void)
++{
++	ucell a = POP();
++	PUSH(pci_config_read8(config_addr_to_pci_addr(a), a & 0xff));
++}
++
++static void forth_config_w_read(void)
++{
++	ucell a = POP();
++	PUSH(pci_config_read16(config_addr_to_pci_addr(a), a & 0xfe));
++}
++
++static void forth_config_l_read(void)
++{
++	ucell a = POP();
++	PUSH(pci_config_read32(config_addr_to_pci_addr(a), a & 0xfc));
++}
++
++static void forth_config_b_write(void)
++{
++	ucell a = POP();
++	ucell v = POP();
++	pci_config_write8(config_addr_to_pci_addr(a), a & 0xff, v);
++}
++
++static void forth_config_w_write(void)
++{
++	ucell a = POP();
++	ucell v = POP();
++	pci_config_write16(config_addr_to_pci_addr(a), a & 0xfe, v);
++}
++
++static void forth_config_l_write(void)
++{
++	ucell a = POP();
++	ucell v = POP();
++	pci_config_write32(config_addr_to_pci_addr(a), a & 0xfc, v);
++}
++
++void ob_pci_bind_config_words(void)
++{
++	bind_func("config-b@", forth_config_b_read);
++	bind_func("config-w@", forth_config_w_read);
++	bind_func("config-l@", forth_config_l_read);
++	bind_func("config-b!", forth_config_b_write);
++	bind_func("config-w!", forth_config_w_write);
++	bind_func("config-l!", forth_config_l_write);
++}
++
+ int ob_pci_init(void)
+ {
+     int bus, devnum, fn;
 diff --git a/forth/admin/nvram.fs b/forth/admin/nvram.fs
 index 3fbd935..c4ce58f 100644
 --- a/forth/admin/nvram.fs
@@ -5864,10 +6026,19 @@ index 9be1cb8..a7a2bc1 100644
  extern unsigned long virt_offset;
  
 diff --git a/include/drivers/drivers.h b/include/drivers/drivers.h
-index 3d6fa12..a1fc1bc 100644
+index 3d6fa12..b540c4d 100644
 --- a/include/drivers/drivers.h
 +++ b/include/drivers/drivers.h
-@@ -63,6 +63,11 @@ void kbd_init(uint64_t base);
+@@ -16,6 +16,8 @@
+ #ifdef CONFIG_DRIVER_PCI
+ /* drivers/pci.c */
+ int ob_pci_init(void);
++/* mklab, B.3 Spike 3: the 1275 config-{b,w,l}@/! words; call AFTER device_end() */
++void ob_pci_bind_config_words(void);
+ #endif
+ 
+ #if defined(CONFIG_DRIVER_PCI) || defined(CONFIG_DRIVER_ESCC)
+@@ -63,6 +65,11 @@ void kbd_init(uint64_t base);
  int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
                  uint32_t io_port1, uint32_t ctl_port1);
  void ob_ide_quiesce(void);
@@ -5879,7 +6050,7 @@ index 3d6fa12..a1fc1bc 100644
  int macio_ide_init(const char *path, uint32_t addr, int nb_channels);
  #endif
  #ifdef CONFIG_DRIVER_ESP
-@@ -113,6 +118,11 @@ extern uint32_t cmdline_size;
+@@ -113,6 +120,11 @@ extern uint32_t cmdline_size;
  extern char boot_device;
  #endif
  #ifdef CONFIG_DRIVER_FLOPPY

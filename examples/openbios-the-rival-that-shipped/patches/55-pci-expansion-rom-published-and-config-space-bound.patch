@@ -1,0 +1,259 @@
+Subject: [PATCH 55/55] drivers/pci: publish the expansion ROM, bind the 1275 config-space words
+
+Arch-tested: x86 amd64 ppc unix
+
+B.3 Spike 3's original subject -- a PCI option ROM's header read from REAL device
+memory -- was kept as a named UNCOVERED row because "this firmware binds no
+config-space or port-I/O words" (the poke-engine review's did-not-prove list,
+2026-08-30). Measured 2026-09-03, the row was closer than the plan said:
+ob_pci_configure_bar() already allocates every device's expansion ROM base
+register like a BAR and SETS ITS ENABLE BIT (`reg == 6`), so under this firmware
+an option ROM is mapped and readable -- QEMU's `info pci` showed BAR6 assigned at
+0x41120000 and `xp` read the 0x55AA header there -- and then nothing said where:
+pci_set_reg() and pci_set_assigned_addresses() stop at the BARs, so a node's
+assigned-addresses carried BAR0/BAR1 only. Two things, both small:
+
+1. THE ROM BASE REGISTER IS PUBLISHED. The 1275 PCI bus binding (2.2.1.1 "reg",
+   4.1.2 "assigned-addresses") lists it -- 0x30, or 0x38 in a bridge header --
+   beside the BARs. The ROM slot is config->{regions,assigned,sizes}[num_bars],
+   one past the BARs; its low bit is ENABLE, not I/O, so it goes through its own
+   encoder (pci_encode_rom_entry: 32-bit non-prefetchable memory, 11-bit mask)
+   rather than pci_decode_pci_addr(). The property buffers grow to hold a seventh
+   entry (32 and 38 cells had no room for one -- 7 x 5 = 35, and reg carries the
+   config-space entry too).
+
+2. config-{b,w,l}@ ( config-addr -- data ) and config-{b,w,l}! ( data config-addr
+   -- ), config-addr in the phys.hi form bus<<16 | dev<<11 | fn<<8 | reg -- the
+   first cell of a node's own "reg" property plus the register. The binding
+   places them as PCI bus-node methods an FCode driver reaches through my-space;
+   this firmware's FCode table has no entry for them and nothing bound any
+   config-space (or port-I/O) word on any arch, so they are GLOBAL words -- the
+   seam a Forth reader can actually reach, and named as such. They go through
+   the same pci_config_read{8,16,32}/write the enumerator uses. Each arch calls
+   ob_pci_bind_config_words() from arch_init AFTER device_end(): a bind_func in
+   ob_pci_init() would land before the dictionary is searchable -- the exact
+   shape of patches 14/16 -- which is why the call sits beside platform-boot.
+
+What it makes possible, measured on x86 AND amd64 (the `optrom` track):
+dsl/optrom.fth finds the ROM from assigned-addresses, checks the SAME address in
+config space (id=100e8086, rom=41040001 -- enable bit set), reads the PCI ROM
+header and PCIR through the device-register backend at the live BAR (sig aa55,
+"PCIR", vendor/device ffff, code type 1 = Open Firmware), byte-loads the FCode
+straight out of the ROM into the node -- which the card's program then renames
+to `fcode-card` and stamps `fcode-marker = FCODE-FROM-CARD-RAN`, the OFW lab's
+outcome on the rival firmware -- and, through config-l!, clears the enable bit
+and watches the header vanish at the same address, then brings it back. ppc:
+enumerates and publishes the entry and answers config-l@ (Arch-tested); the
+ROM read itself there needs pci-map-in (a bus address on mac99), not done.
+
+Two upstream quirks noticed and left alone, each named where it lives: a
+bridge's ROM (reg index 2) never gets its enable bit (`reg == 6` is the test),
+and vga_config_cb's ppc path writes the ROM BAR value to PCI_COMMAND.
+
+diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
+index dc47b27..2c2867f 100644
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -279,6 +279,9 @@ arch_init( void )
+ 	amd64_publish_available();
+ 
+ 	bind_func("platform-boot", boot );
++	/* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
++	 * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
++	ob_pci_bind_config_words();
+ 
+ 	/* Spike 2: expose the context-switch self-test at the prompt, so the
+ 	 * checkpoint can be driven the same way every other one is. */
+diff --git a/arch/ppc/qemu/init.c b/arch/ppc/qemu/init.c
+index 253394c..8670e9a 100644
+--- a/arch/ppc/qemu/init.c
++++ b/arch/ppc/qemu/init.c
+@@ -1220,6 +1220,9 @@ arch_of_init(void)
+     bind_func("(adler32)", adler32);
+     
+     bind_func("platform-boot", boot);
++    /* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
++     * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
++    ob_pci_bind_config_words();
+     bind_func("(arch-go)", arch_go);
+ 
+     /* Allocate 8MB memory at load-base */
+diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
+index 73eebd7..4e5f41d 100644
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -547,6 +547,9 @@ arch_init( void )
+ 	x86_publish_available();
+ 
+ 	bind_func("platform-boot", boot );
++	/* mklab, B.3 Spike 3: config-{b,w,l}@/! -- here, after device_end(), where
++	 * a global bind is FOUND (patches 14/16); see drivers/pci.c. */
++	ob_pci_bind_config_words();
+ 
+ 	/* x86 relocates itself by REBASING THE GDT data segment (see
+ 	 * arch/x86/segment.c), so every address Forth and the generic loaders
+diff --git a/drivers/pci.c b/drivers/pci.c
+index 556fbee..3c68753 100644
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -882,11 +882,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
+ 			     ncells * sizeof(cell));
+ }
+ 
++/* -- mklab, B.3 Spike 3: the expansion ROM, PUBLISHED --------------------------
++ * ob_pci_configure_bar() allocates the expansion ROM base register like any
++ * BAR and sets its ENABLE bit (`reg == 6` there), so under this firmware a
++ * device's option ROM is mapped and readable -- and then nothing says where:
++ * pci_set_reg() and pci_set_assigned_addresses() stop at the BARs. The 1275
++ * PCI bus binding (2.2.1.1 "reg", 4.1.2 "assigned-addresses") lists the ROM
++ * base register -- 0x30, or 0x38 in a bridge header -- beside them, and a
++ * Forth reader has no other way to learn the address short of config space,
++ * which this firmware did not bind either (ob_pci_bind_config_words, below).
++ * Measured 2026-09-03 on x86 and amd64: QEMU's `info pci` showed BAR6
++ * assigned at 0x41120000 and `xp` read the 0x55AA header there, while the
++ * node's assigned-addresses carried BAR0 and BAR1 only.
++ * The ROM slot is config->{regions,assigned,sizes}[num_bars], one past the
++ * BARs (ob_pci_configure()'s loop lands there, 64-bit BARs included). Its
++ * low bit is ENABLE, not I/O, so it must not go through pci_decode_pci_addr():
++ * a ROM is a 32-bit, non-prefetchable memory region with an 11-bit mask. */
++static int pci_encode_rom_entry(u32 *props, const pci_config_t *config,
++                                int num_bars, uint32_t value)
++{
++	int ncells;
++
++	if (!config->sizes[num_bars])
++		return 0;
++	ncells = pci_encode_phys_addr(props, 0, MEMORY_SPACE_32, config->dev,
++				      num_bars == 6 ? PCI_ROM_ADDRESS
++						    : PCI_ROM_ADDRESS1,
++				      value & PCI_ROM_ADDRESS_MASK);
++	ncells += pci_encode_size(props + ncells, config->sizes[num_bars]);
++	return ncells;
++}
++
+ static void pci_set_assigned_addresses(phandle_t phandle,
+                                        const pci_config_t *config, int num_bars)
+ {
+ 	phandle_t dev = phandle;
+-	u32 props[32];
++	u32 props[40];		/* 6 BARs + the ROM, 5 cells each (was 32: no room for the ROM) */
+ 	int ncells;
+ 	int i;
+ 	uint32_t mask;
+@@ -908,6 +939,9 @@ static void pci_set_assigned_addresses(phandle_t phandle,
+ 		props[ncells++] = __cpu_to_be32(0x00000000);
+ 		props[ncells++] = __cpu_to_be32(config->sizes[i]);
+ 	}
++	/* mklab: the expansion ROM, as assigned (and enabled) above */
++	ncells += pci_encode_rom_entry(props + ncells, config, num_bars,
++				       config->assigned[num_bars]);
+ 	if (ncells)
+ 		set_property(dev, "assigned-addresses", (char *)props,
+ 			     ncells * sizeof(props[0]));
+@@ -936,7 +970,7 @@ static void pci_set_reg(phandle_t phandle,
+                         pci_config_t *config, int num_bars)
+ {
+ 	phandle_t dev = phandle;
+-	u32 props[38];
++	u32 props[45];		/* config + 6 BARs + the ROM, 5 cells each (was 38) */
+ 	int ncells;
+ 	int i;
+ 	uint32_t mask;
+@@ -966,6 +1000,9 @@ static void pci_set_reg(phandle_t phandle,
+ 		/* set size */
+ 		ncells += pci_encode_size(props + ncells, config->sizes[i]);
+ 	}
++	/* mklab: the expansion ROM base register, as the binding lists it */
++	ncells += pci_encode_rom_entry(props + ncells, config, num_bars,
++				       config->regions[num_bars]);
+ 
+ 	set_property(dev, "reg", (char *)props, ncells * sizeof(props[0]));
+     ob_pci_reload_device_path(dev, config);
+@@ -2145,6 +2182,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+     }
+ }
+ 
++/* -- mklab, B.3 Spike 3: config-space accessors --------------------------------
++ * The 1275 PCI bus binding's config-{b,w,l}@ ( config-addr -- data ) and
++ * config-{b,w,l}! ( data config-addr -- ), config-addr in the phys.hi form
++ * bus<<16 | dev<<11 | fn<<8 | reg -- the first cell of a node's own "reg"
++ * property, plus the register. The binding places them as PCI bus-node methods
++ * an FCode driver reaches through my-space; this firmware's FCode table has no
++ * entry for them and nothing else bound any config-space (or port-I/O) word on
++ * any arch here, so they are bound as GLOBAL words -- the seam a Forth reader
++ * can actually reach -- and the lab names that placement. Each arch calls
++ * ob_pci_bind_config_words() from arch_init AFTER device_end(): a bind_func
++ * inside ob_pci_init() would land before the dictionary is searchable, the
++ * exact shape of patches 14/16. Reads and writes go through the SAME
++ * pci_config_read{8,16,32}() and their write twins the enumerator uses, so what Forth sees
++ * is what ob_pci_configure() saw. */
++static pci_addr config_addr_to_pci_addr(ucell a)
++{
++	return PCI_ADDR(PCI_BUS(a), PCI_DEV(a), PCI_FN(a));
++}
++
++static void forth_config_b_read(void)
++{
++	ucell a = POP();
++	PUSH(pci_config_read8(config_addr_to_pci_addr(a), a & 0xff));
++}
++
++static void forth_config_w_read(void)
++{
++	ucell a = POP();
++	PUSH(pci_config_read16(config_addr_to_pci_addr(a), a & 0xfe));
++}
++
++static void forth_config_l_read(void)
++{
++	ucell a = POP();
++	PUSH(pci_config_read32(config_addr_to_pci_addr(a), a & 0xfc));
++}
++
++static void forth_config_b_write(void)
++{
++	ucell a = POP();
++	ucell v = POP();
++	pci_config_write8(config_addr_to_pci_addr(a), a & 0xff, v);
++}
++
++static void forth_config_w_write(void)
++{
++	ucell a = POP();
++	ucell v = POP();
++	pci_config_write16(config_addr_to_pci_addr(a), a & 0xfe, v);
++}
++
++static void forth_config_l_write(void)
++{
++	ucell a = POP();
++	ucell v = POP();
++	pci_config_write32(config_addr_to_pci_addr(a), a & 0xfc, v);
++}
++
++void ob_pci_bind_config_words(void)
++{
++	bind_func("config-b@", forth_config_b_read);
++	bind_func("config-w@", forth_config_w_read);
++	bind_func("config-l@", forth_config_l_read);
++	bind_func("config-b!", forth_config_b_write);
++	bind_func("config-w!", forth_config_w_write);
++	bind_func("config-l!", forth_config_l_write);
++}
++
+ int ob_pci_init(void)
+ {
+     int bus, devnum, fn;
+diff --git a/include/drivers/drivers.h b/include/drivers/drivers.h
+index a1fc1bc..b540c4d 100644
+--- a/include/drivers/drivers.h
++++ b/include/drivers/drivers.h
+@@ -16,6 +16,8 @@
+ #ifdef CONFIG_DRIVER_PCI
+ /* drivers/pci.c */
+ int ob_pci_init(void);
++/* mklab, B.3 Spike 3: the 1275 config-{b,w,l}@/! words; call AFTER device_end() */
++void ob_pci_bind_config_words(void);
+ #endif
+ 
+ #if defined(CONFIG_DRIVER_PCI) || defined(CONFIG_DRIVER_ESCC)
