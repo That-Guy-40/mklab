@@ -87,6 +87,13 @@ TRACK (default multiboot):
                               and its FCode byte-loaded from there — the card's own
                               program renames the node; x86 + amd64, graded vs QEMU's
                               info pci / xp and one-byte controls (needs toke)
+  region-diff                 B.3 Spike 3 (the other half, plan §9's last unmet
+                              line): dsl/region.fth (region-snap/region-diff PORTED
+                              from open-firmware-debugs-itself) shows a change the
+                              FIRMWARE caused — patch 58 re-runs its own coreboot-
+                              table parser; the region it reads is unchanged, the
+                              allocator's next block is not; the >virt trap measured
+                              on both arches (needs both coreboot ROMs)
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -4738,6 +4745,201 @@ PY
     note "optrom-map (the parent bus's pci-map-in, the portable form) returns $(grep -oE 'MAP=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2) on ppc — the same address the property published, so nothing is gained by it here; and a SECOND call for the same region does not return a readable address (measured 2026-09-03), so it is call-once-and-keep, not a getter"
     pass "B.3 Spike 3 COMPLETE — a PCI option ROM read from REAL device memory and its FCode run from there, on x86, amd64 AND ppc. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. THE BIG-ENDIAN ROW: ppc parses the same little-endian header at its own live BAR with NO mapping call, byte-loads the card from it, and reads its own id too — the TODO's "ppc needs pci-map-in" gap was wrong, and what the first attempt actually lacked was an INSTANCE. AND THE CARD THAT ASKS WHO IT IS: a second FCode driver doing my-space + a \" config-l@\" call to the parent bus — the 1275 PCI binding's own route, since config-l@ has no FCode number at all — computes cfg-id=100e8086 about ITSELF on all three arches. That needed patch 56 (the config words as PCI BUS-NODE methods, not just globals: a card cannot see a global word) and patch 57 (every probed node's probe-addr, which only ppc had: on x86/amd64 my-space answered 0, so a card read the HOST BRIDGE's 8086:1237 while every mechanism looked like it worked)"
     ;;
+  region-diff)
+    # B.3 Spike 3's OTHER half, and the last unmet line of plan §9: "a region
+    # diff shows a FIRMWARE-CAUSED change".
+    #
+    # The change has to come from a code path already in the tree, or the diff is
+    # showing the test's own writing dressed up as a finding. The subject is
+    # libopenbios/linuxbios_info.c — the coreboot-table parser that runs at init
+    # and that this lab has already patched twice (01: publish the real memory
+    # map; 39: chase LB_TAG_FORWARD into CBMEM). Patch 58 binds `lb-walk` to
+    # re-run it into a SCRATCH sys_info, `lb-table` to say which region it reads,
+    # and `heap-cursor` to say where arch/{x86,amd64}/lib.c's bump allocator will
+    # put the next malloc.
+    #
+    # THE REVIEW THAT SCHEDULED THIS WAS WRONG ABOUT WHERE THE CHANGE LANDS, and
+    # both halves are rows here because of it. F5/F6 said to snapshot the
+    # CBMEM-forwarded table, re-run the walk and diff. read_lbtable() is a READER:
+    # measured, that region does not move (LBTAB=0), so it is the NEGATIVE CONTROL.
+    # The write is one level down — convert_memmap() mallocs and fills — so the
+    # subject is the allocator's cursor, and the firmware wrote it.
+    #
+    # SIX ROWS, and the first two are the instrument proving itself before it is
+    # aimed at anything (a diff of zero and a diff that cannot see prints the same
+    # clean run):
+    #   SELFTEST=1  one byte poked by us is found            (must-catch)
+    #   QUIET=0     a snapshot left alone does not drift     (must-not-catch)
+    #   LBTAB=0     the walk does not change what it reads   (negative control)
+    #   HEAP>0      the walk DOES change the allocator's next block  ← the clause
+    #   LAST<STEP   ...and only inside the block it asked for (the bound)
+    #   RAW         the SAME bytes at the PHYSICAL address with no >virt:
+    #               0 on x86 (relocation, so it snapshotted other memory that read
+    #               back convincingly) and == HEAP on amd64 (>virt is the identity
+    #               there, so there is no trap to bite). Asserting BOTH is what
+    #               makes the x86 zero a statement about relocation rather than
+    #               about a broken snapshot.
+    # ...and a seventh from OUTSIDE the firmware: QEMU's monitor reads the same
+    # guest-physical bytes and must agree with what Forth said is there, and the
+    # memranges decoded from them must describe the machine QEMU was given.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    RSTRUCT="$HERE/dsl/struct.fth"; RREG="$HERE/dsl/region.fth"; RLB="$HERE/dsl/lbregion.fth"
+    for f in "$RSTRUCT" "$RREG" "$RLB"; do
+      [[ -f "$f" ]] || fail "region-diff: the reader is missing at $f — this track stages the SHIPPED dsl/, it does not re-implement it"
+    done
+    RST="$WORKDIR/region-diff"; rm -rf "$RST"; mkdir -p "$RST/stage"
+    cp "$RSTRUCT" "$RST/stage/STRUCT.FTH"; cp "$RREG" "$RST/stage/REGION.FTH"
+    cp "$RLB" "$RST/stage/LBREGION.FTH"
+    genisoimage -quiet -o "$RST/rd.iso" -V REGDIFF -r -J "$RST/stage" 2>/dev/null \
+      || fail "region-diff: genisoimage failed to stage the reader"
+
+    # a marker's value out of the log. The first output of a typed command shares
+    # the line with its echo, so this must not be anchored to ^.
+    rmark() { grep -aoE "$2=[0-9a-f]+" "$1" | head -1 | cut -d= -f2; }
+
+    for rarch in x86 amd64; do
+      case $rarch in
+        x86)   RROM="$CB/build-openbios/coreboot.rom"
+               RPAY="$WORKDIR/openbios/obj-x86/openbios-builtin.elf" ;;
+        amd64) RROM="$CB/build-openbios-amd64/coreboot.rom"
+               RPAY="$WORKDIR/openbios/obj-amd64/openbios-builtin.elf32" ;;
+      esac
+      [[ -f "$RROM" ]] || skip "no $rarch coreboot ROM at $RROM — run ./build-coreboot-openbios.sh $rarch first"
+      # the ROM must carry THIS tree's payload, or the run reports on other firmware
+      RPROV="$("$REPO/tools/openbios-rom-provenance.sh" --check "$RROM" "$RPAY" 2>&1)"; RPRC=$?
+      case $RPRC in
+        0)  note "$rarch provenance: $RPROV" ;;
+        77) skip "$RPROV" ;;
+        *)  fail "$RPROV" ;;
+      esac
+
+      RSER="/tmp/rd-$rarch-$$.sock"; RMON="/tmp/rd-$rarch-mon-$$.sock"
+      RLOG="$RST/$rarch.log"; rm -f "$RSER" "$RMON" "$RLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -bios "$RROM" \
+        -cdrom "$RST/rd.iso" -display none \
+        -serial "unix:$RSER,server=on,wait=off" -monitor "unix:$RMON,server=on,wait=off" \
+        -no-reboot >/dev/null 2>&1 &
+      RQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$RSER" "$RLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\REGION.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\LBREGION.FTH\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'region-selftest\r' --expect "SELFTEST=" --expect "0 > " \
+        --send 'region-quiet\r' --expect "QUIET=" --expect "0 > " \
+        --send '.lb-table\r' --expect "LBT=" --expect "0 > " \
+        --send 'lb-table-diff\r' --expect "LBTAB=" --expect "0 > " \
+        --send 'lb-heap-diff\r' --expect "LAST=" --expect "0 > " \
+        --send 'lb-raw-diff\r' --expect "RAW=" --expect "0 > "
+      RRC=$?
+
+      # OBSERVER FROM OUTSIDE, taken while the guest is still up: the same 32
+      # guest-physical bytes the firmware says it changed, read by QEMU's monitor.
+      RHEAPP="$(rmark "$RLOG" HEAPP)"
+      RXP=""
+      if [[ -n "$RHEAPP" ]]; then
+        RXP="$(python3 - "$RMON" "0x$RHEAPP" 32 <<'PY'
+import socket, sys, time, re
+sock, addr, n = sys.argv[1], sys.argv[2], int(sys.argv[3])
+s = socket.socket(socket.AF_UNIX)
+# bounded: an unbounded recv on a stalled monitor would hang the track with no
+# verdict (the killed-run trap). ERR lets the assertion below fail by name.
+s.settimeout(10)
+for _ in range(20):
+    try: s.connect(sock); break
+    except OSError: time.sleep(0.25)
+else: print("ERR"); sys.exit(0)
+try:
+    time.sleep(0.3); s.recv(1<<16)
+    s.sendall(f"xp /{n}xb {addr}\n".encode()); time.sleep(1.0)
+    out = s.recv(1<<20).decode(errors="replace")
+except (socket.timeout, OSError):
+    print("ERR"); sys.exit(0)
+by=[m.lower() for ln in out.splitlines() if ":" in ln for m in re.findall(r'0x([0-9a-fA-F]{2})', ln)]
+print("".join(by[:n]))
+PY
+)"
+      fi
+      kill "$RQ" 2>/dev/null   # by PID, never by pattern
+      [[ $RRC -eq 0 ]] \
+        || fail "region-diff ($rarch): the firmware never finished the six rows (rc=$RRC) — see $RLOG"
+
+      RSELF="$(rmark "$RLOG" SELFTEST)"; RQUIET="$(rmark "$RLOG" QUIET)"
+      RLBT="$(rmark "$RLOG" LBT)"; RLBLEN="$(rmark "$RLOG" LBLEN)"
+      RTAB="$(rmark "$RLOG" LBTAB)"; RRANGES="$(rmark "$RLOG" RANGES)"
+      RSTEP="$(rmark "$RLOG" STEP)"; RHEAP="$(rmark "$RLOG" HEAP)"
+      RLAST="$(rmark "$RLOG" LAST)"; RRAW="$(rmark "$RLOG" RAW)"
+      for _p in "SELFTEST:$RSELF" "QUIET:$RQUIET" "LBT:$RLBT" "LBLEN:$RLBLEN" \
+                "LBTAB:$RTAB" "RANGES:$RRANGES" "STEP:$RSTEP" "HEAP:$RHEAP" \
+                "LAST:$RLAST" "RAW:$RRAW" "HEAPP:$RHEAPP"; do
+        [[ -n "${_p#*:}" ]] \
+          || fail "region-diff ($rarch): ${_p%%:*} never printed — a word aborted mid-row, so the rows that did print say nothing — see $RLOG"
+      done
+
+      # (1) the instrument, before anything else it says can be believed
+      [[ "$RSELF" == 1 ]] \
+        || fail "region-diff ($rarch): SELFTEST=$RSELF, not 1 — one byte poked by the test itself was not seen, so region-diff cannot observe a change AT ALL and every other row here is meaningless — see $RLOG"
+      [[ "$RQUIET" == 0 ]] \
+        || fail "region-diff ($rarch): QUIET=$RQUIET, not 0 — a snapshot nothing touched reports differences, so the counts below are noise — see $RLOG"
+
+      # (2) the table was found and parsed
+      (( 16#$RLBT != 0 && 16#$RLBLEN > 0 )) \
+        || fail "region-diff ($rarch): lb-table answered phys=0x$RLBT len=0x$RLBLEN — no coreboot table was found, so nothing below ran against the real parser — see $RLOG"
+      (( 16#$RRANGES >= 1 && 16#$RRANGES < 0x100 )) \
+        || fail "region-diff ($rarch): lb-walk returned $RRANGES RAM ranges (-1 means no table) — the parser did not run — see $RLOG"
+
+      # (3) NEGATIVE CONTROL, and the review's premise: the region the walk READS
+      [[ "$RTAB" == 0 ]] \
+        || fail "region-diff ($rarch): LBTAB=0x$RTAB — the coreboot table CHANGED across a walk that only reads it. Either read_lbtable() gained a write or the snapshot is aimed at the wrong memory; both make the heap row below unreadable — see $RLOG"
+
+      # (4) THE CLAUSE: a firmware-caused change, from an in-tree code path
+      (( 16#$RHEAP > 0 )) \
+        || fail "region-diff ($rarch): HEAP=0 — re-running the firmware's own coreboot-table parser changed NOTHING at the allocator cursor, so plan §9's 'a region diff shows a firmware-caused change' is still unobserved. SELFTEST=1 above means the instrument works, so this is about the subject — see $RLOG"
+      (( 16#$RSTEP > 0 && 16#$RSTEP % 16 == 0 )) \
+        || fail "region-diff ($rarch): STEP=0x$RSTEP — the bump allocator did not advance by a whole number of 16-byte memranges across the walk, so convert_memmap()'s malloc did not happen the way the diff assumes — see $RLOG"
+      (( 16#$RLAST < 16#$RSTEP )) \
+        || fail "region-diff ($rarch): LAST=0x$RLAST is at or past STEP=0x$RSTEP — the firmware wrote OUTSIDE the block it allocated — see $RLOG"
+
+      # (5) the address trap, measured in both directions
+      case $rarch in
+        x86)   [[ "$RRAW" == 0 ]] \
+                 || fail "region-diff (x86): RAW=0x$RRAW, expected 0 — the physical heap address used directly as a Forth address should land on OTHER memory (arch/x86/segment.c rebases the GDT), so this row is what proves >virt is load-bearing here. A non-zero count means x86 stopped relocating, or region-snapv silently applied a translation — see $RLOG" ;;
+        amd64) [[ "$RRAW" == "$RHEAP" ]] \
+                 || fail "region-diff (amd64): RAW=0x$RRAW but HEAP=0x$RHEAP — amd64 sets virt_offset=0, so >virt is the identity and the two forms MUST agree. They do not, which means one of them is not reading the address it was given — see $RLOG" ;;
+      esac
+
+      # (6) OBSERVER FROM OUTSIDE: the byte Forth reported last-changed, read from
+      #     guest-physical memory by QEMU, and the ranges those bytes decode to.
+      [[ -n "$RXP" && "$RXP" != ERR ]] \
+        || fail "region-diff ($rarch): the QEMU monitor did not return the 32 bytes at guest-physical 0x$RHEAPP — the outside observer never ran, so the change is only the firmware's own word — see $RLOG"
+      RNOW="$(grep -aoE "diff \+$RLAST +was [0-9a-f]+ +now [0-9a-f]+" "$RLOG" | head -1 | awk '{print $NF}')"
+      [[ -n "$RNOW" ]] \
+        || fail "region-diff ($rarch): the listing has no line for the last-changed offset +$RLAST — region-diff and region-last disagree about the same snapshot — see $RLOG"
+      ROFF=$(( 16#$RLAST )); RBYTE="${RXP:$((ROFF*2)):2}"
+      [[ "$(printf '%x' $((16#$RBYTE)))" == "$(printf '%x' $((16#$RNOW)))" ]] \
+        || fail "region-diff ($rarch): at +0x$RLAST the firmware says the byte is now 0x$RNOW, QEMU reads 0x$RBYTE from guest-physical 0x$RHEAPP+0x$RLAST — inside and outside disagree about the same byte — see $RLOG"
+      # decode the memrange[] the parser wrote: {u64 base, u64 size} pairs, LE.
+      RDEC="$(python3 - "$RXP" <<'PY'
+import sys, struct
+b = bytes.fromhex(sys.argv[1])
+b0,s0,b1,s1 = struct.unpack('<QQQQ', b[:32])
+print(f"{b0:x} {s0:x} {b1:x} {s1:x} {(s0+s1):x}")
+PY
+)"
+      read -r RB0 RS0 RB1 RS1 RTOT <<<"$RDEC"
+      (( 16#$RB1 == 0x100000 )) \
+        || fail "region-diff ($rarch): the second RAM range the firmware wrote starts at 0x$RB1, not the 1 MiB mark — the bytes at the allocator cursor are not the memmap this walk claims to have written — see $RLOG"
+      (( 16#$RTOT >= 0x1E000000 && 16#$RTOT <= 0x20000000 )) \
+        || fail "region-diff ($rarch): the ranges total 0x$RTOT bytes, outside the 480-512 MiB window QEMU's -m 512 makes possible — the decoded bytes do not describe THIS machine — see $RLOG"
+      note "$rarch: SELFTEST=1 QUIET=0 | lb-table 0x$RLBT+0x$RLBLEN LBTAB=0 | RANGES=$RRANGES STEP=0x$RSTEP HEAP=0x$RHEAP LAST=0x$RLAST RAW=0x$RRAW"
+      note "$rarch: QEMU reads 0x$RBYTE at guest-physical 0x$RHEAPP+0x$RLAST (the firmware said 0x$RNOW); the bytes decode to RAM 0x$RB0+0x$RS0 and 0x$RB1+0x$RS1 = $(( 16#$RTOT / 1024 / 1024 )) MiB"
+    done
+    pass "B.3 Spike 3 (region diff, plan §9's last unmet line): a REGION DIFF SHOWS A FIRMWARE-CAUSED CHANGE, on x86 and amd64. dsl/region.fth is examples/open-firmware-debugs-itself's region-snap/region-diff PORTED to this firmware (review F6 — a copy, not a cross-lab load), and it is calibrated before it is aimed: SELFTEST=1 finds a byte the test poked itself, QUIET=0 says an untouched snapshot does not drift. Aimed at libopenbios/linuxbios_info.c — the coreboot-table parser this lab patched in 01 and 39, re-run through patch 58's lb-walk into a scratch sys_info — the region it READS comes back byte-identical (LBTAB=0, which RETRACTS the review's own premise that the diff would appear there: read_lbtable is a reader), while the allocator's next block CHANGES: convert_memmap() mallocs a whole number of 16-byte memranges (STEP) and every changed byte lies inside it (LAST<STEP). The trap is measured in both directions rather than described: the same bytes snapshotted at the PHYSICAL address with no >virt count ZERO on x86, where the GDT rebase makes that other memory that reads back convincingly, and count the SAME as the >virt path on amd64, where virt_offset=0 leaves no trap to bite. And the change is not the firmware's own word: QEMU's monitor read the same guest-physical bytes from outside, agreed with the firmware byte for byte at the last-changed offset, and they decode to the RAM ranges of the machine QEMU was actually given"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -6132,5 +6334,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|unix]" >&2; exit 1 ;;
 esac

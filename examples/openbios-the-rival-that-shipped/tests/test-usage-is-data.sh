@@ -35,4 +35,5 @@ exec "$REPO/tools/check-usage-is-data.sh" \
      "$LAB/build-coreboot-openbios.sh" \
      "$LAB/run-openbios-qemu.sh" \
      "$LAB/smoke-openbios.sh" \
-     "$LAB/showcase-rival-boots-linux.sh"
+     "$LAB/showcase-rival-boots-linux.sh" \
+     "$LAB/showcase-preboot-toolkit.sh"

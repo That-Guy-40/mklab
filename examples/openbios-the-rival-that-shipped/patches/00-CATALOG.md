@@ -128,6 +128,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`55-pci-expansion-rom-published-and-config-space-bound.patch`](55-pci-expansion-rom-published-and-config-space-bound.patch) | `FEATURE` | shared | **B.3 Spike 3's UNCOVERED row, uncovered.** The PCI allocator already mapped AND enabled every device's expansion ROM (`ob_pci_configure_bar`, `reg == 6`) and never said where — `reg`/`assigned-addresses` stopped at the BARs. Publishes the ROM base register (0x30 / 0x38) as the 1275 PCI binding lists it, and binds the binding's `config-{b,w,l}@`/`!` as global words (bound after `device_end()`, per 14/16). `dsl/optrom.fth` + the `optrom` track read a real option ROM's header at the live BAR on x86 and amd64, byte-load its FCode from there, and flip its enable bit through `config-l!`
 | [`56-pci-config-space-is-a-bus-node-method.patch`](56-pci-config-space-is-a-bus-node-method.patch) | `FEATURE` | shared | **A card cannot see a global word.** 55 bound `config-{b,w,l}@`/`!` globally; the 1275 PCI binding puts them on the **bus node**, because an FCode driver reaches config space as `my-space " config-l@" $call-parent`. Measured: `config-l@` has **no FCode number at all** (neither `toke` nor `detok` knows it), so there is no table entry to add and the method is the only route — before this, that route threw `-21` with the globals sitting right there |
 | [`57-every-probed-node-gets-its-probe-addr.patch`](57-every-probed-node-gets-its-probe-addr.patch) | `UPSTREAM-BUG` | shared | **`my-space` answered 0 for every PCI node**, so a card driver asking who it is read **bus 0, device 0 — the host bridge (8086:1237)** while believing it read itself. `set-args` writes `probe-addr` through the *current instance*, and the enumerator has none for the node it is building. **ppc does not have the defect** (its nodes come out with `probe-addr` set), which is what made the arch matrix find it |
+| [`58-the-firmwares-own-walk-re-run-and-watched.patch`](58-the-firmwares-own-walk-re-run-and-watched.patch) | `FEATURE` | shared | **B.3's last success-signature line, and the review's premise retracted.** Plan §9 wanted *"a region diff shows a firmware-caused change"*, so the change had to come from a code path already in the tree: `lb-walk` re-runs `libopenbios/linuxbios_info.c`'s coreboot-table parser (this lab's patches 01 and 39) into a **scratch** `sys_info`, `lb-table` names the region it reads and `heap-cursor` the allocator's next block. F5/F6 said the diff would show in the table; measured, `read_lbtable()` is a **reader**, so that region is the NEGATIVE control and the write is one level down, in `convert_memmap()`'s `malloc`. Addresses out are **physical** so a caller cannot skip `>virt` — the `region-diff` track counts **0** without it on x86 and the same as the `>virt` path on amd64, where `virt_offset` is 0
 
 ## What the sort says
 
@@ -135,7 +136,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 |---|---|---|
 | `UPSTREAM-BUG` | 27 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
-| `FEATURE` | 13 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
+| `FEATURE` | 14 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 3 | patch 15 (the Forth loader), patch 50 (the unix arena below 4 GiB), and patch 51 (the unix exit status) |
 | `RECORD` | 1 | bookkeeping |
@@ -144,7 +145,7 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 33 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 34 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 24 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only the `DIVERGENCE` rows are divergences in the sense of "we want different

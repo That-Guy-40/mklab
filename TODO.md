@@ -712,12 +712,30 @@ requires of any other cached fact.
       on x86/amd64 it was **0 for every probed node** and a card read the **host bridge's
       8086:1237** believing it read itself. ppc had it set — the matrix found it. The card now
       publishes `cfg-id=100e8086` (itself) on all three arches.
-    - [ ] **⏭ NEXT STEP — B.3's last §9 clause:** Spike 3's *diff* half. `region-snap`/`region-diff`
-      are fifteen OFW lines that have never been ported ([review F6](REVIEW-preboot-structure-toolkit-plan.md#f6--region-snapregion-diff-are-not-existing-in-this-lab-they-are-ofw-words-that-have-not-been-ported)):
-      copy them into `dsl/` (self-containment), `>virt` the snapshot address on x86, and diff the
-      firmware's own `LB_TAG` table walk before/after — a change the firmware itself caused. That
-      is the one success-signature line in §9 nothing has observed yet; everything else in B.3 is
-      landed.
+    - **B.3's last §9 clause CLOSED 2026-09-03 — and the review's premise RETRACTED**
+      (patch 58, `dsl/region.fth` + `dsl/lbregion.fth`, the `region-diff` track).
+      `region-snap`/`region-diff` are now **ported** out of `open-firmware-debugs-itself`
+      ([review F6](REVIEW-preboot-structure-toolkit-plan.md#f6--region-snapregion-diff-are-not-existing-in-this-lab-they-are-ofw-words-that-have-not-been-ported)
+      — a copy, not a cross-lab `load`), with `>virt` applied *inside* `region-snap` so a caller
+      cannot forget it. Patch 58 binds `lb-table` / `lb-walk` / `heap-cursor` so the firmware's
+      own coreboot-table parser (`linuxbios_info.c`, this lab's patches 01 and 39) can be re-run
+      into a **scratch** `sys_info` and watched. **F5/F6 said the diff would appear in the table
+      region; it does not** — `read_lbtable()` is a *reader*, so that region is the NEGATIVE
+      control (`LBTAB=0`) and the write is one level down, in `convert_memmap()`'s `malloc`.
+      Six rows: `SELFTEST=1` (a byte the test poked — the instrument calibrated before it is
+      aimed), `QUIET=0`, `LBTAB=0`, `HEAP>0` ← the clause, `LAST<STEP` (the firmware wrote only
+      inside the block it asked for), and `RAW` — the same bytes at the **physical** address with
+      no `>virt`: **0 on x86**, where the GDT rebase makes that other memory that reads back
+      convincingly, and **== HEAP on amd64**, where `virt_offset` is 0 and there is no trap to
+      bite. QEMU's monitor agrees byte-for-byte from outside and the bytes decode to the RAM
+      ranges of the machine it was given. Three controls re-injected and watched to bite.
+    - **THE SHOWCASE, 2026-09-03:** [`showcase-preboot-toolkit.sh`](examples/openbios-the-rival-that-shipped/SHOWCASE-PREBOOT-TOOLKIT.md)
+      runs the whole toolkit in **one boot** of the amd64 firmware from a coreboot ROM, narrated
+      and graded: (I) it walks the CBFS of the ROM that delivered it and finds `fallback/payload`
+      — itself; (II) it re-runs its own coreboot-table parser and diffs memory around it;
+      (III) it reads a PCI option ROM at the card's live BAR, byte-loads the card's FCode from
+      there, and asks a second card who it is through config space; (IV) it computes SHA-256 in
+      Forth, authors a TCG event log in RAM and replays PCR0 — graded against python's hashlib.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
