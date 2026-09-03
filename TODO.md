@@ -684,10 +684,24 @@ requires of any other cached fact.
       the OpenBIOS leg's PCR 2 — the comparison is explained, not just observed. UEFI extends PCR 0–7
       and differs from both. Quote UNKNOWN (three software TPMs). **Every B.3 spike and every §12 item
       is now landed.**
-    - [ ] **⏭ NEXT STEP — B.3's last edge:** Spike 3's named UNCOVERED row (plan §3 / review F5) —
-      the PCI option-ROM read is still blocked (no config-space/port-I/O words bound); the live flash
-      window is done. Either bind the port-I/O words (a firmware patch, expected per review F8) or
-      leave the row UNCOVERED by name.
+    - **Spike 3's UNCOVERED row — COVERED 2026-09-03** (`optrom` track, patch 55, `dsl/optrom.fth`,
+      `fixtures/optrom/`). The blocker was not what the plan said: no port I/O was needed — OpenBIOS's
+      PCI allocator already mapped AND enabled every device's expansion ROM (`ob_pci_configure_bar`,
+      `reg == 6`) and never published it (QEMU's `info pci` showed BAR6 assigned while
+      `assigned-addresses` listed BAR0/BAR1 only). Patch 55 publishes the register-30 entry per the
+      1275 PCI binding and binds `config-{b,w,l}@`/`!` (global words, bound after `device_end()` per
+      14/16). On x86 AND amd64: the ROM found from the property at QEMU's BAR6 address; config space
+      agrees (enable bit set); the header + PCIR parsed at the live BAR through the device backend,
+      `xp` bytes == the ROM file; **byte-load straight out of the ROM** — the OFW lab's FCode card
+      renames the node to `fcode-card@3` and stamps `fcode-marker=FCODE-FROM-CARD-RAN` on the rival
+      firmware from the same artifact; one-byte controls refused by name (type 0 → NOT-FCODE, sig
+      55ab → BAD-SIG), a ROM-less device none/no-BAR6; `config-l!` clears the enable bit and the
+      header vanishes, then returns. ppc publishes the entry and answers `config-l@`.
+    - [ ] **⏭ NEXT STEP — two named gaps from the `optrom` track:** (1) the ppc ROM *read* — the
+      published address is a PCI bus address on mac99, so it needs the bus node's `pci-map-in`
+      (bound, `ob_pci_bus_map_in`) before `rb@` can reach it; (2) FCode-table entries for
+      `config-{b,w,l}@`/`!` (`forth/device/table.fs` has none), so an FCode DRIVER — not only the
+      prompt — can reach config space the way the 1275 PCI binding intends (`my-space config-l@`).
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
