@@ -37,6 +37,8 @@ device reports `none` and has no BAR6 in `info pci`.
 `cfg-id=100e8086` about **itself** — checked against QEMU's own view of that slot, and
 against the two values that were real states of this firmware: *nothing at all* (before
 patch 56 the driver threw `-21` mid-FCode) and `12378086`, the **host bridge**, which is
-what config address 0 returns when `probe-addr` was never set. **ppc** does all of it too,
+what config address 0 returns when `probe-addr` was never set. **Behind a PCI-PCI bridge** the same card's parent is the *bridge* node, which had none
+of those methods until [patch 59](../../patches/59-config-space-through-a-pci-bridge.patch)
+(measured: `cfg-id=none` with everything else looking right). **ppc** does all of it too,
 at the address the property publishes, with no mapping call — the read there never needed
 one, which is the gap this lab retracted.

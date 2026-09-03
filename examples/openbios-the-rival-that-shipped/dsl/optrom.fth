@@ -102,7 +102,7 @@ variable op-hi  variable op-mid  variable op-lo  variable op-size
   optrom-find 0= if ." optrom| none" cr exit then    ( phys size )
   ." optrom| phys=" over u. ." size=" u.  >virt .optrom ;
 
-\ ── an INSTANCE, because a card's driver is written as if it had one ─────────
+\ ── an INSTANCE CHAIN, because a card's driver is written as if it had one ──
 \ Measured 2026-09-03, and it is the second thing the plan's "UNCOVERED" row was
 \ really about: byte-loading a card's FCode from the `0 >` prompt gives it NO
 \ current instance, so the moment the driver says `my-space` (or anything that
@@ -110,25 +110,41 @@ variable op-hi  variable op-mid  variable op-lo  variable op-size
 \ "no current instance." and byte-load catches the exception -- the node ends up
 \ renamed and undecorated, which looks like a half-working driver rather than a
 \ missing scaffold. A real 1275 probe evaluates FCode inside an instance (the
-\ `open-dev … to my-self` dance arch/{x86,amd64}/openbios.c comments on); this is
-\ that dance, in Forth, with no device opened: create-instance builds an instance
-\ WITHOUT calling `open`, and it links the new instance's my-parent to whatever
-\ my-self is at the time -- so the bus node's instance has to exist FIRST, or
-\ `$call-parent` would find nothing to call.
-variable op-self  variable op-inst  variable op-bus
-: optrom-instance-in ( -- ok? )
-  my-self op-self !  0 op-inst !  0 op-bus !
-  0 to my-self
-  active-package parent ?dup if
-    create-instance ?dup if  dup op-bus !  to my-self  then
-  then
-  active-package create-instance ?dup if
-    dup op-inst !  to my-self  true
-  else false then ;
+\ `open-dev … to my-self` dance arch/{x86,amd64}/openbios.c comments on), and
+\ open-dev opens EVERY node on the path -- so the chain has to reach the root.
+\
+\ THE FIRST VERSION BUILT ONE LEVEL, and the 2026-09-03 audit found what that
+\ costs: a card behind a PCI-PCI bridge asks the BRIDGE, the bridge chains to
+\ ITS parent (patch 59), and with the bridge instance's my-parent left at 0 the
+\ firmware took a general protection fault instead of answering. So this walks
+\ `parent` up to the root, creates an instance for each node root-first (each
+\ one's my-parent is whatever my-self is at that moment), and tears them down
+\ card-first. create-instance builds an instance WITHOUT calling `open`.
+8 constant op-max
+create op-chain op-max cells allot   \ [0] the card … [n-1] the root: phandles, then ihandles
+variable op-n  variable op-made  variable op-self
 : optrom-instance-out ( -- )
   op-self @ to my-self
-  op-inst @ ?dup if destroy-instance then
-  op-bus  @ ?dup if destroy-instance then ;
+  op-n @ op-made @ -  op-n @  ?do            \ only the ones made, card side first
+    i cells op-chain + @ destroy-instance
+  loop  0 op-made ! ;
+: optrom-instance-in ( -- ok? )
+  my-self op-self !  0 op-n !  0 op-made !
+  active-package
+  begin dup while                            ( ph )
+    op-n @ op-max = if drop false exit then  \ deeper than op-max: refuse, by name
+    dup op-n @ cells op-chain + !  1 op-n +!
+    parent
+  repeat drop
+  op-n @ 0= if false exit then               \ no active package: nothing to build
+  0 to my-self
+  0 op-n @ 1- do                             \ root first, card last
+    i cells op-chain + dup @ create-instance ?dup 0= if
+      drop optrom-instance-out false unloop exit
+    then
+    dup rot !  to my-self  1 op-made +!
+  -1 +loop
+  true ;
 
 \ ── map the ROM the 1275 way: the parent bus's pci-map-in ────────────────────
 \ `>virt` is this lab's own translation and it is only right where the published
@@ -141,11 +157,28 @@ variable op-self  variable op-inst  variable op-bus
 \ it borrows the same scaffold.
 \ A bus with no pci-map-in must leave us a 0, not abort the run: catch restores
 \ the depth, so the six cells (four arguments + the method string) are dropped.
+\
+\ MAP-IN IS HALF OF A PAIR, and the first version of this file did not know it.
+\ On ppc, ob_pci_map() CLAIMS the physical and virtual ranges through ofmem
+\ before mapping, so a second map-in of the same region fails its claim and
+\ answers -1 -- which was written up here as "call-once-and-keep, not a getter".
+\ It was a leak with a nicer name: this firmware bound no `pci-map-out` at all.
+\ Patch 60 binds it, and `optrom-unmap` below is its caller; a mapping taken
+\ with optrom-map is released with optrom-unmap, and the ppc row of the track
+\ measures both directions (a map after a release works; two maps with no
+\ release in between leave the second at ffffffff).
 : optrom-map ( -- virt | 0 )
   optrom-cells 0= if 0 exit then
   optrom-instance-in 0= if 0 exit then
   op-lo @ op-mid @ op-hi @ op-size @
   " pci-map-in" ['] $call-parent catch if 2drop 2drop 2drop 0 then
+  optrom-instance-out ;
+
+\ optrom-unmap ( virt -- )  give a mapping back through the parent's pci-map-out
+\ (the size is the one optrom-cells found -- the same call must have preceded).
+: optrom-unmap ( virt -- )
+  optrom-instance-in 0= if drop exit then
+  op-size @  " pci-map-out" ['] $call-parent catch if 2drop 2drop then
   optrom-instance-out ;
 
 \ RUN IT: byte-load the FCode straight out of the live ROM into the ACTIVE
@@ -162,15 +195,21 @@ variable op-self  variable op-inst  variable op-bus
   1 byte-load
   optrom-instance-out ;
 
-\ …and the same, from wherever the parent bus says the ROM is mapped (the ppc
-\ form; on x86/amd64 it must agree with the >virt path, which the track checks).
+\ …and the same, from wherever the parent bus says the ROM is mapped: map-in,
+\ byte-load, map-out -- the binding's own shape. The ppc row of the `optrom`
+\ track runs it AFTER a map/unmap pair, so it doubles as the proof that a
+\ release lets the region be mapped again. Every exit path gives the mapping
+\ back. (Until the 2026-09-03 audit this word existed, unmapped nothing, and
+\ was called by nothing while claiming the track checked it.)
 : optrom-run-mapped ( -- )
-  optrom-map dup 0= if ." optrom| NO-MAP" cr drop exit then
-  optrom-fcode dup 0= if ." optrom| NOT-FCODE, not run" cr drop exit then
+  optrom-map dup 0= if ." optrom| NO-MAP" cr drop exit then        ( virt )
+  dup optrom-fcode dup 0= if
+    ." optrom| NOT-FCODE, not run" cr drop optrom-unmap exit then  ( virt fcode )
   ." optrom| byte-load fcode@" dup u. cr
-  optrom-instance-in 0= if ." optrom| NO-INSTANCE" cr drop exit then
+  optrom-instance-in 0= if ." optrom| NO-INSTANCE" cr drop optrom-unmap exit then
   1 byte-load
-  optrom-instance-out ;
+  optrom-instance-out
+  optrom-unmap ;
 
 \ ── the same facts from CONFIG SPACE (patch 56), not from a property ─────────
 \ A property is a record the enumerator wrote once; config space is the device

@@ -129,14 +129,16 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`56-pci-config-space-is-a-bus-node-method.patch`](56-pci-config-space-is-a-bus-node-method.patch) | `FEATURE` | shared | **A card cannot see a global word.** 55 bound `config-{b,w,l}@`/`!` globally; the 1275 PCI binding puts them on the **bus node**, because an FCode driver reaches config space as `my-space " config-l@" $call-parent`. Measured: `config-l@` has **no FCode number at all** (neither `toke` nor `detok` knows it), so there is no table entry to add and the method is the only route — before this, that route threw `-21` with the globals sitting right there |
 | [`57-every-probed-node-gets-its-probe-addr.patch`](57-every-probed-node-gets-its-probe-addr.patch) | `UPSTREAM-BUG` | shared | **`my-space` answered 0 for every PCI node**, so a card driver asking who it is read **bus 0, device 0 — the host bridge (8086:1237)** while believing it read itself. `set-args` writes `probe-addr` through the *current instance*, and the enumerator has none for the node it is building. **ppc does not have the defect** (its nodes come out with `probe-addr` set), which is what made the arch matrix find it |
 | [`58-the-firmwares-own-walk-re-run-and-watched.patch`](58-the-firmwares-own-walk-re-run-and-watched.patch) | `FEATURE` | shared | **B.3's last success-signature line, and the review's premise retracted.** Plan §9 wanted *"a region diff shows a firmware-caused change"*, so the change had to come from a code path already in the tree: `lb-walk` re-runs `libopenbios/linuxbios_info.c`'s coreboot-table parser (this lab's patches 01 and 39) into a **scratch** `sys_info`, `lb-table` names the region it reads and `heap-cursor` the allocator's next block. F5/F6 said the diff would show in the table; measured, `read_lbtable()` is a **reader**, so that region is the NEGATIVE control and the write is one level down, in `convert_memmap()`'s `malloc`. Addresses out are **physical** so a caller cannot skip `>virt` — the `region-diff` track counts **0** without it on x86 and the same as the `>virt` path on amd64, where `virt_offset` is 0
+| [`59-config-space-through-a-pci-bridge.patch`](59-config-space-through-a-pci-bridge.patch) | `FEATURE` | shared | **Patch 56 stopped one bus level short.** A card behind a PCI-PCI bridge has the *bridge* node as its parent, and `ob_pci_bridge_node` had none of the config methods — measured on amd64 with QEMU's `pci-bridge`: `probe-addr` right (`0x10800`), ROM header fine, the *global* `config-l@` reads `100e8086`, and the card's own `$call-parent` route returns **`cfg-id=none`**, the `-21` patch 56 removed. Six one-line methods chain to the parent the way the bridge already chained `pci-map-in`. Found by the 2026-09-03 audit; the `optrom` track keeps a bridged card on x86 and amd64 |
+| [`60-pci-map-out-the-other-half-of-map-in.patch`](60-pci-map-out-the-other-half-of-map-in.patch) | `UPSTREAM-BUG` | shared | **The binding's `map-in`/`map-out` are a pair; upstream bound only the first.** On ppc `ob_pci_map()` *claims* the physical and virtual ranges through ofmem, so with nothing to release them a second `map-in` of the same region fails its claim and answers `ffffffff` — which #388 had written up as *"call-once-and-keep, not a getter"*. A leak with a nicer name, retracted by the audit. `pci-map-out ( virt size -- )` is `ofmem_release()` (6.3.2.4: unmap, release virt, release phys) — the exact inverse of what `map-in` did; a no-op on x86/amd64, which never claimed. `dsl/optrom.fth` gains `optrom-unmap`, `optrom-run-mapped` gives its mapping back on every path, and the ppc row measures both directions. Also: `lb-table` searches once, not twice |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
-| `UPSTREAM-BUG` | 27 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
+| `UPSTREAM-BUG` | 28 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
-| `FEATURE` | 14 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
+| `FEATURE` | 15 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 3 | patch 15 (the Forth loader), patch 50 (the unix arena below 4 GiB), and patch 51 (the unix exit status) |
 | `RECORD` | 1 | bookkeeping |
@@ -145,7 +147,7 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 34 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 36 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 24 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only the `DIVERGENCE` rows are divergences in the sense of "we want different

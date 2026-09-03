@@ -511,6 +511,19 @@ The middle row is the one worth reading twice: the message points at the
 **subject** rather than the instrument, and it can only do that because
 `SELFTEST` is asserted first.
 
+### The audit of #388/#389, run 2026-09-03 — what it found and how each was watched to bite
+
+Two PRs, read line by line and then measured. Four defects, none visible in a green run:
+
+| found | how it presented | fix | the row that now guards it |
+|---|---|---|---|
+| **patch 56 stopped one bus level short** — `ob_pci_bridge_node` had no config methods | a card *behind* a `pci-bridge`: `probe-addr` right (`10800`), ROM header fine, global `config-l@` fine, **`cfg-id=none`** from the card's own bytecode | patch 59: the bridge chains config space to its parent, as it already chained `pci-map-in` | `optrom` boots a bridged card on x86 and amd64 and requires `CFGID=100e8086` at `PA=10800` |
+| **no `pci-map-out` at all** — #388 had named the symptom *"call-once-and-keep"* | on ppc `ob_pci_map()` claims the range through ofmem; a second `map-in` gets `ffffffff` | patch 60: `pci-map-out` = `ofmem_release()`; `optrom-unmap`; `optrom-run-mapped` releases on every path | ppc row: `MAP=800a0000`, released, `MAPX=800a0000` again + `MARK`; two unreleased map-ins → `MAPY=ffffffff` (the control) |
+| **the instance scaffold built one level** | with patch 59 in, the bridged card **GPF'd the firmware** — the bridge chained `$call-parent` into an instance whose `my-parent` was 0 | `optrom-instance-in` walks `parent` to the root and creates every instance root-first | the same bridged row — it fired once, for real, on the one-level scaffold |
+| **`optrom-run-mapped` was dead code** claiming "the track checks" it | zero callers, never unmapped | it is the ppc row's byte-load now | `MARK` after `optrom-run-mapped` |
+
+Smaller: the ppc leg matched `"> "` and threw away the stack-depth assertion (`0 > ` now — the depth was 0 on all nine prompts, so it costs nothing); the region-diff monitor dump was 32 bytes while `LAST` can land anywhere in `STEP` (256 now — a real disagreement past byte 31 would have been a bash arithmetic error with no verdict); `region-snapv` leaked the old buffer on growth; `forth_lb_table` searched twice per call; the PASS text had unescaped inner quotes that bash word-split silently.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console
@@ -585,7 +598,7 @@ PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
 **It is graded, not narrated.** Every act asserts its outcome and the run exits
 1 if one does not happen — verified 2026-09-03 by making `lb-walk` a no-op,
 which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
-≈ 2 min under KVM.
+≈ 40 s under KVM (measured 2026-09-03: 39 s wall, one boot).
 
 ## 5. The firmware as a Unix process (no QEMU)
 

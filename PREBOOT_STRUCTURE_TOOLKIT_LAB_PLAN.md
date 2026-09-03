@@ -635,11 +635,28 @@ named gaps. Neither survived being measured.
   **instance**: `my-space` and `$call-parent` are `?my-self`-rooted, and a
   `byte-load` typed at the `0 >` prompt has no current instance, so the driver
   aborted the moment it asked anything about itself. `dsl/optrom.fth` now builds
-  the instance chain the way a real probe does (`create-instance` on the parent
-  bus node first, so the card's `my-parent` exists). `optrom-map` (the parent's
-  `pci-map-in`) is kept as the portable form and returns the same address on ppc
-  — and a **second** call for the same region does not return a readable one, so
-  it is call-once-and-keep rather than a getter.
+  the instance chain the way a real probe does — *the whole chain, root-first*:
+  the first version built one parent level, and the 2026-09-03 audit found that a
+  card behind a bridge then GPFs the firmware (the bridge chains `$call-parent`
+  into an instance whose `my-parent` is 0). `optrom-map` (the parent's
+  `pci-map-in`) is kept as the portable form and returns the same address on ppc.
+  *(This paragraph first said a **second** call "does not return a readable one,
+  so it is call-once-and-keep rather than a getter" — **retracted by the
+  2026-09-03 audit.** `ob_pci_map()` on ppc CLAIMS the range through ofmem, and
+  this firmware bound no `pci-map-out` to release it: the second call failed its
+  claim. A leak with a nicer name. **Patch 60** binds the binding's `pci-map-out`,
+  `optrom-unmap` calls it, and the ppc row now measures both directions — a
+  released region maps again and byte-loads from the mapped address; two map-ins
+  with no release between them leave the second at `ffffffff`.)*
+- **And patch 56 stopped one bus level short — found by the same audit, patch
+  59.** A card behind a PCI-PCI bridge has the *bridge* node as its parent, and
+  `ob_pci_bridge_node` had none of the config methods: measured on amd64 with
+  QEMU's `pci-bridge`, `probe-addr` was right (`0x10800`), the ROM header read
+  at its live BAR, the *global* `config-l@` read `100e8086` from the prompt — and
+  the card's own `$call-parent` route came back `cfg-id=none`, the very `-21`
+  patch 56 was written to remove. The bridge now chains config space to its
+  parent the way it already chained `pci-map-in`; the `optrom` track keeps a
+  bridged card on both x86 and amd64.
 - ***"FCode-table entries for `config-{b,w,l}@`/`!`"* — the wrong shape, and the
   right one found two defects.** `config-l@` has **no FCode number at all**
   (measured: neither `toke` nor `detok` knows the name; `$call-parent` is 0x209),

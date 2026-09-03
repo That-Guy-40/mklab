@@ -1,0 +1,114 @@
+Subject: [PATCH 60/60] drivers/pci: pci-map-out, the other half of map-in -- a leak had been wearing the name "call-once-and-keep"
+
+Arch-tested: x86 amd64 ppc unix
+
+The 1275 PCI Bus Binding defines map-in and map-out as a PAIR. This firmware
+bound only pci-map-in. Nobody noticed, because on x86/amd64 (no CONFIG_OFMEM)
+map-in returns the physical address and claims nothing, so there was never
+anything to give back -- and on ppc, where ob_pci_map() CLAIMS the physical and
+virtual ranges through ofmem before mapping them, the symptom was written down
+and given a name instead of a cause. #388's optrom track recorded: "a SECOND
+call for the same region does not return a readable address, so it is
+call-once-and-keep, not a getter."
+
+It was a leak. The second call's ofmem_claim fails on the range the first call
+still holds, and the caller gets -1 (ffffffff) for an address. Found by the
+2026-09-03 audit of #388/#389, reading ob_pci_map() for what it does rather
+than the track for what it said.
+
+THE FIX IS THE INVERSE THAT ALREADY EXISTED. ofmem_release() is 6.3.2.4's
+release: unmap, release virt, release phys -- exactly what ob_pci_map() did,
+undone. pci-map-out ( virt size -- ) calls it under CONFIG_OFMEM and is a no-op
+elsewhere, on the bus node; the bridge node chains it to its parent the way it
+chains map-in (that hunk rides in patch 59, which reworks the bridge's table).
+dsl/optrom.fth gains optrom-unmap, and optrom-run-mapped -- which until this
+audit unmapped nothing and was called by nothing -- now maps, byte-loads, and
+gives the mapping back on every exit path.
+
+MEASURED on ppc (mac99, the `optrom` track's row F), in both directions:
+    map-in                        800a0000   (MAP -- the address the property publishes)
+    map-out, then map-in again    800a0000   (MAPX: a released region maps again, and
+                                              the card's FCode byte-loads from it: MARK)
+    map-in again, no release      ffffffff   (MAPY: the duplicate claim refused -- the
+                                              leak, kept as the CONTROL that names it)
+
+Also in this patch: forth_lb_table (patch 58) searched for the coreboot table
+TWICE per call, once per pushed cell, tripling the debug chatter for nothing.
+One search.
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -510,12 +510,36 @@
+ static void ob_pci_config_w_write(int *idx) { forth_config_w_write(); }
+ static void ob_pci_config_l_write(int *idx) { forth_config_l_write(); }
+ 
++/* ( virt size -- ) -- mklab, B.3 Spike 3 (patch 60): THE OTHER HALF OF MAP-IN.
++ * The 1275 PCI Bus Binding defines map-in and map-out as a pair; this firmware
++ * bound only the first. On ppc, ob_pci_map() CLAIMS the physical and virtual
++ * ranges through ofmem before mapping them, so with nothing to release them a
++ * second map-in of the same region fails its claim and hands back an address
++ * that reads nothing -- which the optrom track had recorded as "call-once-and-
++ * keep, not a getter". It was a leak with a nicer name. ofmem_release() (6.3.2.4)
++ * is the exact inverse of what ob_pci_map() did: unmap, release virt, release
++ * phys. Without CONFIG_OFMEM (x86/amd64) map-in returned the physical address
++ * and claimed nothing, so there is nothing to give back. */
++static void
++ob_pci_bus_map_out(int *idx)
++{
++	ucell size = POP();
++	ucell virt = POP();
++
++#if defined(CONFIG_OFMEM)
++	ofmem_release(virt, size);
++#else
++	(void)virt; (void)size;
++#endif
++}
++
+ NODE_METHODS(ob_pci_bus_node) = {
+ 	{ "open",		ob_pci_open		},
+ 	{ "close",		ob_pci_close		},
+ 	{ "decode-unit",	ob_pci_decode_unit	},
+ 	{ "encode-unit",	ob_pci_encode_unit	},
+ 	{ "pci-map-in",		ob_pci_bus_map_in	},
++	{ "pci-map-out",	ob_pci_bus_map_out	},
+ 	{ "config-b@",		ob_pci_config_b_read	},
+ 	{ "config-w@",		ob_pci_config_w_read	},
+ 	{ "config-l@",		ob_pci_config_l_read	},
+diff --git a/libopenbios/linuxbios_info.c b/libopenbios/linuxbios_info.c
+--- a/libopenbios/linuxbios_info.c
++++ b/libopenbios/linuxbios_info.c
+@@ -201,24 +201,17 @@
+  * Addresses out are PHYSICAL, because x86 relocates and a bare pointer handed
+  * to Forth would let a snapshot land on RAM that reads back convincingly.
+  */
+-static unsigned long lb_table_phys(void)
+-{
+-	struct lb_header *head = lb_find_table();
+-
+-	return head ? virt_to_phys(head) : 0;
+-}
+-
+-static unsigned long lb_table_len(void)
++static void forth_lb_table(void)
+ {
+ 	struct lb_header *head = lb_find_table();
+ 
+-	return head ? (unsigned long)(sizeof(*head) + head->table_bytes) : 0;
+-}
+-
+-static void forth_lb_table(void)
+-{
+-	PUSH(lb_table_phys());
+-	PUSH(lb_table_len());
++	if (!head) {
++		PUSH(0);
++		PUSH(0);
++		return;
++	}
++	PUSH(virt_to_phys(head));
++	PUSH((ucell)(sizeof(*head) + head->table_bytes));
+ }
+ 
+ static void forth_lb_walk(void)

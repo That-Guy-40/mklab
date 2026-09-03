@@ -5224,7 +5224,7 @@ index f6abb7b..c277f18 100644
  #define WIN_PACKET		0xA0
  #define WIN_IDENTIFY_PACKET	0xA1
 diff --git a/drivers/pci.c b/drivers/pci.c
-index f30e427..33fc3d2 100644
+index f30e427..7762d63 100644
 --- a/drivers/pci.c
 +++ b/drivers/pci.c
 @@ -60,13 +60,41 @@ const pci_arch_t *arch;
@@ -5289,7 +5289,7 @@ index f30e427..33fc3d2 100644
  
  	return 3;
  }
-@@ -454,12 +482,46 @@ ob_pci_dma_sync(int *idx)
+@@ -454,12 +482,70 @@ ob_pci_dma_sync(int *idx)
      call_parent_method("dma-sync");
  }
  
@@ -5321,12 +5321,36 @@ index f30e427..33fc3d2 100644
 +static void ob_pci_config_w_write(int *idx) { forth_config_w_write(); }
 +static void ob_pci_config_l_write(int *idx) { forth_config_l_write(); }
 +
++/* ( virt size -- ) -- mklab, B.3 Spike 3 (patch 60): THE OTHER HALF OF MAP-IN.
++ * The 1275 PCI Bus Binding defines map-in and map-out as a pair; this firmware
++ * bound only the first. On ppc, ob_pci_map() CLAIMS the physical and virtual
++ * ranges through ofmem before mapping them, so with nothing to release them a
++ * second map-in of the same region fails its claim and hands back an address
++ * that reads nothing -- which the optrom track had recorded as "call-once-and-
++ * keep, not a getter". It was a leak with a nicer name. ofmem_release() (6.3.2.4)
++ * is the exact inverse of what ob_pci_map() did: unmap, release virt, release
++ * phys. Without CONFIG_OFMEM (x86/amd64) map-in returned the physical address
++ * and claimed nothing, so there is nothing to give back. */
++static void
++ob_pci_bus_map_out(int *idx)
++{
++	ucell size = POP();
++	ucell virt = POP();
++
++#if defined(CONFIG_OFMEM)
++	ofmem_release(virt, size);
++#else
++	(void)virt; (void)size;
++#endif
++}
++
  NODE_METHODS(ob_pci_bus_node) = {
  	{ "open",		ob_pci_open		},
  	{ "close",		ob_pci_close		},
  	{ "decode-unit",	ob_pci_decode_unit	},
  	{ "encode-unit",	ob_pci_encode_unit	},
  	{ "pci-map-in",		ob_pci_bus_map_in	},
++	{ "pci-map-out",	ob_pci_bus_map_out	},
 +	{ "config-b@",		ob_pci_config_b_read	},
 +	{ "config-w@",		ob_pci_config_w_read	},
 +	{ "config-l@",		ob_pci_config_l_read	},
@@ -5336,7 +5360,51 @@ index f30e427..33fc3d2 100644
  	{ "dma-alloc",		ob_pci_dma_alloc	},
  	{ "dma-free",		ob_pci_dma_free		},
  	{ "dma-map-in",		ob_pci_dma_map_in	},
-@@ -499,8 +561,8 @@ static void pci_set_bus_range(const pci_config_t *config)
+@@ -476,12 +562,43 @@ ob_pci_bridge_map_in(int *idx)
+ 	call_parent_method("pci-map-in");
+ }
+ 
++/* -- mklab, B.3 Spike 3 (patch 59): config space THROUGH A BRIDGE ---------------
++ * Patch 56 put config-{b,w,l}@/! on the bus node and stopped there. A card behind
++ * a PCI-PCI bridge has the BRIDGE as its parent, so its `my-space " config-l@"
++ * $call-parent` resolved against ob_pci_bridge_node -- which had no such method
++ * -- and threw the very -21 patch 56 was written to remove. Measured 2026-09-03
++ * on amd64 with QEMU's pci-bridge: probe-addr 0x10800 (bus 1, dev 1) and the ROM
++ * header read fine, and the card's own cfg-id came back NONE while the global
++ * config-l@ read 0x100e8086 from the prompt. The config address already carries
++ * the bus number, so a bridge answers the way it answers pci-map-in: by chaining
++ * to its parent until the host bridge's bus node does the access. */
++static void ob_pci_bridge_config_b_read(int *idx)  { call_parent_method("config-b@"); }
++static void ob_pci_bridge_config_w_read(int *idx)  { call_parent_method("config-w@"); }
++static void ob_pci_bridge_config_l_read(int *idx)  { call_parent_method("config-l@"); }
++static void ob_pci_bridge_config_b_write(int *idx) { call_parent_method("config-b!"); }
++static void ob_pci_bridge_config_w_write(int *idx) { call_parent_method("config-w!"); }
++static void ob_pci_bridge_config_l_write(int *idx) { call_parent_method("config-l!"); }
++
++/* ( virt size -- ) -- mklab, B.3 Spike 3 (patch 60): the binding's map-out, chained */
++static void
++ob_pci_bridge_map_out(int *idx)
++{
++	call_parent_method("pci-map-out");
++}
++
+ NODE_METHODS(ob_pci_bridge_node) = {
+ 	{ "open",		ob_pci_open		},
+ 	{ "close",		ob_pci_close		},
+ 	{ "decode-unit",	ob_pci_decode_unit	},
+ 	{ "encode-unit",	ob_pci_encode_unit	},
+ 	{ "pci-map-in",		ob_pci_bridge_map_in	},
++	{ "pci-map-out",	ob_pci_bridge_map_out	},
++	{ "config-b@",		ob_pci_bridge_config_b_read	},
++	{ "config-w@",		ob_pci_bridge_config_w_read	},
++	{ "config-l@",		ob_pci_bridge_config_l_read	},
++	{ "config-b!",		ob_pci_bridge_config_b_write	},
++	{ "config-w!",		ob_pci_bridge_config_w_write	},
++	{ "config-l!",		ob_pci_bridge_config_l_write	},
+ 	{ "dma-alloc",		ob_pci_dma_alloc	},
+ 	{ "dma-free",		ob_pci_dma_free		},
+ 	{ "dma-map-in",		ob_pci_dma_map_in	},
+@@ -499,8 +616,8 @@ static void pci_set_bus_range(const pci_config_t *config)
  	phandle_t dev = find_dev(config->path);
  	u32 props[2];
  
@@ -5347,7 +5415,7 @@ index f30e427..33fc3d2 100644
  
  	PCI_DPRINTF("setting bus range for %s PCI device, "
  	        "package handle " FMT_ucellx " "
-@@ -854,11 +916,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
+@@ -854,11 +971,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
  			     ncells * sizeof(cell));
  }
  
@@ -5391,7 +5459,7 @@ index f30e427..33fc3d2 100644
  	int ncells;
  	int i;
  	uint32_t mask;
-@@ -877,9 +970,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
+@@ -877,9 +1025,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
  				     PCI_BASE_ADDR_0 + (i * sizeof(uint32_t)),
  				     config->assigned[i] & ~mask);
  
@@ -5406,7 +5474,7 @@ index f30e427..33fc3d2 100644
  	if (ncells)
  		set_property(dev, "assigned-addresses", (char *)props,
  			     ncells * sizeof(props[0]));
-@@ -908,7 +1004,7 @@ static void pci_set_reg(phandle_t phandle,
+@@ -908,7 +1059,7 @@ static void pci_set_reg(phandle_t phandle,
                          pci_config_t *config, int num_bars)
  {
  	phandle_t dev = phandle;
@@ -5415,7 +5483,7 @@ index f30e427..33fc3d2 100644
  	int ncells;
  	int i;
  	uint32_t mask;
-@@ -938,6 +1034,9 @@ static void pci_set_reg(phandle_t phandle,
+@@ -938,6 +1089,9 @@ static void pci_set_reg(phandle_t phandle,
  		/* set size */
  		ncells += pci_encode_size(props + ncells, config->sizes[i]);
  	}
@@ -5425,7 +5493,7 @@ index f30e427..33fc3d2 100644
  
  	set_property(dev, "reg", (char *)props, ncells * sizeof(props[0]));
      ob_pci_reload_device_path(dev, config);
-@@ -965,7 +1064,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -965,7 +1119,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* child address */
  
@@ -5434,7 +5502,7 @@ index f30e427..33fc3d2 100644
  
  		/* parent address */
  
-@@ -977,7 +1076,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -977,7 +1131,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* size */
  
@@ -5443,7 +5511,7 @@ index f30e427..33fc3d2 100644
    	}
  	set_property(dev, "ranges", (char *)props, ncells * sizeof(props[0]));
  }
-@@ -1096,15 +1195,15 @@ int ebus_config_cb(const pci_config_t *config)
+@@ -1096,15 +1250,15 @@ int ebus_config_cb(const pci_config_t *config)
          pci_decode_pci_addr(config->assigned[i],
                              &flags, &space_code, &mask);
  
@@ -5462,7 +5530,7 @@ index f30e427..33fc3d2 100644
  
          /* Store base of IO space for NVRAM */
          if (io_phys_base == 0x0 && space_code == IO_SPACE) {
-@@ -1827,6 +1926,31 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+@@ -1827,6 +1981,31 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
  
      phandle = get_cur_dev();
  
@@ -5494,7 +5562,7 @@ index f30e427..33fc3d2 100644
      switch (class) {
      case PCI_BASE_CLASS_BRIDGE:
          if (subclass != PCI_SUBCLASS_BRIDGE_HOST) {
-@@ -1834,6 +1958,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+@@ -1834,6 +2013,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
          } else {
              BIND_NODE_METHODS(phandle, ob_pci_bus_node);
          }
@@ -5537,7 +5605,7 @@ index f30e427..33fc3d2 100644
          break;
      }
  
-@@ -2054,7 +2214,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2054,7 +2269,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
                  val = (u32 *)reg;
  
                  for (i = 0; i < (len / sizeof(u32)); i += 5) {
@@ -5547,7 +5615,7 @@ index f30e427..33fc3d2 100644
  
                      /* Device address is in 1st 32-bit word of encoded PCI address for config space */
                      if ((addr & PCI_RANGE_TYPE_MASK) == PCI_RANGE_CONFIG) {
-@@ -2080,6 +2241,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2080,6 +2296,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
      }
  }
  
@@ -7543,7 +7611,7 @@ index 0f7cba9..30ab9aa 100644
  #define LB_MEM_RAM       1	/* Memory anyone can use */
  #define LB_MEM_RESERVED  2	/* Don't use this memory region */
 diff --git a/libopenbios/linuxbios_info.c b/libopenbios/linuxbios_info.c
-index bef996c..e354c89 100644
+index bef996c..eccbd24 100644
 --- a/libopenbios/linuxbios_info.c
 +++ b/libopenbios/linuxbios_info.c
 @@ -7,6 +7,9 @@
@@ -7556,7 +7624,7 @@ index bef996c..e354c89 100644
  
  #ifdef CONFIG_DEBUG_BOOT
  #define debug printk
-@@ -109,22 +112,138 @@ static int find_lb_table(void *start, void *end, struct lb_header **result)
+@@ -109,22 +112,131 @@ static int find_lb_table(void *start, void *end, struct lb_header **result)
  	return 0;
  }
  
@@ -7656,24 +7724,17 @@ index bef996c..e354c89 100644
 + * Addresses out are PHYSICAL, because x86 relocates and a bare pointer handed
 + * to Forth would let a snapshot land on RAM that reads back convincingly.
 + */
-+static unsigned long lb_table_phys(void)
-+{
-+	struct lb_header *head = lb_find_table();
-+
-+	return head ? virt_to_phys(head) : 0;
-+}
-+
-+static unsigned long lb_table_len(void)
-+{
-+	struct lb_header *head = lb_find_table();
-+
-+	return head ? (unsigned long)(sizeof(*head) + head->table_bytes) : 0;
-+}
-+
 +static void forth_lb_table(void)
 +{
-+	PUSH(lb_table_phys());
-+	PUSH(lb_table_len());
++	struct lb_header *head = lb_find_table();
++
++	if (!head) {
++		PUSH(0);
++		PUSH(0);
++		return;
++	}
++	PUSH(virt_to_phys(head));
++	PUSH((ucell)(sizeof(*head) + head->table_bytes));
 +}
 +
 +static void forth_lb_walk(void)

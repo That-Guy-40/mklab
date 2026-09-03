@@ -38,7 +38,8 @@ hex
 
 \ region-snapv ( virt len -- )  keep a private copy of the bytes at a FORTH address
 : region-snapv ( virt len -- )
-  dup snap-cap > if                       \ grow only when the ask is bigger
+  dup snap-cap > if                       \ grow only when the ask is bigger...
+    snap-buf snap-cap free-mem            \ ...and give the old one back first
     dup alloc-mem to snap-buf  dup to snap-cap
   then
   to snap-len  to snap-virt

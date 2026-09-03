@@ -703,8 +703,13 @@ requires of any other cached fact.
       address directly on mac99 and the card's FCode byte-loads from it. What the first attempt
       lacked was an **instance** — `my-space`/`$call-parent` are `?my-self`-rooted and a prompt
       `byte-load` has none; `dsl/optrom.fth` now builds the chain a real probe builds
-      (`create-instance` on the parent bus node first). `optrom-map` is kept as the portable form:
-      same address on ppc, and a **second** call for one region returns an unreadable one.
+      (root-first, EVERY ancestor — one level was not enough once a bridge chained upward). `optrom-map` is kept as the portable form:
+      same address on ppc. *(**Retracted 2026-09-03 (audit):** "a second call returns an
+      unreadable one — call-once-and-keep" was a LEAK: `ob_pci_map()` claims the range through
+      ofmem and the firmware bound no `pci-map-out`. Patch 60 binds it; a released region maps
+      again, two unreleased map-ins leave the second at `ffffffff`. The same audit found patch 56
+      one bus level short — a card behind a PCI-PCI bridge got `cfg-id=none` because the BRIDGE
+      node had no config methods; patch 59 chains them to the parent like `pci-map-in`.)*
       (2) *"FCode-table entries"* was the wrong shape — `config-l@` has **no FCode number**
       (neither `toke` nor `detok` knows it; `$call-parent` is 0x209), so the binding's only route
       is a **bus-node method** = **patch 56**. Asserting the OUTCOME then found **patch 57**:
