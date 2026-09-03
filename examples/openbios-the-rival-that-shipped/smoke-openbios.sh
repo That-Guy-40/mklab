@@ -90,6 +90,10 @@ TRACK (default multiboot):
                               PCR = SHA256(PCR‖digest) and match tpm2_eventlog's
                               own pcrs AND python hashlib; a flipped digest byte
                               moves the PCR (negative control); quote UNKNOWN
+  event-real                  B.3: a REAL edk2/swtpm event log (fixtures/edk2-swtpm,
+                              four digest banks) walked and REPLAYED — the firmware's
+                              PCR0-7 equal the MACHINE'S OWN TPM PCRs and tpm2_eventlog;
+                              EV_NO_ACTION control; flipped-byte control; quote UNKNOWN
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
@@ -4204,6 +4208,132 @@ PY
 
     pass "B.3 Spike 1b (the replay): dsl/sha256.fth is SHA-256 (FIPS 180-4) in OpenBIOS Forth as a pure function, and it matches all three NIST test vectors on unix, amd64, x86 AND ppc — the width × byte-order control that only a pure function can run this cleanly (a 32-bit-masking slip would show on the 64-bit cells alone, a byte-order slip on the big-endian row alone; neither did). dsl/eventlog.fth's evlog-replay recomputes each PCR as SHA256(PCR ‖ digest) over the SAME (event2) parse the 1a reader prints from, and the firmware's PCR0/PCR1 of its own authored log equal TWO independent foreign oracles — tpm2_eventlog's own replayed pcrs and python hashlib's — which also agree with each other. The negative control that makes this attestation rather than theatre: flipping one byte of one digest moves PCR1 to exactly the value tpm2_eventlog replays for the flipped log, while PCR0 does not move. THE BOUNDARY IS STATED: the replay proves internal consistency; the hardware-signed AK quote is UNKNOWN and cannot be faked here. Spike 1 is COMPLETE (1a structure · 1b replay · 1c boundary)"
     ;;
+  event-real)
+    # B.3, the edge past Spike 1: a REAL edk2 (OVMF) measured-boot event log from a
+    # swtpm guest — fixtures/edk2-swtpm/ — and the machine's OWN claim of what it
+    # measured (its pcr-sha256/ files). Everything Spike 1 proved was on a log the
+    # firmware authored; here nobody in this repo wrote a byte of the subject, and
+    # the claimed PCRs come from a TPM the firmware extended without asking. The
+    # replay either reproduces that claim from the log alone, or it does not.
+    #
+    # WHAT THIS SUBJECT EXERCISES THAT OUR OWN LOG COULD NOT: four digest banks per
+    # event (sha1/sha256/sha384/sha512 — the reader must SKIP 48- and 64-byte
+    # digests it does not use, by declared size), 29 real entries of eight event
+    # types, and the EV_NO_ACTION rule (informational events are not extended). That
+    # last one is ALSO proven by an authored control here, because this log's only
+    # EV_NO_ACTION is the SpecID header the reader skips by design — so the track
+    # says which rule the fixture covers and which the control does.
+    #
+    # THE FIXTURE IS BOUND TO ITS PROVENANCE. PROVENANCE.txt records sha256 of every
+    # vendored file; a mismatch is refused by name (a re-captured log with stale PCR
+    # files, or the reverse, is exactly the record-outlived-its-subject bug).
+    command -v tpm2_eventlog >/dev/null || skip "tpm2_eventlog not installed (apt install tpm2-tools) — the oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    RRUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; RRUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    [[ -x "$RRUBIN" && -f "$RRUDICT" ]] || skip "missing openbios-unix — run ./build-openbios.sh unix first"
+    FX="$HERE/fixtures/edk2-swtpm"
+    for f in "$FX/binary_bios_measurements" "$FX/pcrs-sha256.txt" "$FX/PROVENANCE.txt" \
+             "$HERE/dsl/struct.fth" "$HERE/dsl/sha256.fth" "$HERE/dsl/eventlog.fth"; do
+      [[ -f "$f" ]] || fail "missing $f — the vendored fixture and the shipped DSL are tracked; this track stages them, it does not re-create them"
+    done
+    # bind: every vendored file must hash to what PROVENANCE.txt recorded
+    while read -r want name; do
+      [[ "$want" =~ ^[0-9a-f]{64}$ ]] || continue
+      got="$(sha256sum "$FX/$name" 2>/dev/null | cut -d' ' -f1)"
+      [[ "$got" == "$want" ]] \
+        || fail "event-real: fixture $name hashes to ${got:-<missing>} but PROVENANCE.txt records $want — the fixture and its provenance disagree (re-capture and commit them together)"
+    done < <(grep -E '^[0-9a-f]{64}  ' "$FX/PROVENANCE.txt")
+    note "fixture bound: binary_bios_measurements + pcrs match PROVENANCE.txt ($(grep -m1 '^ovmf-pkg:' "$FX/PROVENANCE.txt" | cut -d: -f2- | xargs), $(grep -m1 '^swtpm:' "$FX/PROVENANCE.txt" | grep -oE 'version [0-9.]+'))"
+
+    # the oracle on the real log: entry count, banks, and its own replay of PCR0-7
+    RRO="$WORKDIR/event-real"; rm -rf "$RRO"; mkdir -p "$RRO/stage"
+    tpm2_eventlog "$FX/binary_bios_measurements" > "$RRO/oracle.yaml" 2>/dev/null \
+      || fail "event-real: tpm2_eventlog rejects the vendored log — the fixture is not a valid TCG log"
+    RREV=$(grep -c 'EventNum:' "$RRO/oracle.yaml"); RRB4=$(grep -c 'DigestCount: 4' "$RRO/oracle.yaml")
+    (( RREV >= 20 && RRB4 >= 20 )) || fail "event-real: the oracle sees $RREV events / $RRB4 four-bank entries — not the multi-bank edk2 log this track needs"
+    rr_oracle() { sed -n '/^pcrs:/,$p' "$RRO/oracle.yaml" | grep -E "^\s+$1\s*:\s*0x[0-9a-f]{64}$" | head -1 | grep -oE '[0-9a-f]{64}'; }
+    rr_claim()  { sed -n "s/^$1:\([0-9a-f]\{64\}\)$/\1/p" "$FX/pcrs-sha256.txt"; }
+
+    cp "$HERE/dsl/struct.fth" "$RRO/stage/STRUCT.FTH"; cp "$HERE/dsl/sha256.fth" "$RRO/stage/SHA.FTH"
+    cp "$HERE/dsl/eventlog.fth" "$RRO/stage/EVLOG.FTH"; cp "$FX/binary_bios_measurements" "$RRO/stage/REAL.BIN"
+    genisoimage -quiet -o "$RRO/real.iso" -V REAL "$RRO/stage" 2>/dev/null || fail "event-real: genisoimage failed"
+    rr_run() {  # rr_run <subdir> <forth-line>...   (sha256.fth BEFORE eventlog.fth — see event-replay)
+      local d="$RRO/$1"; shift; rm -rf "$d"; mkdir -p "$d"
+      { printf '%s\n' '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+          'load hd:\STRUCT.FTH' 'load-base load-size evaluate' 'load hd:\SHA.FTH' 'load-base load-size evaluate' \
+          'load hd:\EVLOG.FTH' 'load-base load-size evaluate'
+        printf '%s\n' "$@"; printf 'bye\n'
+      } | ( cd "$d" && "$RRUBIN" -f "$RRO/real.iso" "$RRUDICT" ) 2>&1 | tr -d '\r'
+    }
+    rr_val() { grep -oE "$2=[0-9a-f]{64}" <<<"$1" | tail -1 | cut -d= -f2; }
+
+    # ── ROW A: the reader walks the real four-bank log ───────────────────────────
+    RRA="$(rr_run list 'load hd:\REAL.BIN' 'load-base load-base load-size + 80 evlog-list')"
+    RRN=$(grep -c 'evt| pcr=' <<<"$RRA"); RRD4=$(grep -c 'digests=4' <<<"$RRA")
+    grep -q 'EVLOG-END' <<<"$RRA" || fail "event-real: the reader did not reach EVLOG-END on the real log — an eventSize or a digest size desynced the walk: $(grep -E 'BADALG|evt' <<<"$RRA" | tail -2 | tr '\n' '|')"
+    grep -q 'BADALG' <<<"$RRA" && fail "event-real: the reader hit a digest algorithm it cannot size (!BADALG) — this log's banks are sha1/sha256/sha384/sha512, all of which alg-digest-size must know"
+    [[ "$RRN" -eq $((RREV - 1)) ]] || fail "event-real: the reader walked $RRN crypto-agile entries but tpm2_eventlog sees $RREV events (= $((RREV-1)) + the SpecID header) — the walk skipped or invented an entry"
+    [[ "$RRD4" -eq "$RRB4" ]] || fail "event-real: the reader saw $RRD4 four-bank entries but the oracle sees $RRB4 — the digest-count read is wrong"
+    note "reader: $RRN entries walked to EVLOG-END, $RRD4 with four digest banks (sha384/sha512 skipped by declared size) — matches tpm2_eventlog's $RREV events"
+
+    # ── ROW B: the REPLAY vs the machine's OWN claim, and vs the oracle ─────────
+    RRL=()
+    for n in 0 1 2 3 4 5 6 7; do RRL+=("$(printf '." P%s=" load-base load-base load-size + 80 %s evlog-replay .digest cr' "$n" "$n")"); done
+    RRB="$(rr_run replay 'load hd:\REAL.BIN' "${RRL[@]}")"
+    rrok=0
+    for n in 0 1 2 3 4 5 6 7; do
+      fw="$(rr_val "$RRB" "P$n")"; cl="$(rr_claim "$n")"; oc="$(rr_oracle "$n")"
+      [[ -n "$fw" ]] || fail "event-real: the firmware printed no PCR$n — the replay did not run: $(grep -E 'undefined|BADALG|TOO-LONG' <<<"$RRB" | head -2 | tr '\n' '|')"
+      [[ -n "$cl" && -n "$oc" ]] || fail "event-real: no claimed/oracle value for PCR$n (claim='${cl:-}', oracle='${oc:-}') — the fixture is incomplete"
+      [[ "$fw" == "$cl" ]] || fail "event-real: firmware replay of PCR$n = $fw but the MACHINE'S OWN TPM held $cl — the replay does not reproduce what a real firmware measured (oracle says $oc)"
+      [[ "$fw" == "$oc" ]] || fail "event-real: firmware replay of PCR$n = $fw but tpm2_eventlog replays $oc"
+      rrok=$((rrok+1))
+    done
+    note "replay: firmware PCR0-7 == the machine's own claimed PCRs == tpm2_eventlog's replay — $rrok/8, from a log nobody here authored"
+
+    # ── ROW C: the EV_NO_ACTION rule — an authored control, because this log's only
+    # EV_NO_ACTION is the SpecID header (skipped by design, so the fixture cannot
+    # exercise the replay-side rule). Adding an EV_NO_ACTION entry with a NONZERO
+    # digest must leave PCR0 unchanged (and tpm2_eventlog must agree); the SAME
+    # entry re-typed as EV_SEPARATOR must move it — the control bites both ways.
+    RRC="$(rr_run noact \
+      '1000 alloc-mem value eb' \
+      'eb >rec >evlog-header 0 8 11 deadbeef >evlog-entry 0 1 22 cafebabe >evlog-entry' \
+      '." BASE=" eb rec@ 40 0 evlog-replay .digest cr' \
+      'eb >rec >evlog-header 0 8 11 deadbeef >evlog-entry 0 1 22 cafebabe >evlog-entry' \
+      '0 3 77 0 >evlog-entry rec@ eb - value el' \
+      'eb el s" NOACT.EVT" write-file drop' \
+      '." NOACT=" eb eb el + 40 0 evlog-replay .digest cr' \
+      'eb >rec >evlog-header 0 8 11 deadbeef >evlog-entry 0 1 22 cafebabe >evlog-entry' \
+      '0 4 77 0 >evlog-entry' \
+      '." ASSEP=" eb eb el + 40 0 evlog-replay .digest cr')"
+    RRBASE="$(rr_val "$RRC" BASE)"; RRNO="$(rr_val "$RRC" NOACT)"; RRAS="$(rr_val "$RRC" ASSEP)"
+    [[ -n "$RRBASE" && -n "$RRNO" && -n "$RRAS" ]] || fail "event-real: the EV_NO_ACTION control did not print all three values: $(grep -E 'undefined|BASE|NOACT|ASSEP' <<<"$RRC" | tr '\n' '|')"
+    [[ "$RRNO" == "$RRBASE" ]] || fail "event-real: an EV_NO_ACTION entry with a nonzero digest CHANGED PCR0 ($RRBASE -> $RRNO) — the replay extends informational events, which the TCG profile forbids and tpm2_eventlog does not do"
+    RRNOO="$(tpm2_eventlog "$RRO/noact/NOACT.EVT" 2>/dev/null | sed -n '/^pcrs:/,$p' | grep -E '^\s+0\s*:' | grep -oE '[0-9a-f]{64}' | head -1)"
+    [[ "$RRNOO" == "$RRBASE" ]] || fail "event-real: tpm2_eventlog's replay of the EV_NO_ACTION log ($RRNOO) != the base ($RRBASE) — the oracle and the firmware disagree on the rule"
+    [[ "$RRAS" != "$RRBASE" ]] || fail "event-real EV_NO_ACTION CONTROL: the same entry re-typed as EV_SEPARATOR did NOT move PCR0 — the control cannot tell the rule from a replay that ignores digests entirely"
+    note "EV_NO_ACTION rule: an informational entry with a nonzero digest leaves PCR0 at $RRBASE (tpm2_eventlog agrees); re-typed as a separator it moves PCR0 — the control bites"
+
+    # ── ROW D: the NEGATIVE CONTROL on the REAL log — flip one digest byte ───────
+    # The first crypto-agile entry is EV_S_CRTM_VERSION on PCR0. Flip a byte of ITS
+    # sha256 digest in the arena and PCR0 must diverge from the machine's claim.
+    RRD="$(rr_run flip 'load hd:\REAL.BIN' \
+      'load-base evlog-skip-header >rec (event2)' \
+      'ev-sha256 @ c@ 1 xor ev-sha256 @ c!' \
+      '." P0F=" load-base load-base load-size + 80 0 evlog-replay .digest cr' \
+      '." P1F=" load-base load-base load-size + 80 1 evlog-replay .digest cr')"
+    RRP0F="$(rr_val "$RRD" P0F)"; RRP1F="$(rr_val "$RRD" P1F)"
+    [[ -n "$RRP0F" && -n "$RRP1F" ]] || fail "event-real: the flip run printed no PCRs: $(grep -E 'undefined|P0F|P1F' <<<"$RRD" | tr '\n' '|')"
+    [[ "$RRP0F" != "$(rr_claim 0)" ]] || fail "event-real NEGATIVE CONTROL: flipping a byte of the first PCR0 digest left the replay equal to the machine's claim — the replay is not reading the digests it claims to extend"
+    [[ "$RRP1F" == "$(rr_claim 1)" ]] || fail "event-real: flipping a PCR0 digest changed PCR1 ($(rr_claim 1) -> $RRP1F) — extends are not scoped to their PCR"
+    note "negative control: one flipped byte in the real log's first PCR0 digest breaks PCR0 ($(rr_claim 0 | cut -c1-12)… -> ${RRP0F:0:12}…) and leaves PCR1 untouched"
+
+    # ── ROW E: the boundary, out loud ────────────────────────────────────────────
+    note "QUOTE: UNKNOWN — this replay reproduces what a real firmware (edk2) measured into a real (swtpm) TPM, from the log alone, matching the machine's own PCRs. It does NOT establish a hardware root of trust: swtpm is software, and the AK-signed quote is not verified here and cannot be faked. UNKNOWN is a verdict, distinct from PASS."
+
+    pass "B.3 event-real: a REAL measured-boot event log — written by edk2 (OVMF) booting a swtpm TPM 2.0 guest, captured by fixtures/edk2-swtpm/capture.sh and vendored byte-exact with its provenance — is walked by dsl/eventlog.fth on unix (all $RRN crypto-agile entries, each carrying FOUR digest banks the reader steps over by declared size, to EVLOG-END, matching tpm2_eventlog's $RREV events) and REPLAYED by evlog-replay + dsl/sha256.fth: the firmware's PCR0-7 equal the MACHINE'S OWN TPM PCRs $rrok/8 — a claim from a machine that really measured, reproduced from the log alone — and equal tpm2_eventlog's replay. The EV_NO_ACTION rule (informational events are not extended) is proven by an authored control that bites both ways, since this log's only EV_NO_ACTION is the SpecID header; a single flipped digest byte in the real log breaks PCR0 and leaves PCR1 alone. The fixture is bound to PROVENANCE.txt by sha256 and refused on mismatch. THE BOUNDARY: swtpm is software and the AK quote is UNKNOWN — this proves the replay reproduces a real firmware's measurements, not that a physical machine is trustworthy"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -5598,5 +5728,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|unix]" >&2; exit 1 ;;
 esac

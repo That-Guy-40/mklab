@@ -219,7 +219,12 @@ variable rp-pcr
     over rec@ >  over 0>  and  ev-err @ 0=  and
   while
     (event2)
-    ev-pcr @ rp-pcr @ =  ev-sha256 @ 0<>  and if
+    \ EV_NO_ACTION (type 3) entries are NOT extended into any PCR — the TCG PC Client
+    \ profile reserves them for informational records (the SpecID header, edk2's
+    \ "StartupLocality"), and tpm2_eventlog's replay skips them too. A real edk2 log
+    \ carries them; our own authored log never did, which is exactly why a captured
+    \ log is worth having as a subject.
+    ev-pcr @ rp-pcr @ =  ev-sha256 @ 0<>  and  ev-type @ 3 <>  and if
       pcrbuf      catbuf      20 move       \ old PCR   -> catbuf[0..32)
       ev-sha256 @ catbuf 20 + 20 move       \ digest    -> catbuf[32..64)
       catbuf 40 sha256  pcrbuf 20 move      \ PCR = SHA256(PCR ‖ digest)
