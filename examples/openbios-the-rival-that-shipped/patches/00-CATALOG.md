@@ -126,14 +126,16 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`53-unix-ctrl-d-is-not-eof-on-a-raw-tty.patch`](53-unix-ctrl-d-is-not-eof-on-a-raw-tty.patch) | `UPSTREAM-BUG` | arch-local | **Patch 52 finished.** 52 stopped the end-of-input spin — for **pipes only**, so the case a person hits stayed broken. `init_terminal()` clears `ICANON`, so a tty never turns `^D` into EOF; it arrives as the byte `0x04` and was silently swallowed, reading as input that will not flush. **Ctrl-D is one keystroke and means leave now**; **pipe EOF latches**, so there the first finishes a trailing line and the second leaves. A green suite could not see it because every unix test drives a pipe — the track now drives a **real pty** and the assertion was watched to bite. TODO §19(d) |
 | [`54-unix-write-file-authors-a-host-file.patch`](54-unix-write-file-authors-a-host-file.patch) | `FEATURE` | arch-local | **The hosted firmware could READ from a host file and never WRITE to one** — `write_dictionary()` is `#if 0`, `blk` has no `write-blocks`, `arch/unix` has no NVRAM backend — so a structure the Forth built in the arena evaporated at exit. This binds `write-file ( data-adr data-len fname-adr fname-len -- actual-len )`, hosted-only (in `arch_init`, not the common `init.c`), closing REVIEW §G6's "the reader is still ahead of the writer". It names every failure and returns the bytes actually written; it cannot carry `strerror(errno)` because `config.h` `#define`s `errno` to a shim host syscalls never touch. `dsl/elf-write.fth` authors a 132-byte static x86-64 ELF and the `file-writer` track has the **kernel run it** — the exit status must equal the authored code. TODO §20 |
 | [`55-pci-expansion-rom-published-and-config-space-bound.patch`](55-pci-expansion-rom-published-and-config-space-bound.patch) | `FEATURE` | shared | **B.3 Spike 3's UNCOVERED row, uncovered.** The PCI allocator already mapped AND enabled every device's expansion ROM (`ob_pci_configure_bar`, `reg == 6`) and never said where — `reg`/`assigned-addresses` stopped at the BARs. Publishes the ROM base register (0x30 / 0x38) as the 1275 PCI binding lists it, and binds the binding's `config-{b,w,l}@`/`!` as global words (bound after `device_end()`, per 14/16). `dsl/optrom.fth` + the `optrom` track read a real option ROM's header at the live BAR on x86 and amd64, byte-load its FCode from there, and flip its enable bit through `config-l!`
+| [`56-pci-config-space-is-a-bus-node-method.patch`](56-pci-config-space-is-a-bus-node-method.patch) | `FEATURE` | shared | **A card cannot see a global word.** 55 bound `config-{b,w,l}@`/`!` globally; the 1275 PCI binding puts them on the **bus node**, because an FCode driver reaches config space as `my-space " config-l@" $call-parent`. Measured: `config-l@` has **no FCode number at all** (neither `toke` nor `detok` knows it), so there is no table entry to add and the method is the only route — before this, that route threw `-21` with the globals sitting right there |
+| [`57-every-probed-node-gets-its-probe-addr.patch`](57-every-probed-node-gets-its-probe-addr.patch) | `UPSTREAM-BUG` | shared | **`my-space` answered 0 for every PCI node**, so a card driver asking who it is read **bus 0, device 0 — the host bridge (8086:1237)** while believing it read itself. `set-args` writes `probe-addr` through the *current instance*, and the enumerator has none for the node it is building. **ppc does not have the defect** (its nodes come out with `probe-addr` set), which is what made the arch matrix find it |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
-| `UPSTREAM-BUG` | 26 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
+| `UPSTREAM-BUG` | 27 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
-| `FEATURE` | 12 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
+| `FEATURE` | 13 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 3 | patch 15 (the Forth loader), patch 50 (the unix arena below 4 GiB), and patch 51 (the unix exit status) |
 | `RECORD` | 1 | bookkeeping |
@@ -142,7 +144,7 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 31 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 33 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 24 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only the `DIVERGENCE` rows are divergences in the sense of "we want different

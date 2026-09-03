@@ -1,0 +1,80 @@
+Subject: [PATCH 56/57] drivers/pci: config space is a BUS NODE METHOD, or a card cannot reach it
+
+Arch-tested: x86 amd64 ppc unix
+
+Patch 55 bound config-{b,w,l}@/! as global Forth words. That is enough for a
+prompt and INVISIBLE TO A CARD, which is the case the 1275 PCI Bus Binding is
+actually written for: an FCode driver on an option ROM does not look words up by
+name in the global dictionary -- it reaches its bus with
+
+    my-space " config-l@" $call-parent
+
+and $call-parent resolves a METHOD ON THE PARENT NODE. Measured 2026-09-03,
+because the plan's own wording ("FCode-table entries for config-{b,w,l}@/!")
+assumed the other shape: config-l@ has NO FCODE NUMBER AT ALL -- neither the
+tokenizer nor the detokenizer in openbios/fcode-utils knows the name, while
+$call-parent is 0x209 and tokenizes fine. So there is no table entry to add;
+the binding leaves exactly one route, and it needs the words on the bus node.
+
+Before this patch that route threw -21 (no such method) with the global words
+sitting right there -- the card's driver aborted mid-FCode, leaving the node
+renamed and undecorated: a driver that looks half-implemented rather than a
+firmware that is missing a method. The six bodies are the global words' own, so
+the prompt and a card cannot answer differently.
+
+Measured after, on x86, amd64 AND ppc (fixtures/optrom/fcode-card-cfg.fth, the
+`optrom` track): a card that computes its own vendor/device id from its own
+config space publishes cfg-id = 0x100e8086, which is what QEMU reports for that
+slot -- and needs patch 57 to be that rather than the host bridge's 0x12378086.
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+index 3c68753..33fc3d2 100644
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -482,12 +482,46 @@ ob_pci_dma_sync(int *idx)
+     call_parent_method("dma-sync");
+ }
+ 
++/* forward declarations: the bodies live beside ob_pci_bind_config_words() (patch
++ * 55), after the node tables. */
++static void forth_config_b_read(void);
++static void forth_config_w_read(void);
++static void forth_config_l_read(void);
++static void forth_config_b_write(void);
++static void forth_config_w_write(void);
++static void forth_config_l_write(void);
++
++/* -- mklab, B.3 Spike 3 (patch 56): the same six, as BUS-NODE METHODS -----------
++ * Patch 55 bound config-{b,w,l}@/! as global words, which is enough for a Forth
++ * prompt and INVISIBLE TO A CARD. The 1275 PCI Bus Binding places them as methods
++ * of the PCI bus node, and that placement is not decoration: an FCode driver on an
++ * option ROM has no access to global words by name -- it reaches its bus with
++ * `my-space " config-l@" $call-parent` (FCode 0x209), which resolves the method on
++ * the PARENT NODE. Measured 2026-09-03: `config-l@` has no FCode number at all
++ * (neither toke nor detok knows the name), so $call-parent is the only route the
++ * binding leaves, and before this patch a card that took it threw -21 with the
++ * globals sitting right there. The bodies are the global words' -- one
++ * implementation, two placements -- so the prompt and a card cannot disagree.
++ */
++static void ob_pci_config_b_read(int *idx)  { forth_config_b_read(); }
++static void ob_pci_config_w_read(int *idx)  { forth_config_w_read(); }
++static void ob_pci_config_l_read(int *idx)  { forth_config_l_read(); }
++static void ob_pci_config_b_write(int *idx) { forth_config_b_write(); }
++static void ob_pci_config_w_write(int *idx) { forth_config_w_write(); }
++static void ob_pci_config_l_write(int *idx) { forth_config_l_write(); }
++
+ NODE_METHODS(ob_pci_bus_node) = {
+ 	{ "open",		ob_pci_open		},
+ 	{ "close",		ob_pci_close		},
+ 	{ "decode-unit",	ob_pci_decode_unit	},
+ 	{ "encode-unit",	ob_pci_encode_unit	},
+ 	{ "pci-map-in",		ob_pci_bus_map_in	},
++	{ "config-b@",		ob_pci_config_b_read	},
++	{ "config-w@",		ob_pci_config_w_read	},
++	{ "config-l@",		ob_pci_config_l_read	},
++	{ "config-b!",		ob_pci_config_b_write	},
++	{ "config-w!",		ob_pci_config_w_write	},
++	{ "config-l!",		ob_pci_config_l_write	},
+ 	{ "dma-alloc",		ob_pci_dma_alloc	},
+ 	{ "dma-free",		ob_pci_dma_free		},
+ 	{ "dma-map-in",		ob_pci_dma_map_in	},

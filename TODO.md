@@ -697,11 +697,27 @@ requires of any other cached fact.
       firmware from the same artifact; one-byte controls refused by name (type 0 → NOT-FCODE, sig
       55ab → BAD-SIG), a ROM-less device none/no-BAR6; `config-l!` clears the enable bit and the
       header vanishes, then returns. ppc publishes the entry and answers `config-l@`.
-    - [ ] **⏭ NEXT STEP — two named gaps from the `optrom` track:** (1) the ppc ROM *read* — the
-      published address is a PCI bus address on mac99, so it needs the bus node's `pci-map-in`
-      (bound, `ob_pci_bus_map_in`) before `rb@` can reach it; (2) FCode-table entries for
-      `config-{b,w,l}@`/`!` (`forth/device/table.fs` has none), so an FCode DRIVER — not only the
-      prompt — can reach config space the way the 1275 PCI binding intends (`my-space config-l@`).
+    - **Both `optrom` gaps CLOSED 2026-09-03 — and the first was a RETRACTION** (patches 56 + 57,
+      `fixtures/optrom/fcode-card-cfg.fth`, the `optrom` track now runs x86 + amd64 + **ppc**).
+      (1) *"the ppc read needs `pci-map-in`"* was **wrong**: the header parses at the published
+      address directly on mac99 and the card's FCode byte-loads from it. What the first attempt
+      lacked was an **instance** — `my-space`/`$call-parent` are `?my-self`-rooted and a prompt
+      `byte-load` has none; `dsl/optrom.fth` now builds the chain a real probe builds
+      (`create-instance` on the parent bus node first). `optrom-map` is kept as the portable form:
+      same address on ppc, and a **second** call for one region returns an unreadable one.
+      (2) *"FCode-table entries"* was the wrong shape — `config-l@` has **no FCode number**
+      (neither `toke` nor `detok` knows it; `$call-parent` is 0x209), so the binding's only route
+      is a **bus-node method** = **patch 56**. Asserting the OUTCOME then found **patch 57**:
+      `my-space` reads `probe-addr`, which `set-args` writes only through a current instance, so
+      on x86/amd64 it was **0 for every probed node** and a card read the **host bridge's
+      8086:1237** believing it read itself. ppc had it set — the matrix found it. The card now
+      publishes `cfg-id=100e8086` (itself) on all three arches.
+    - [ ] **⏭ NEXT STEP — B.3's last §9 clause:** Spike 3's *diff* half. `region-snap`/`region-diff`
+      are fifteen OFW lines that have never been ported ([review F6](REVIEW-preboot-structure-toolkit-plan.md#f6--region-snapregion-diff-are-not-existing-in-this-lab-they-are-ofw-words-that-have-not-been-ported)):
+      copy them into `dsl/` (self-containment), `>virt` the snapshot address on x86, and diff the
+      firmware's own `LB_TAG` table walk before/after — a change the firmware itself caused. That
+      is the one success-signature line in §9 nothing has observed yet; everything else in B.3 is
+      landed.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay
