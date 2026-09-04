@@ -809,7 +809,8 @@ authored has none). Track: `fdt-import`.
   | x86 | 1024 KiB | 114 KiB (95 + 19) | +38 KiB, 13 files | 872 KiB (85%) | **fits** |
   | ppc | 384 KiB | 132 KiB (106 + 26) | +38 KiB, 12 files | 214 KiB (55%) | **fits** |
   | unix | 256 KiB | 183 KiB (172 + 11) | +60 KiB, 12 files | 13 KiB (5%) | fits, barely |
-  | **amd64** | 256 KiB | **205 KiB (172 + 33)** | 9 of 13 files before the room ran out | 3 KiB | **does not fit** |
+  | **amd64, as measured** | 256 KiB | **205 KiB (172 + 33)** | 9 of 13 files before the room ran out | 3 KiB | **did not fit** |
+  | **amd64, patch 64** | 1024 KiB | 205 KiB (172 + 33) | +68 KiB, 13 files | 751 KiB (73%) | **fits** |
 
   Per file, a 32-bit cell compiles the toolkit at 0.2–0.6 bytes per source byte
   and a 64-bit cell at 0.4–1.1 (`sha256.fth`, all tables, is the densest; the
@@ -820,8 +821,11 @@ authored has none). Track: `fdt-import`.
   keeps the 256 KiB `DICTIONARY_SIZE` that arch/x86 outgrew to 1 MiB, and its
   init compiles three times unix's — so the dictionary is 80% spent before the
   prompt, and `eventlog.fth` is the first file refused for room. One constant
-  changes that; it is *not* changed here, because this spike's task was to
-  measure. And the measurement found the kernel's only protection: `here!`
+  changes that, and **patch 64 (2026-09-04) changed it** — 1 MiB, the value
+  arch/x86's multiboot door and amd64's *own* coreboot-payload door
+  (`builtin.c`) already had; the two amd64 doors had disagreed by 4×. Re-measured:
+  the whole toolkit compiles, 751 KiB left, and the overflow control names
+  `dictlimit=100000`. The measurement also found the kernel's only protection: `here!`
   prints `Dictionary space overflow` and **continues** into whatever `.bss`
   follows — which is why the track guards every evaluate at 1.5× source size
   and refuses by name (`NO-ROOM`) instead of compiling past the end.

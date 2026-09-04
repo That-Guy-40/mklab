@@ -1903,10 +1903,10 @@ index 17cf202..bf0af39 100644
  
  #endif				/* ! ASM */
 diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
-index 15d3b62..1317f5b 100644
+index 15d3b62..386a52f 100644
 --- a/arch/amd64/openbios.c
 +++ b/arch/amd64/openbios.c
-@@ -9,12 +9,23 @@
+@@ -9,19 +9,83 @@
  #include "config.h"
  #include "libopenbios/openbios.h"
  #include "libopenbios/bindings.h"
@@ -1930,8 +1930,18 @@ index 15d3b62..1317f5b 100644
  #include "relocate.h"
  
  void boot(void);
-@@ -22,6 +33,50 @@ void boot(void);
- #define DICTIONARY_SIZE (256*1024)      /* 256K for the dictionary   */
+ 
+-#define DICTIONARY_SIZE (256*1024)      /* 256K for the dictionary   */
++/* mklab (patch 64): 1 MiB, as arch/x86's multiboot door and this arch's OWN
++ * coreboot-payload door (builtin.c: forth_dictionary, 1 MiB) already have.
++ * 256K was the value arch/x86 outgrew years ago and the port inherited.
++ * MEASURED 2026-09-04 (smoke-openbios.sh dict-budget, patch 63): with 256K the
++ * 64-bit dictionary was 205 KiB spent at the prompt -- 172 KiB shipped, 33 KiB
++ * compiled at init, three times the hosted target's -- and the B.3 toolkit did
++ * NOT fit: nine of thirteen files, then eventlog.fth refused for room. This is
++ * .bss, so the image file does not grow; the firmware sits at 1 MiB and does
++ * not relocate, so the array simply extends the footprint above it. */
++#define DICTIONARY_SIZE (1024*1024)     /* 1 MiB for the dictionary  */
  static char intdict[DICTIONARY_SIZE];
  
 +#ifdef CONFIG_DRIVER_PCI
@@ -1981,7 +1991,7 @@ index 15d3b62..1317f5b 100644
  static void init_memory(void)
  {
  	/* push start and end of available memory to the stack
-@@ -35,19 +90,205 @@ static void init_memory(void)
+@@ -35,19 +99,205 @@ static void init_memory(void)
  	PUSH(0x9FFFF);
  }
  
@@ -2189,7 +2199,7 @@ index 15d3b62..1317f5b 100644
  }
  
  extern struct _console_ops arch_console_ops;
-@@ -65,11 +306,48 @@ int openbios(void)
+@@ -65,11 +315,48 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -2242,7 +2252,7 @@ index 15d3b62..1317f5b 100644
  	forth_init();
  
  	relocate(&sys_info);
-@@ -106,3 +384,116 @@ int openbios(void)
+@@ -106,3 +393,116 @@ int openbios(void)
  
  	return 0;
  }

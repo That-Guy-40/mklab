@@ -536,8 +536,10 @@ requires of any other cached fact.
             **amd64 256 KiB: does NOT fit** — 205 KiB spent before the prompt (33 KiB of it
             compiled at init, 3× unix's), 9 of 13 files in, `eventlog.fth` the first refused.
             `arch/amd64/openbios.c` still has the 256 KiB `DICTIONARY_SIZE` x86 outgrew to 1 MiB;
-            one constant would change the answer — left for a spike that wants it, since this one's
-            task was to measure. Controls per arch: allot 10 past the room → the kernel's overflow
+            one constant would change the answer — **and patch 64 (2026-09-04) changed it: 1 MiB**, as
+            x86's multiboot door and amd64's own coreboot-payload door (`builtin.c`) already had;
+            re-measured, the whole toolkit compiles with 751 KiB (73%) left, and amd64's five boot
+            tracks (multiboot, Linux, coreboot payload, dict-identity, cbfs-live) are unchanged. Controls per arch: allot 10 past the room → the kernel's overflow
             line naming the SAME limit `dict-limit` answers; 10 short → silent; and that line is the
             kernel's *only* protection — `here!` prints and continues — so the track guards every
             evaluate at 1.5× source size and refuses by name rather than compiling past the end.
