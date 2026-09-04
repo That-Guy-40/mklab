@@ -798,10 +798,33 @@ authored has none). Track: `fdt-import`.
   `DESIGN-NOTES` §8 lists first — OpenBIOS's device tree being the one subject
   every arch has natively. Deferred because it adds a third format before the
   first two have paid; it was the named first candidate once they had — **taken 2026-09-03 as Spike 4**, above.
-- **Not a dictionary budget nobody measured.** Spike −1's doors made the
-  bake-into-the-dictionary option unnecessary, so the budget stays unmeasured —
-  and no claim is made about it. If a future spike wants the dsl compiled in,
-  measuring that budget is its first task.
+- ~~**Not a dictionary budget nobody measured.**~~ **Measured 2026-09-04**, ahead
+  of any spike that wants the dsl compiled in, with the running firmware's own
+  numbers (patch 63: `dict-limit`/`dict-used`, the two cells `here!` compares;
+  track `dict-budget`, all four arches, the kernel's own overflow line as the
+  control). What each arch has, spends, and has left after the whole toolkit:
+
+  | arch | dictionary | used at boot (`.dict` header + init) | toolkit | left | verdict |
+  |---|---|---|---|---|---|
+  | x86 | 1024 KiB | 114 KiB (95 + 19) | +38 KiB, 13 files | 872 KiB (85%) | **fits** |
+  | ppc | 384 KiB | 132 KiB (106 + 26) | +38 KiB, 12 files | 214 KiB (55%) | **fits** |
+  | unix | 256 KiB | 183 KiB (172 + 11) | +60 KiB, 12 files | 13 KiB (5%) | fits, barely |
+  | **amd64** | 256 KiB | **205 KiB (172 + 33)** | 9 of 13 files before the room ran out | 3 KiB | **does not fit** |
+
+  Per file, a 32-bit cell compiles the toolkit at 0.2–0.6 bytes per source byte
+  and a 64-bit cell at 0.4–1.1 (`sha256.fth`, all tables, is the densest; the
+  headers are mostly comments). Three files are not loadable everywhere and are
+  left out by name where they are not (`lbregion` needs patch 58's x86/amd64
+  words, `optrom` needs a PCI bus, `elf-write` needs the hosted `write-file`).
+  **The amd64 answer is the one worth having:** its `arch/amd64/openbios.c`
+  keeps the 256 KiB `DICTIONARY_SIZE` that arch/x86 outgrew to 1 MiB, and its
+  init compiles three times unix's — so the dictionary is 80% spent before the
+  prompt, and `eventlog.fth` is the first file refused for room. One constant
+  changes that; it is *not* changed here, because this spike's task was to
+  measure. And the measurement found the kernel's only protection: `here!`
+  prints `Dictionary space overflow` and **continues** into whatever `.bss`
+  follows — which is why the track guards every evaluate at 1.5× source size
+  and refuses by name (`NO-ROOM`) instead of compiling past the end.
 - **Not a hosted tool re-implemented.** The justification is the four-arch control
   and the preboot device access (Spike 3); if a spike could be done as well by
   running `readelf`/`cbfstool`/`tpm2_eventlog` alone, it isn't a spike, it's the

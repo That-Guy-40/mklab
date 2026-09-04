@@ -6404,10 +6404,20 @@ index a8b3cce..4c00966 100644
  /* Our name and version. I want to see single instance of these in the image */
  extern const char *program_name, *program_version;
 diff --git a/kernel/bootstrap.c b/kernel/bootstrap.c
-index 8ad3efe..5230953 100644
+index 8ad3efe..9b94fa9 100644
 --- a/kernel/bootstrap.c
 +++ b/kernel/bootstrap.c
-@@ -140,6 +140,49 @@ static void relocation_table(unsigned char * dict_one, unsigned char *dict_two,
+@@ -89,7 +89,8 @@ static const char *wordnames[] = {
+ 	"here", "here!", "dobranch", "do?branch", "unaligned-w@",
+ 	"unaligned-w!", "unaligned-l@", "unaligned-l!", "ioc@", "iow@",
+ 	"iol@", "ioc!", "iow!", "iol!", "i", "j", "call", "sys-debug",
+-	"$include", "$encode-file", "(debug", "(debug-off)"
++	"$include", "$encode-file", "(debug", "(debug-off)",
++	"dict-limit", "dict-used"	/* mklab, patch 63 -- same order as forth.c's words[] */
+ };
+ 
+ /*
+@@ -140,6 +141,49 @@ static void relocation_table(unsigned char * dict_one, unsigned char *dict_two,
  	relocation_address=reloc_table;
  }
  
@@ -6457,7 +6467,7 @@ index 8ad3efe..5230953 100644
  static void write_dictionary(const char *filename)
  {
  	FILE *f;
-@@ -190,6 +233,26 @@ static void write_dictionary(const char *filename)
+@@ -190,6 +234,26 @@ static void write_dictionary(const char *filename)
  	walk_data=write_data+sizeof(dictionary_header_t);
  	memcpy (walk_data, dict, dicthead);
  
@@ -6484,7 +6494,7 @@ index 8ad3efe..5230953 100644
  	/*
  	 * prepare relocation data.
  	 * relocation_address is zero when writing a dictionary core.
-@@ -275,7 +338,9 @@ static void write_dictionary_hex(const char *filename)
+@@ -275,7 +339,9 @@ static void write_dictionary_hex(const char *filename)
              fprintf(f, "DICTIONARY_BASE + 0x%" FMT_CELL_x
                      ",\n", val);
          } else {
@@ -6496,10 +6506,41 @@ index 8ad3efe..5230953 100644
      }
  
 diff --git a/kernel/forth.c b/kernel/forth.c
-index 61dd70d..888b6d5 100644
+index 61dd70d..42d8803 100644
 --- a/kernel/forth.c
 +++ b/kernel/forth.c
-@@ -1721,7 +1721,22 @@ static void iskey(void)
+@@ -1668,6 +1668,30 @@ static void here(void)
+ #endif
+ }
+ 
++/*
++ *  dict-limit  ( -- n )   mklab (patch 63): the dictionary's size in bytes --
++ *  dict-used   ( -- n )   and how many of them are spent. THE RUNNING BINARY'S
++ *  NUMBERS, not the source constant: dictlimit is whatever the arch's init set
++ *  (arch/x86: 1 MiB; amd64, unix: 256 KiB; ppc/qemu: 384 KiB; sparc: from
++ *  sys_info), and dicthead is what here! compares against it. Without these the
++ *  only way to learn the limit from Forth was to allot past it and read the
++ *  "Dictionary space overflow" line -- which is also the one check here! makes,
++ *  and it PRINTS and continues: the dictionary is a static array and the next
++ *  `,` past its end lands in whatever .bss follows. So a toolkit that wants to
++ *  live in the dictionary needs a budget it can ask for BEFORE it compiles, and
++ *  smoke-openbios.sh's dict-budget track measures that budget on every arch.
++ */
++
++static void dictlimit_word(void)
++{
++	PUSH((ucell)dictlimit);
++}
++
++static void dictused_word(void)
++{
++	PUSH((ucell)dicthead);
++}
++
+ /*
+  *  here!       ( new-dict-pointer -- )
+  */
+@@ -1721,7 +1745,22 @@ static void iskey(void)
  
  static void key(void)
  {
@@ -6523,6 +6564,13 @@ index 61dd70d..888b6d5 100644
  #ifdef FCOMPILER
  	PUSH(get_inputbyte());
  #else
+@@ -1963,4 +2002,6 @@ static forth_word * const words[] = {
+     do_encode_file,         /* $encode-file */
+     do_debug_xt,            /* (debug  */
+     do_debug_off,           /* (debug-off) */
++    dictlimit_word,         /* dict-limit  (mklab, patch 63) */
++    dictused_word,          /* dict-used   (mklab, patch 63) */
+ };
 diff --git a/libc/vsprintf.c b/libc/vsprintf.c
 index ed4d38a..71afae7 100644
 --- a/libc/vsprintf.c

@@ -1,0 +1,89 @@
+Subject: [PATCH 63/63] kernel: dict-limit and dict-used -- the two cells here! compares, readable from Forth, so a dictionary budget can be asked for before it is spent
+
+Arch-tested: x86 amd64 ppc unix
+
+PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md section 6 recorded, honestly, that the
+dictionary budget was never measured and that measuring it would be the first
+task of any spike wanting the dsl compiled into the firmware. Measuring it needs
+two numbers the kernel has and Forth could not read: dictlimit (what the arch's
+init sized the dictionary to) and dicthead (how much of it is spent). `here` is
+dict + dicthead, but dict itself is not published, and the limit was reachable
+only by ALLOTTING PAST IT and reading the line here! prints:
+
+    Dictionary space overflow: dicthead=... dictlimit=...
+
+That line is also the whole of the kernel's protection. herewrite() prints it and
+CONTINUES; the dictionary is a static array (arch/x86: 1 MiB; amd64 and unix:
+256 KiB; ppc/qemu: 384 KiB) and the next `,` past its end lands in whatever .bss
+follows. A budget therefore has to be asked for BEFORE compiling, which is what
+this patch makes possible and what smoke-openbios.sh's dict-budget track does:
+a file is evaluated only if 3 x its source size fits in dict-limit dict-used -.
+
+Two kernel primitives, appended to words[] (kernel/forth.c) and wordnames[]
+(kernel/bootstrap.c) in the same order:
+
+    dict-limit ( -- n )   dictlimit
+    dict-used  ( -- n )   dicthead
+
+Kernel, so every arch has them from the bootstrap on; no arch file changes.
+
+MEASURED (the track's controls, every arch): `room a + dup allot negate allot`
+prints the overflow line and its dictlimit= equals what dict-limit answered;
+`room a - dup allot negate allot` prints nothing; dict-used at boot equals the
+.dict file's header length field read on the host -- the number kernel/dict.c
+copies into dicthead when it loads the dictionary.
+
+diff --git a/kernel/forth.c b/kernel/forth.c
+--- a/kernel/forth.c
++++ b/kernel/forth.c
+@@ -1669,6 +1669,30 @@
+ }
+ 
+ /*
++ *  dict-limit  ( -- n )   mklab (patch 63): the dictionary's size in bytes --
++ *  dict-used   ( -- n )   and how many of them are spent. THE RUNNING BINARY'S
++ *  NUMBERS, not the source constant: dictlimit is whatever the arch's init set
++ *  (arch/x86: 1 MiB; amd64, unix: 256 KiB; ppc/qemu: 384 KiB; sparc: from
++ *  sys_info), and dicthead is what here! compares against it. Without these the
++ *  only way to learn the limit from Forth was to allot past it and read the
++ *  "Dictionary space overflow" line -- which is also the one check here! makes,
++ *  and it PRINTS and continues: the dictionary is a static array and the next
++ *  `,` past its end lands in whatever .bss follows. So a toolkit that wants to
++ *  live in the dictionary needs a budget it can ask for BEFORE it compiles, and
++ *  smoke-openbios.sh's dict-budget track measures that budget on every arch.
++ */
++
++static void dictlimit_word(void)
++{
++	PUSH((ucell)dictlimit);
++}
++
++static void dictused_word(void)
++{
++	PUSH((ucell)dicthead);
++}
++
++/*
+  *  here!       ( new-dict-pointer -- )
+  */
+ 
+@@ -1978,4 +2002,6 @@
+     do_encode_file,         /* $encode-file */
+     do_debug_xt,            /* (debug  */
+     do_debug_off,           /* (debug-off) */
++    dictlimit_word,         /* dict-limit  (mklab, patch 63) */
++    dictused_word,          /* dict-used   (mklab, patch 63) */
+ };
+diff --git a/kernel/bootstrap.c b/kernel/bootstrap.c
+--- a/kernel/bootstrap.c
++++ b/kernel/bootstrap.c
+@@ -89,7 +89,8 @@
+ 	"here", "here!", "dobranch", "do?branch", "unaligned-w@",
+ 	"unaligned-w!", "unaligned-l@", "unaligned-l!", "ioc@", "iow@",
+ 	"iol@", "ioc!", "iow!", "iol!", "i", "j", "call", "sys-debug",
+-	"$include", "$encode-file", "(debug", "(debug-off)"
++	"$include", "$encode-file", "(debug", "(debug-off)",
++	"dict-limit", "dict-used"	/* mklab, patch 63 -- same order as forth.c's words[] */
+ };
+ 
+ /*

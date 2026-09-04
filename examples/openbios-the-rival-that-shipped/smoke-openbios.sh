@@ -108,7 +108,13 @@ TRACK (default multiboot):
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
                               hash graded vs python AND the linker's own .hash — on
-                              all four arches, the 32-bit mask being the width control
+                              all four arches, and the four must agree (a "width
+                              control" mask was retracted by its own negative control)
+  dict-budget                 plan §6's UNMEASURED dictionary budget, measured: what each
+                              dsl file costs in dictionary bytes per arch, the room left,
+                              and whether the toolkit fits — from the running firmware's
+                              own dict-limit/dict-used (patch 63), with the kernel's
+                              overflow line as the control
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -5551,6 +5557,217 @@ FTH
     [[ "$GSETS" -eq 1 ]] || fail "elf-gate: the four arches disagree on elf-hash ($GSETS distinct answer sets) — a shift or invert differs between the 32- and 64-bit cells"
     pass "B.3, the gleanings' loose gold pocketed: (1) the gABI ORDERING rule joins ?phdrs — PT_PHDR and PT_INTERP at most once and before every PT_LOAD — refused BY NAME on unix, x86, amd64 AND ppc, with readelf as the foreign oracle for the PHDR half (it refuses the same fixture: 'the PHDR segment must occur before any LOAD segment') and this layer STRICTER than readelf on a duplicate PT_INTERP, said so; three fixtures that differ only in their p_type words, plus the host's own /bin/true through the same gate; exactly 2 constraint failures per arch and neither bad fixture reaches the word after the gate. (2) elf-hash, the SysV symbol hash in ten lines of pure Forth, equals the gABI text transliterated in python on every arch — and that python is checked against the LINKER ($GLINK) — with the four arches in agreement. And one claim RETRACTED by its own control: the draft's 32-bit mask, described as the width control, was removed by a negative control and every hash stayed the same on the 64-bit arches — the gABI loop bounds itself (h &= ~g clears bits 28-31 each step), so the mask was dead code with a rationale, and it is gone"
     ;;
+  dict-budget)
+    # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
+    # unmeasured — and no claim is made about it. If a future spike wants the dsl
+    # compiled in, measuring that budget is its first task." This is that task,
+    # done ahead of any such spike (2026-09-03).
+    #
+    # THE NUMBERS COME FROM THE RUNNING BINARY, not the source. Patch 63 binds two
+    # kernel primitives, dict-limit and dict-used — dictlimit and dicthead, the
+    # two cells here! already compares — because the only way to learn the limit
+    # from Forth before that was to allot PAST it and read the "Dictionary space
+    # overflow" line. That line is also the whole of the kernel's protection: it
+    # prints and CONTINUES (kernel/forth.c herewrite), and the dictionary is a
+    # static array, so the next `,` past the end lands in whatever .bss follows.
+    # Hence the guard this track types before every evaluate: a file is compiled
+    # only if 1.5 × its source size fits in the room left, and a file that would
+    # not fit prints NO-ROOM instead of corrupting the firmware — after which
+    # every later file is SKIPPED by name rather than evaluated, because a
+    # dependent of a refused file aborts INSIDE a colon definition and leaves the
+    # interpreter in compile state, where every later line (bye included) is
+    # "compiled" and never runs. The ratio was measured, twice: a 3× guard refused
+    # struct.fth on unix with 75 KiB free (it is mostly comments — 0.37 compiled
+    # bytes per source byte on a 64-bit cell), a 2× guard refused it on amd64 with
+    # 52 KiB free; the densest file is sha256.fth (all tables) at 1.07× on 64-bit,
+    # so 1.5 is the margin over the worst measured case. The order puts the two
+    # files with no dependents (optrom, elf-write) last, so a refusal stops as
+    # little as possible. A refused file still costs `load`'s own bookkeeping
+    # (0x30 bytes on amd64), which is why every cost is the raw delta.
+    #
+    # TWO CONTROLS, on every arch, both about the SAME property — that dict-limit
+    # is the number the kernel checks against: allot to 10 bytes PAST (limit -
+    # used) must print the overflow line, and its dictlimit= must equal what
+    # dict-limit said; allot to 10 bytes SHORT of it must print nothing. And one
+    # from outside: dict-used at boot must be AT LEAST the .dict file's own header
+    # length field — the number kernel/dict.c copies into dicthead when it loads —
+    # and the excess is what init compiled before the prompt (the device tree, the
+    # arch's init.fs, bound words). The first draft asserted EQUAL and unix refused
+    # it at once: 0x2d830 used against a header of 0x2ae88, 10 KiB of init.
+    #
+    # WHAT IS MEASURED: the cost of each dsl file in dictionary bytes, per arch
+    # (a 64-bit cell costs more), the total, and the room left — so "does the
+    # toolkit fit in the dictionary" gets an answer per arch instead of a guess.
+    # A file that does NOT fit is reported by name; that is the budget, not a bug.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the 384 KiB row"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    DUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; DUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    DXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   DXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    DAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; DADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    DPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf";   DPDI="$WORKDIR/openbios/obj-ppc/openbios-qemu.dict"
+    for f in "$DUBIN" "$DUDICT" "$DXMB" "$DXDI" "$DAMB" "$DADI" "$DPELF" "$DPDI"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    # the toolkit, in dependency order (sha256 before eventlog; fdt before fdt-read;
+    # cbfs before its two; elf before elf-write). Three files are not loadable
+    # everywhere and are left out BY NAME where they are not: lbregion binds patch
+    # 58's words (x86/amd64 only); optrom names config-l@, a PCI bus word the
+    # hosted unix target has no PCI to bind; elf-write names write-file, which
+    # only the hosted target has (each measured as `<word>: undefined word.`
+    # mid-definition, the interpreter left in compile state — and, once caught,
+    # two cells left on the stack so the prompt read `2 > ` and the driver waited
+    # forever). The evaluate is therefore wrapped in catch; `unstuck` resets the
+    # compile state AND clears the stack; and an abort is a FAILURE that names its
+    # file, not a skip.
+    DB_FILES=(struct elf elf32 cbfs cbfs-write cbfs-payload region lbregion sha256 eventlog fdt fdt-read optrom elf-write)
+    db_iso() { tr -d '-' <<<"${1^^}"; }     # struct → STRUCT, cbfs-write → CBFSWRITE (ISO9660 names)
+    DWD="$WORKDIR/dict-budget"; rm -rf "$DWD"; mkdir -p "$DWD/stage"
+    for f in "${DB_FILES[@]}"; do
+      [[ -f "$HERE/dsl/$f.fth" ]] || fail "dict-budget: missing dsl/$f.fth — this track stages the SHIPPED files"
+      cp "$HERE/dsl/$f.fth" "$DWD/stage/$(db_iso "$f").FTH"
+    done
+    genisoimage -quiet -o "$DWD/db.iso" -V DB -r -J "$DWD/stage" 2>/dev/null || fail "dict-budget: genisoimage failed"
+    # the .dict header's length field, read on the host: signature[8] version cellsize
+    # endianness compression relocation reserved[3] checksum(u32) length(u32) — the
+    # length is at offset 20 in the file's own byte order (byte 10 says which)
+    db_hdr_len() { python3 - "$1" <<'PY'
+import sys, struct
+b = open(sys.argv[1], 'rb').read(32)
+assert b[:8] == b'OpenBIOS', b[:8]
+print('%x' % struct.unpack_from('>I' if b[10] else '<I', b, 20)[0])
+PY
+    }
+    # the typed prelude: room, the guarded evaluate, the two controls. EVERY LINE
+    # UNDER 80 COLUMNS: the hosted target's line editor truncates past ~82 and the
+    # first `ev` (84 cols) lost its `then ;` — the interpreter stayed in compile
+    # state and nothing after it ran.
+    DB_PRE=(': room dict-limit dict-used - ;'
+            ': unstuck ." EV-AB" ." ORTED" cr 0 state ! depth 0 ?do drop loop ;'
+            ': ev load-base load-size ['"'"'] evaluate catch if unstuck then ;'
+            'variable dbstop'
+            ': ?fit load-size 3 * 2 / room < ;'
+            ': nofit ." NO-ROOM" cr -1 dbstop ! ;'
+            ': ?ev dbstop @ if ." SKIP" cr exit then ?fit if ev else nofit then ;'
+            '." DL=" dict-limit u. ." DU0=" dict-used u. cr'
+            'room a + dup allot negate allot ." OVER-END" cr'
+            'room a - dup allot negate allot ." UNDER-END" cr')
+    db_skip() {  # db_skip <file> <arch>: true when the file is not loadable on that arch
+      [[ "$1" == lbregion && "$2" != x86 && "$2" != amd64 ]] && return 0
+      [[ "$1" == optrom && "$2" == unix ]] && return 0
+      [[ "$1" == elf-write && "$2" != unix ]] && return 0
+      return 1
+    }
+    db_lines() {  # db_lines <arch> <load-fmt with %s for NAME> -> the per-file lines
+      local a="$1" fmt="$2" f
+      for f in "${DB_FILES[@]}"; do
+        db_skip "$f" "$a" && continue
+        # shellcheck disable=SC2059
+        printf "$fmt\n" "$(db_iso "$f")"
+        printf '?ev ." DU_%s=" dict-used u. cr\n' "$f"
+      done
+      printf '." DU1=" dict-used u. ." ROOM=" room u. cr\n'
+    }
+    # db_mark <log> <ISO-NAME> <file>: OK | NO-ROOM | SKIP — what ?ev printed for ONE
+    # file, read from the window between the echoed `load …\NAME.FTH` line and the
+    # DU_<file>=<hex> value. A python window, not a sed range: a sed range RESTARTS
+    # after it closes, so `\|ELF|,\|DU_elf=|` re-opened at ELF32.FTH and ran to the
+    # end of the log — labelling elf, cbfs, region and fdt "NO-ROOM" on amd64 when
+    # every one of them had compiled (their deltas said so). Found by the amd64 row.
+    db_mark() { python3 - "$1" "$2" "$3" <<'PYMARK'
+import sys, re
+lines = open(sys.argv[1], errors='replace').read().replace('\r', '').split('\n')
+name, f = sys.argv[2], sys.argv[3]
+start = next((i for i, l in enumerate(lines) if ('\\' + name + '.FTH') in l and 'load' in l), None)
+if start is None:
+    print('NO-LOAD-LINE'); sys.exit()
+end = next((i for i in range(start, len(lines)) if re.search(r'DU_' + re.escape(f) + r'=[0-9a-f]+', lines[i])), len(lines) - 1)
+win = '\n'.join(lines[start:end + 1])
+print('NO-ROOM' if 'NO-ROOM' in win else 'SKIP' if 'SKIP' in win else 'OK')
+PYMARK
+    }
+    db_grade() {  # db_grade <arch> <log> <dict-file>
+      local a="$1" g dl du0 du1 room hdr init over n prev f cur cost total=0 fitted=0 refused="" rows="" src ratio mark
+      g="$(tr -d '\r' < "$2")"
+      dl="$(grep -aoE 'DL=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"; du0="$(grep -aoE 'DU0=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      du1="$(grep -aoE 'DU1=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"; room="$(grep -aoE 'ROOM=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ -n "$dl" && -n "$du0" && -n "$du1" && -n "$room" ]] || fail "dict-budget ($a): DL/DU0/DU1/ROOM not all printed (dl=${dl:-?} du0=${du0:-?} du1=${du1:-?} room=${room:-?}) — patch 63's words are missing or the run died — see $2"
+      # from OUTSIDE: the .dict header's length is what dicthead STARTS as; init
+      # compiles on top of it (the device tree, init.fs, bound words) before the prompt
+      hdr="$(db_hdr_len "$3")"
+      [[ $((16#$du0)) -ge $((16#$hdr)) && $((16#$du0 - 16#$hdr)) -lt 65536 ]] \
+        || fail "dict-budget ($a): dict-used at boot is $du0 against a .dict header length of $hdr — dicthead must start at the header's length and grow by what init compiles (< 64 KiB), so dict-used is not dicthead, or the firmware loaded a different dictionary — see $2"
+      init=$((16#$du0 - 16#$hdr))
+      # the controls: exactly one overflow line, from the OVER probe, naming the same limit
+      n="$(grep -ac 'Dictionary space overflow' <<<"$g")"
+      [[ "$n" -eq 1 ]] || fail "dict-budget ($a): $n 'Dictionary space overflow' lines where exactly 1 is expected (the OVER control) — either the control did not fire or a file's evaluate ran the dictionary past its end — see $2"
+      over="$(grep -aoE 'dictlimit=0*[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2 | sed 's/^0*//')"
+      [[ "$over" == "$dl" ]] || fail "dict-budget ($a): the kernel's overflow line says dictlimit=$over, dict-limit answered $dl — the word is not reading the cell here! checks — see $2"
+      grep -qF 'OVER-END' <<<"$g" || fail "dict-budget ($a): the OVER control did not complete — see $2"
+      grep -qF 'UNDER-END' <<<"$g" || fail "dict-budget ($a): the UNDER control did not complete — see $2"
+      # the overflow line must sit between the OVER probe and its marker, not anywhere else
+      sed -n '\|room a + dup allot|,\|OVER-END|p' <<<"$g" | grep -q 'Dictionary space overflow' \
+        || fail "dict-budget ($a): the one overflow line is not inside the OVER control — it came from somewhere else — see $2"
+      # per-file costs
+      prev="$du0"
+      # the marker is printed in two halves so this grep cannot match the echoed
+      # definition of `ev` itself — which is exactly what the first draft did
+      grep -qF 'EV-ABORTED' <<<"$g" && fail "dict-budget ($a): a file's evaluate ABORTED — $(grep -aB1 'EV-ABORTED' <<<"$g" | grep -aoE '[a-z@!-]+: undefined word' | head -2 | tr '\n' ' ') — a word it needs is not bound on this arch; leave it out by name (db_skip) rather than measure a half-compiled file — see $2"
+      for f in "${DB_FILES[@]}"; do
+        db_skip "$f" "$a" && continue
+        cur="$(grep -aoE "DU_$f=[0-9a-f]+" <<<"$g" | head -1 | cut -d= -f2)"
+        [[ -n "$cur" ]] || fail "dict-budget ($a): no DU_$f in the log — the run stopped at $f — see $2"
+        cost=$((16#$cur - 16#$prev)); total=$((total + cost))
+        mark="$(db_mark "$2" "$(db_iso "$f")" "$f")"
+        if [[ "$mark" != OK ]]; then
+          refused+="$f "; rows+="$f=$mark(+$cost) "
+        else
+          fitted=$((fitted+1))
+          src=$(stat -c%s "$HERE/dsl/$f.fth"); ratio=$(awk -v c=$cost -v s=$src 'BEGIN{printf "%.2f", c/s}')
+          rows+="$f=+$cost(${ratio}×src) "
+        fi
+        prev="$cur"
+      done
+      [[ $((16#$du1 - 16#$du0)) -eq $total ]] || fail "dict-budget ($a): the per-file deltas sum to $total but dict-used moved $((16#$du1 - 16#$du0)) — a DU_ line was mis-parsed — see $2"
+      [[ $((16#$dl - 16#$du1)) -eq $((16#$room)) ]] || fail "dict-budget ($a): room=$((16#$room)) but limit-used=$((16#$dl - 16#$du1)) — see $2"
+      echo "$a $((16#$dl)) $((16#$du0)) $total $((16#$room)) $fitted $(tr ' ' ',' <<<"${refused% }")" >> "$DWD/summary.txt"
+      note "$a: dictionary $((16#$dl)) bytes, $((16#$du0)) used at boot (the .dict header's $((16#$hdr)) + $init compiled at init); toolkit +$total bytes, $fitted files compiled; $((16#$room)) bytes left ($(( (16#$room) * 100 / (16#$dl) ))%) — $( [[ -z "$refused" ]] && echo "the toolkit FITS" || echo "the toolkit DOES NOT FIT: refused/skipped for room: $refused")"
+      note "$a per file: $rows"
+      note "$a controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=$dl' (the same number dict-limit answers), 10 short → silent"
+    }
+    rm -f "$DWD/summary.txt"
+
+    # ── unix ─────────────────────────────────────────────────────────────────
+    ( cd "$DWD" && { printf '%s\n' '80000 alloc-mem value dbb' 'dbb (u.) s" load-base" $setenv' "${DB_PRE[@]}"; db_lines unix 'load hd:\%s.FTH'; printf 'bye\n'; } \
+        | "$DUBIN" -f "$DWD/db.iso" "$DUDICT" > "$DWD/unix.log" 2>&1 )
+    db_grade unix "$DWD/unix.log" "$DUDICT"
+
+    # ── x86 and amd64 ────────────────────────────────────────────────────────
+    for DA in x86 amd64; do
+      if [[ $DA == x86 ]]; then DMB="$DXMB"; DDI="$DXDI"; else DMB="$DAMB"; DDI="$DADI"; fi
+      DSER="$WORKDIR/db-$DA.sock"; DLOG="$DWD/$DA.log"; rm -f "$DSER" "$DLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$DMB" -initrd "$DDI" -nic none -cdrom "$DWD/db.iso" \
+        -display none -serial "unix:$DSER,server=on" -no-reboot >/dev/null 2>&1 &
+      DQ=$!
+      DSENDS=(); while IFS= read -r l; do DSENDS+=(--send "$l"$'\r' --expect "0 > "); done < <(printf '%s\n' "${DB_PRE[@]}"; db_lines "$DA" 'load /ide@1/cdrom@0:\\%s.FTH')
+      python3 "$REPO/tools/drive-serial-repl.py" "$DSER" "$DLOG" --timeout 400 --expect "0 > " "${DSENDS[@]}"
+      DRC=$?
+      kill "$DQ" 2>/dev/null   # by PID, never by pattern
+      [[ $DRC -eq 0 ]] || fail "dict-budget ($DA): the prompt driver did not complete (rc=$DRC) — see $DLOG"
+      db_grade "$DA" "$DLOG" "$DDI"
+    done
+
+    # ── ppc ──────────────────────────────────────────────────────────────────
+    DPLOG="$DWD/ppc.log"; rm -f "$DPLOG"
+    DPSENDS=(); while IFS= read -r l; do DPSENDS+=(--send "$l"$'\r' --expect "0 > "); done < <(printf '%s\n' "${DB_PRE[@]}"; db_lines ppc 'load cd:\\%s.FTH;1')
+    python3 "$REPO/tools/drive-pty-repl.py" "$DPLOG" --timeout 900 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " "${DPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$DPELF" -nographic -vga none -cdrom "$DWD/db.iso" >/dev/null 2>&1
+    DPRC=$?
+    [[ $DPRC -eq 0 ]] || fail "dict-budget (ppc): the prompt driver did not complete (rc=$DPRC) — see $DPLOG"
+    db_grade ppc "$DPLOG" "$DPDI"
+
+    DBSUM="$(awk '{printf "%s: %d KiB limit, %d KiB at boot, +%d KiB compiled, %d KiB left — %s; ", $1, $2/1024, $3/1024, $4/1024, $5/1024, ($7==""?"FITS ("$6" files)":"DOES NOT FIT ("$6" files compiled; refused/skipped: "$7")")}' "$DWD/summary.txt")"
+    pass "B.3 plan §6's unmeasured dictionary budget, MEASURED on all four arches with the running firmware's own numbers (patch 63: dict-limit/dict-used are the two cells here! compares). $DBSUM Every cost is a per-file delta of dict-used, the boot figure is the .dict file's header length (read on the host) plus what init compiled, and the controls fire on every arch: allotting 10 bytes past the room prints the kernel's 'Dictionary space overflow' line naming the SAME limit dict-limit answers, allotting 10 bytes short prints nothing, and there is exactly one such line per run. A file is compiled only when 1.5× its source size fits the room left; one that does not is refused as NO-ROOM and named, and everything after it is SKIPped rather than half-compiled — because the kernel's own check prints and continues, and the byte after a full dictionary is somebody else's"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -6975,5 +7192,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|elf-gate|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|elf-gate|dict-budget|unix]" >&2; exit 1 ;;
 esac
