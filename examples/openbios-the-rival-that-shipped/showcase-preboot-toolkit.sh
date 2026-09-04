@@ -24,6 +24,10 @@
 #             pulled out of the guest by QEMU's QMP, and read by the device-tree
 #             compiler itself. dtc finds fcode-card@3 and the second card's
 #             cfg-id in it: the evidence of Act III, in the boot-handoff format.
+#   ACT VI  — the firmware TAKES A WORLD IN: a device tree dtc authored on the
+#             host arrives over the CD, dsl/fdt-read.fth materializes it into the
+#             live tree, the firmware flattens that subtree again, and dtc gets
+#             the same tree back. In, out, and the compiler cannot tell.
 #
 # Everything is delivered over a CD to a firmware booted from a coreboot ROM;
 # nothing is compiled into the firmware for the occasion. The verdict is real:
@@ -45,6 +49,7 @@ the bus and the dsl/ readers on a CD, then drives four acts at the 0 > prompt:
   III  read a card's option ROM at its live BAR and run its FCode from there
   IV   SHA-256 in Forth, a TCG event log authored in RAM, PCR0 replayed
   V    flatten the live device tree to a DTB; dtc reads Act III's cards out of it
+  VI   ingest a DTB dtc authored, re-flatten it, dtc gets the same tree back
 
 Prereqs: ./build-openbios.sh amd64 && ./build-coreboot-openbios.sh amd64,
 qemu-system-x86_64, genisoimage, python3, device-tree-compiler (dtc, fdtdump,
@@ -96,7 +101,7 @@ fi
 [[ -x "$TOKE" ]] || skip "no toke at $TOKE — run ./build-openbios.sh (it clones fcode-utils) or set FCODE_UTILS="
 
 FX="$HERE/fixtures/optrom"
-DSL=(struct.fth cbfs.fth region.fth lbregion.fth optrom.fth sha256.fth eventlog.fth fdt.fth)
+DSL=(struct.fth cbfs.fth region.fth lbregion.fth optrom.fth sha256.fth eventlog.fth fdt.fth fdt-read.fth)
 for f in "${DSL[@]}"; do
   [[ -f "$HERE/dsl/$f" ]] || fail "missing $HERE/dsl/$f — the showcase stages the SHIPPED readers"
 done
@@ -124,11 +129,17 @@ note "cards: fcode-card.fth and fcode-card-cfg.fth → toke → $(stat -c%s "$WD
 # ── the readers, on a CD ─────────────────────────────────────────────────────
 declare -A DOS=( [struct.fth]=STRUCT [cbfs.fth]=CBFS [region.fth]=REGION
                  [lbregion.fth]=LBREGION [optrom.fth]=OPTROM [sha256.fth]=SHA
-                 [eventlog.fth]=EVLOG [fdt.fth]=FDT )
+                 [eventlog.fth]=EVLOG [fdt.fth]=FDT [fdt-read.fth]=FDTREAD )
 for f in "${DSL[@]}"; do cp "$HERE/dsl/$f" "$WD/stage/${DOS[$f]}.FTH"; done
+# ACT VI's subject: a tree dtc AUTHORS, here, now — derived from the fixture's
+# source, never a cached blob — and its reference decompile, made from binary
+IDTS="$HERE/fixtures/fdt/import.dts"; [[ -f "$IDTS" ]] || fail "missing $IDTS"
+dtc -I dts -O dtb -o "$WD/stage/IMPORT.DTB" "$IDTS" 2>/dev/null || fail "dtc could not compile $IDTS"
+dtc -I dtb -O dts -o "$WD/import-ref.dts" "$WD/stage/IMPORT.DTB" 2>/dev/null || fail "dtc could not decompile its own blob"
+IREFN=$(fdtdump "$WD/stage/IMPORT.DTB" 2>/dev/null | grep -cE '\{$'); IREFP=$(fdtdump "$WD/stage/IMPORT.DTB" 2>/dev/null | grep -cE '^\s+[^ {}]+( = .*)?;$')
 genisoimage -quiet -o "$WD/dsl.iso" -V TOOLKIT -r -J "$WD/stage" 2>/dev/null \
   || fail "genisoimage failed to stage the readers"
-note "readers on CD: ${DSL[*]}"
+note "readers on CD: ${DSL[*]} — and IMPORT.DTB, a $(stat -c%s "$WD/stage/IMPORT.DTB")-byte tree dtc just authored from fixtures/fdt/import.dts"
 
 # ── where the ROM maps (derived, never hardcoded) ────────────────────────────
 ROMSZ=$(stat -c%s "$ROM"); MAPBASE=$(( 0x100000000 - ROMSZ ))
@@ -187,13 +198,37 @@ python3 "$REPO/tools/drive-serial-repl.py" "$SER" "$LOG" --timeout 400 \
   --send '." PCR0=" evbuf evbuf evlen + 40 0 evlog-replay .digest cr\r' \
                                                       --expect "PCR0="     --expect "0 > " \
   --send '/fdt-buf alloc-mem value fb  fb dt>fdt .fdt-counts\r' --expect "PROPS=" --expect "0 > " \
-  --send '." FDTP=" fb >phys u. cr\r'                --expect "FDTP="    --expect "0 > "
+  --send '." FDTP=" fb >phys u. cr\r'                --expect "FDTP="    --expect "0 > " \
+  --send 'load /ide@1/cdrom@0:\\IMPORT.DTB\r'         --expect "0 > " \
+  --send 'load-base fdt-walk ." WALK=" . .fr-counts\r' --expect "RPROPS="  --expect "0 > " \
+  --send '" /" find-device new-device s" imported" device-name\r' --expect "0 > " \
+  --send 'load-base fdt>dt ." MADE=" . cr finish-device device-end\r' --expect "MADE=" --expect "0 > " \
+  --send '1000 to fdt-struct-max  2000 alloc-mem value fi\r' --expect "0 > " \
+  --send '" /imported" find-package drop fi dt>fdt-from ." FDTIL=" u. cr\r' --expect "FDTIL=" --expect "0 > " \
+  --send '." FDTI=" fi >phys u. cr\r'                --expect "FDTI="    --expect "0 > "
 RC=$?
 # ACT V's bytes leave the guest through QMP while it is still up — QMP, not the
 # HMP monitor, whose parser reads a filename as an expression (a trap this repo's
 # memory carries, and which still cost the fdt track a run).
 FDTP="$(grep -aoE 'FDTP=[0-9a-f]+' "$LOG" | head -1 | cut -d= -f2)"; FDTL="$(grep -aoE 'FDTL=[0-9a-f]+' "$LOG" | head -1 | cut -d= -f2)"
-FQR=""
+FDTI="$(grep -aoE 'FDTI=[0-9a-f]+' "$LOG" | head -1 | cut -d= -f2)"; FDTIL="$(grep -aoE 'FDTIL=[0-9a-f]+' "$LOG" | head -1 | cut -d= -f2)"
+qmp_pull() {  # qmp_pull <phys-hex> <len-hex> <file>
+  python3 - "$QMP" "$@" <<'PY'
+import socket, sys, json, time
+s = socket.socket(socket.AF_UNIX); s.settimeout(15)
+for _ in range(20):
+    try: s.connect(sys.argv[1]); break
+    except OSError: time.sleep(0.5)
+else: print("ERR: no qmp"); sys.exit(0)
+s.recv(65536)
+def cmd(o): s.sendall((json.dumps(o)+"\n").encode()); return s.recv(65536).decode()
+cmd({"execute": "qmp_capabilities"})
+r = cmd({"execute": "pmemsave", "arguments": {"val": int(sys.argv[2], 16), "size": int(sys.argv[3], 16), "filename": sys.argv[4]}})
+print("ERR: " + r.strip() if '"error"' in r else "ok")
+PY
+}
+FQR=""; IQR=""
+[[ -n "$FDTI" && -n "$FDTIL" ]] && IQR="$(qmp_pull "$FDTI" "$FDTIL" "$WD/import-rt.dtb")"
 if [[ -n "$FDTP" && -n "$FDTL" ]]; then
   FQR="$(python3 - "$QMP" "$FDTP" "$FDTL" "$WD/tree.dtb" <<'PY'
 import socket, sys, json, time
@@ -212,7 +247,7 @@ PY
 fi
 kill "$Q" 2>/dev/null   # by PID, never by pattern
 G="$(tr -d '\r\000' < "$LOG" 2>/dev/null)"
-[[ $RC -eq 0 ]] || fail "the firmware did not finish the five acts (rc=$RC) — see $LOG"
+[[ $RC -eq 0 ]] || fail "the firmware did not finish the six acts (rc=$RC) — see $LOG"
 
 mk() { grep -aoE "$1=[0-9a-fA-F]+" <<<"$G" | head -1 | cut -d= -f2; }
 
@@ -359,4 +394,35 @@ note "/memory reg = $DMEM(two cells per address: the 64-bit root of patch 43)"
 say  "THIS IS THE HANDOFF FORMAT: what a kernel would be given. Every earlier act's"
 say  "effect is in it, and the reader is the device-tree compiler, not this firmware."
 
-pass "the B.3 preboot structure toolkit, end to end, in ONE boot of the amd64 firmware from a coreboot ROM. (I) It walked the CBFS of the very ROM that delivered it — $NFILE entries out of the mapped flash window at 0x$WIN, fallback/payload among them, which is the firmware doing the reading; coreboot's cbfstool reads the same $OFILES entries in that ROM from the host. (II) It re-ran its OWN coreboot-table parser and diffed memory around it: the table it reads came back byte-identical (the negative control), while the allocator's next block moved 0x$STEP bytes and $((16#$HEAP)) bytes inside it changed — a change the firmware caused, from a code path in its own tree, with the instrument calibrated first (SELFTEST=1). (III) It read a PCI option ROM's 0x55AA/PCIR header at the card's live BAR 0x$PHYS, byte-loaded the card's FCode straight out of it — the card's own program renamed e1000@3 to fcode-card@3 and stamped FCODE-FROM-CARD-RAN — and a second card computed cfg-id=$CFGID about ITSELF through my-space + config-l@ on its parent bus. (IV) It computed SHA-256 as a pure Forth function matching python and NIST, authored a $EVLEN-byte TCG crypto-agile event log in RAM, and replayed PCR0 to the same value the host's hashlib computes for the same extend chain. (V) It flattened its LIVE device tree — the tree the earlier acts had just changed — into a $(stat -c%s "$WD/tree.dtb")-byte version-17 DTB, QEMU's QMP pulled it out of the guest, and the device-tree compiler itself parsed it: $DN nodes and $DP properties, equal to the firmware's own count, with fcode-card@3 (Act III's rename) a node in it and the second card's cfg-id=$DCFG read back by fdtget — the boot-handoff format, carrying every earlier act's evidence, read by a foreign tool. Every reader came over a CD; nothing was compiled in for the occasion; and acts I and II are positions no hosted tool can occupy at all. THE BOUNDARY: act IV proves internal consistency, not that any machine is trustworthy — the hardware-signed quote is UNKNOWN"
+# ══ ACT VI ═══════════════════════════════════════════════════════════════════
+act "ACT VI — the firmware takes a world in: dtc's tree, ingested and round-tripped"
+say "host:  dtc -I dts -O dtb fixtures/fdt/import.dts → IMPORT.DTB, on the CD ($IREFN nodes, $IREFP properties)"
+say "typed: load /ide@1/cdrom@0:\\IMPORT.DTB"
+say "typed: load-base fdt-walk .\" WALK=\" . .fr-counts"
+grep -q 'WALK=-1' <<<"$G" || fail "ACT VI: fdt-walk did not accept dtc's blob — see $LOG"
+IRN="$(mk RNODES)"; IRP="$(mk RPROPS)"
+[[ "$((16#${IRN:-0}))" -eq "$IREFN" && "$((16#${IRP:-0}))" -eq "$IREFP" ]] \
+  || fail "ACT VI: the reader counted 0x$IRN nodes / 0x$IRP properties; fdtdump counts $IREFN / $IREFP in the same blob"
+note "WALK=-1 RNODES=$IRN RPROPS=$IRP — the reader parses dtc's blob and counts what fdtdump counts"
+say "typed: \" /\" find-device new-device s\" imported\" device-name"
+say "typed: load-base fdt>dt .\" MADE=\" . cr finish-device device-end"
+grep -q 'MADE=-1' <<<"$G" || fail "ACT VI: fdt>dt did not materialize the blob — see $LOG"
+note "MADE=-1 — root properties onto /imported, every child a new-device, every property a property"
+say "typed: \" /imported\" find-package drop fi dt>fdt-from .\" FDTIL=\" u. cr"
+[[ "$IQR" == ok && -s "$WD/import-rt.dtb" ]] \
+  || fail "ACT VI: QMP pmemsave did not deliver the re-flattened /imported subtree (${IQR:-no reply})"
+dtc -I dtb -O dts -o "$WD/import-rt.dts" "$WD/import-rt.dtb" 2>/dev/null \
+  || fail "ACT VI: dtc refused the re-flattened /imported subtree — see $WD/import-rt.dtb"
+say "host:  dtc -I dtb -O dts import-rt.dtb   vs   dtc -I dtb -O dts IMPORT.DTB"
+diff -q "$WD/import-ref.dts" "$WD/import-rt.dts" >/dev/null \
+  || fail "ACT VI: dtc reads a DIFFERENT tree from the round trip than from its own blob: $(diff "$WD/import-ref.dts" "$WD/import-rt.dts" | head -3 | tr '\n' '|')"
+note "IDENTICAL — $(stat -c%s "$WD/import-rt.dtb") bytes back out, and dtc decompiles both blobs to the same $(wc -l < "$WD/import-rt.dts")-line tree"
+IMODEL="$(fdtget -t s "$WD/import-rt.dtb" / model 2>/dev/null)"
+[[ "$IMODEL" == "authored by dtc on the host, ingested by OpenBIOS" ]] \
+  || fail "ACT VI: fdtget reads model='$IMODEL' back from the round trip"
+say "host:  fdtget -t s import-rt.dtb / model"
+note "\"$IMODEL\" — a string dtc wrote on the host, read back from a blob this firmware built"
+say  "IN, OUT, AND THE COMPILER CANNOT TELL: the world handed to the firmware is the"
+say  "world it hands back. Both decompiles are made from binary, so only the tree can differ."
+
+pass "the B.3 preboot structure toolkit, end to end, in ONE boot of the amd64 firmware from a coreboot ROM. (I) It walked the CBFS of the very ROM that delivered it — $NFILE entries out of the mapped flash window at 0x$WIN, fallback/payload among them, which is the firmware doing the reading; coreboot's cbfstool reads the same $OFILES entries in that ROM from the host. (II) It re-ran its OWN coreboot-table parser and diffed memory around it: the table it reads came back byte-identical (the negative control), while the allocator's next block moved 0x$STEP bytes and $((16#$HEAP)) bytes inside it changed — a change the firmware caused, from a code path in its own tree, with the instrument calibrated first (SELFTEST=1). (III) It read a PCI option ROM's 0x55AA/PCIR header at the card's live BAR 0x$PHYS, byte-loaded the card's FCode straight out of it — the card's own program renamed e1000@3 to fcode-card@3 and stamped FCODE-FROM-CARD-RAN — and a second card computed cfg-id=$CFGID about ITSELF through my-space + config-l@ on its parent bus. (IV) It computed SHA-256 as a pure Forth function matching python and NIST, authored a $EVLEN-byte TCG crypto-agile event log in RAM, and replayed PCR0 to the same value the host's hashlib computes for the same extend chain. (V) It flattened its LIVE device tree — the tree the earlier acts had just changed — into a $(stat -c%s "$WD/tree.dtb")-byte version-17 DTB, QEMU's QMP pulled it out of the guest, and the device-tree compiler itself parsed it: $DN nodes and $DP properties, equal to the firmware's own count, with fcode-card@3 (Act III's rename) a node in it and the second card's cfg-id=$DCFG read back by fdtget — the boot-handoff format, carrying every earlier act's evidence, read by a foreign tool. (VI) It took a world IN: a $IREFN-node tree dtc authored on the host arrived over the CD, dsl/fdt-read.fth materialized it under /imported, the firmware flattened that subtree again, and dtc decompiles the round trip IDENTICALLY to its own blob — fdtget reads the model string dtc wrote back out of a blob this firmware built. Every reader came over a CD; nothing was compiled in for the occasion; and acts I and II are positions no hosted tool can occupy at all. THE BOUNDARY: act IV proves internal consistency, not that any machine is trustworthy — the hardware-signed quote is UNKNOWN"

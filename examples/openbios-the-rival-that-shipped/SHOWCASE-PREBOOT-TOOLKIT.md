@@ -1,14 +1,30 @@
 # Showcase — the preboot structure toolkit, in one boot
 
-`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~45 s on KVM (measured, not guessed: 44.6 s wall with five acts).
+`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~60 s on KVM (measured, not guessed: 60.3 s wall with six acts).
 
 Every B.3 smoke track proves one reader against one foreign oracle. This is the
-other view: **one machine, one boot, five acts**, in the order a real preboot
+other view: **one machine, one boot, six acts**, in the order a real preboot
 investigation would take them. It is a demo *and* a test — every act is graded,
 and the run fails if any of them does not happen.
 
 The point of putting them together is what the last line of each act says:
 **two of these are positions no hosted tool can occupy at all.**
+
+## What was built — the toolkit the showcase drives
+
+Everything below is Forth, delivered to the firmware over a CD at the `0 >`
+prompt; nothing is compiled in. Each file has a smoke track that grades it
+against a **foreign oracle** — never our own reader.
+
+| reader | what it is | oracle | act |
+|---|---|---|---|
+| `dsl/struct.fth` | the type layer: fields with **width and byte order**, a cursor for length-prefixed records, `>virt`/`>phys` | `readelf`, `cbfstool`, all four arches | every act |
+| `dsl/cbfs.fth` | coreboot's CBFS, big-endian, walked in the mapped ROM window | `cbfstool print`, QEMU `xp` | I |
+| `dsl/region.fth` + `dsl/lbregion.fth` | snapshot memory, let the firmware work, show what moved; aimed at the firmware's own coreboot-table parser (patch 58) | QEMU `xp`; three re-injected controls | II |
+| `dsl/optrom.fth` | a PCI option ROM at its **live BAR**, its FCode byte-loaded from there; config space as bus-node methods (patches 55–57, 59–60) | QEMU `info pci`/`xp`, `romheaders`, one-byte controls | III |
+| `dsl/sha256.fth` + `dsl/eventlog.fth` | SHA-256 as a pure function; a TCG event log authored and replayed | NIST vectors, python `hashlib`, `tpm2_eventlog`, a real edk2/swtpm log | IV |
+| `dsl/fdt.fth` | the **live device tree flattened** to a v17 DTB, every field big-endian | `dtc`, `fdtdump`, `fdtget` on all four arches | V |
+| `dsl/fdt-read.fth` | the **reader half**: a DTB parsed and **materialized** into the live tree | `dtc` decompiles the round trip identically on all four arches | VI |
 
 ## What it needs
 
@@ -36,7 +52,8 @@ qemu-system-x86_64 -M pc -m 512 -bios coreboot.rom -nic none \
 
 - the **firmware** is the amd64 OpenBIOS payload *inside* that coreboot ROM;
 - the **readers** (`struct.fth cbfs.fth region.fth lbregion.fth optrom.fth
-  sha256.fth eventlog.fth fdt.fth`) arrive over a **CD** — nothing is compiled into the
+  sha256.fth eventlog.fth fdt.fth fdt-read.fth`) arrive over a **CD** — with
+  `IMPORT.DTB`, a tree `dtc` authors from `fixtures/fdt/import.dts` at run time — nothing is compiled into the
   firmware for the occasion;
 - the two **cards** carry real PCI expansion ROMs built by `toke` from
   [`fixtures/optrom/`](fixtures/optrom/README.md);
@@ -193,6 +210,53 @@ per address — the 64-bit root of patch 43).
 > an expression, a trap this repo's memory carried and the `fdt` track still
 > walked into once.
 
+## ACT VI — the firmware takes a world in: dtc's tree, ingested and round-tripped
+
+Act V hands a tree over. This is the other direction: a tree **`dtc` authored
+on the host** — `fixtures/fdt/import.dts`, compiled to a 499-byte blob as the
+showcase starts, never cached — arrives over the CD, and the firmware takes it
+*in*.
+
+```
+0 > load /ide@1/cdrom@0:\IMPORT.DTB
+0 > load-base fdt-walk ." WALK=" . .fr-counts
+WALK=-1 RNODES=4 RPROPS=d
+0 > " /" find-device new-device s" imported" device-name
+0 > load-base fdt>dt ." MADE=" . cr finish-device device-end
+MADE=-1
+0 > " /imported" find-package drop fi dt>fdt-from ." FDTIL=" u. cr
+FDTIL=205
+```
+
+`fdt-walk` parses the blob and counts what `fdtdump` counts. `fdt>dt`
+**materializes** it: the blob's root properties land on `/imported`, every
+child becomes a `new-device`, every property a `property` — real nodes in the
+live tree, the same tree Act V just flattened. Then the firmware flattens
+*that subtree* again, QMP pulls it out, and `dtc` is asked the only question
+that matters:
+
+```
+$ dtc -I dtb -O dts import-rt.dtb   vs   dtc -I dtb -O dts IMPORT.DTB
+IDENTICAL
+$ fdtget -t s import-rt.dtb / model
+authored by dtc on the host, ingested by OpenBIOS
+```
+
+**In, out, and the compiler cannot tell.** Both decompiles are made *from
+binary* on purpose — from a `.dts` dtc prints `[de ad be ef]`, from a blob
+`<0xdeadbeef>`, for the same four bytes — so only the *tree* can differ, and
+it does not. A string written by a tool on the host comes back out of a blob
+this firmware built.
+
+**Graded:** `WALK=-1` with the reader's counts equal to `fdtdump`'s; `MADE=-1`;
+`dtc` parses the re-flattened subtree; the two decompiles are identical; the
+model string reads back verbatim.
+
+> What this round trip forced on the writer: FDT derives names from
+> `BEGIN_NODE` and deprecates the `name` property, so `dt>fdt` skips it on every
+> node — a materialized node gets one from `device-name`, and a blob dtc
+> authored has none. Spike 4's counts moved when the rule became general.
+
 ---
 
 ## Where each act is proven properly
@@ -207,6 +271,7 @@ piece against its full oracle set, with the negative controls:
 | III | `optrom` | QEMU `info pci` + `xp`, `romheaders`, one-byte controls, and **ppc** |
 | IV | `event-replay`, `event-real`, `event-bench` | `tpm2_eventlog`, python `hashlib`, a real edk2/swtpm log and the guest's own PCRs |
 | V | `fdt` | `dtc`/`fdtdump`/`fdtget` on **all four arches**; an LE-magic control and an overflow control |
+| VI | `fdt-import` | the round trip decompiles identically on **all four arches**; `BAD-MAGIC` and `BAD-TOKEN` refused by name |
 
 ```
 ./smoke-openbios.sh region-diff      # one verdict line
