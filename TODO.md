@@ -585,9 +585,9 @@ requires of any other cached fact.
             `here value mark` captured `here` under the marker itself → segfault at `ffffffff` on
             the next definition), and the device tree lives in the same dictionary, so forgetting
             past a node creation (`fdt>dt`) leaves the tree dangling.
-      - [ ] **unix's dictionary is at 95%** with the toolkit loaded (256 KiB, 13 KiB left). The
-            same one-line constant as patch 64 (`arch/unix/unix.c` `DICTIONARY_SIZE`), if the
-            hosted target is ever meant to hold more than the toolkit.
+      - [x] **unix's dictionary was at 95%** with the toolkit loaded (256 KiB, 13 KiB left) —
+            **patch 65, 2026-09-04: 1 MiB**, like every other door (ppc 384 KiB). The workbench every
+            dsl file is tried on first should not be the tightest. After: 781 KiB left (76%) — the whole toolkit compiles, and the overflow control names `dictlimit=100000`
       - [ ] **`readelf` does not check a duplicate `PT_INTERP`** — `?ph-order` is stricter than
             the oracle there, said so per run; a second oracle for that half (e.g. `llvm-readobj`
             or the kernel's `load_elf_binary`) would close the asymmetry.

@@ -3182,7 +3182,7 @@ index 253394c..8670e9a 100644
  
      /* Allocate 8MB memory at load-base */
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
-index cb9757e..26c37f3 100644
+index cb9757e..e5dedb8 100644
 --- a/arch/unix/unix.c
 +++ b/arch/unix/unix.c
 @@ -17,6 +17,7 @@
@@ -3193,7 +3193,24 @@ index cb9757e..26c37f3 100644
  #include <stdarg.h>
  
  #ifdef __GLIBC__
-@@ -62,6 +63,7 @@ static ucell *memory;
+@@ -40,7 +41,15 @@
+ #include "libopenbios/ofmem.h"
+ 
+ #define MEMORY_SIZE	(4*1024*1024)	/* 4M ram for hosted system */
+-#define DICTIONARY_SIZE	(256*1024)	/* 256k for the dictionary   */
++/* mklab (patch 65): 1 MiB, as every other arch's door now has (x86 and
++ * amd64's multiboot doors, amd64's coreboot door; ppc has 384K). This is the
++ * WORKBENCH -- the target every dsl .fth edit is tried on first -- and
++ * dict-budget (patch 63) measured it at 95% with the B.3 toolkit loaded:
++ * 183 KiB spent at the prompt, +60 KiB for the toolkit, 13 KiB left. One more
++ * file and here! would have printed "Dictionary space overflow" and carried on
++ * into the mapping's neighbour. The dictionary is one mmap below 4 GiB at
++ * 0x30000000; the 4 MiB Forth arena is at 0x20000000, so nothing moves. */
++#define DICTIONARY_SIZE	(1024*1024)	/* 1 MiB for the dictionary  */
+ 
+ #if defined(_FILE_OFFSET_BITS) && (_FILE_OFFSET_BITS==64)
+ #define lseek lseek64
+@@ -62,6 +71,7 @@ static ucell *memory;
  static int diskemu;
  
  static int segfault = 0;
@@ -3201,7 +3218,7 @@ index cb9757e..26c37f3 100644
  static int verbose = 0;
  
  #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
-@@ -177,11 +179,109 @@ static ucell read_dictionary(char *fil)
+@@ -177,11 +187,109 @@ static ucell read_dictionary(char *fil)
  	return ret;
  }
  
@@ -3311,7 +3328,7 @@ index cb9757e..26c37f3 100644
  static int unix_availchar(void)
  {
  	int tmp = getc(stdin);
-@@ -189,6 +289,8 @@ static int unix_availchar(void)
+@@ -189,6 +297,8 @@ static int unix_availchar(void)
  		ungetc(tmp, stdin);
  		return -1;
  	}
@@ -3320,7 +3337,7 @@ index cb9757e..26c37f3 100644
  	return 0;
  }
  
-@@ -200,7 +302,59 @@ static int unix_putchar(int c)
+@@ -200,7 +310,59 @@ static int unix_putchar(int c)
  
  static int unix_getchar(void)
  {
@@ -3381,7 +3398,7 @@ index cb9757e..26c37f3 100644
  }
  
  static struct _console_ops unix_console_ops = {
-@@ -363,13 +517,72 @@ int_handler(int signo __attribute__ ((unused)),
+@@ -363,13 +525,72 @@ int_handler(int signo __attribute__ ((unused)),
      exit(1);
  }
  
@@ -3455,7 +3472,7 @@ index cb9757e..26c37f3 100644
  	if (!memory) {
  		printk("panic: not enough memory on host system.\n");
  		exit_terminal();
-@@ -404,6 +617,9 @@ arch_init( void )
+@@ -404,6 +625,9 @@ arch_init( void )
  
  	device_end();
          bind_func("platform-boot", boot);
@@ -3465,7 +3482,7 @@ index cb9757e..26c37f3 100644
  }
  
  int
-@@ -521,7 +737,9 @@ int main(int argc, char *argv[])
+@@ -521,7 +745,9 @@ int main(int argc, char *argv[])
  	/* Initialise console */
  	init_console(unix_console_ops);
  
@@ -3476,7 +3493,7 @@ index cb9757e..26c37f3 100644
  		printk("panic: not enough memory.\n");
  		return 1;
  	}
-@@ -556,7 +774,17 @@ int main(int argc, char *argv[])
+@@ -556,7 +782,17 @@ int main(int argc, char *argv[])
          if (verbose)
              printk("done.\n");
  
@@ -3495,7 +3512,7 @@ index cb9757e..26c37f3 100644
  	forth_init();
  
  	PUSH_xt( bind_noname_func(arch_init) );
-@@ -580,12 +808,50 @@ int main(int argc, char *argv[])
+@@ -580,12 +816,50 @@ int main(int argc, char *argv[])
  		}
  
  		enterforth((xt_t)PC);
@@ -3547,7 +3564,7 @@ index cb9757e..26c37f3 100644
  
  	} else {		/* input file is not a dictionary */
  		printk("not supported.\n");
-@@ -595,8 +861,8 @@ int main(int argc, char *argv[])
+@@ -595,8 +869,8 @@ int main(int argc, char *argv[])
  	if (diskemu!=-1)
  		close(diskemu);
  

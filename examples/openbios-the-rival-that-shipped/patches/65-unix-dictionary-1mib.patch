@@ -1,0 +1,43 @@
+Subject: [PATCH 65/65] arch/unix: a 1 MiB dictionary for the workbench -- the hosted target was one file from the edge
+
+Arch-tested: x86 amd64 ppc unix
+
+The hosted target is the workbench: every dsl/*.fth edit is tried on it first,
+with -f iso or on stdin, before a QEMU is booted. Patch 63's dict-budget track
+measured it at 95% with the B.3 toolkit loaded -- 256 KiB, 183 KiB spent at the
+prompt (172 KiB shipped, 11 KiB compiled at init), +60 KiB for the twelve files
+it can load, 13 KiB left. The next file, or the next definition typed after
+them, would have crossed the limit -- and here! only PRINTS "Dictionary space
+overflow" and continues into the mapping's neighbour.
+
+Every other door now has 1 MiB (x86, amd64's multiboot door since patch 64,
+amd64's coreboot door since the port) or 384 KiB (ppc). This makes the workbench
+match. The dictionary is one mmap below 4 GiB at 0x30000000 and the 4 MiB Forth
+arena sits at 0x20000000, so nothing else moves; all four uses of the size go
+through the one macro (alloc, dictlimit, memset, free).
+
+MEASURED after (dict-budget, unix): 1048576 bytes, 187192 used at boot, the
+same twelve files +61408 bytes, 799976 bytes (76%) left; the OVER control's
+overflow line names dictlimit=100000, the number dict-limit answers; the unix
+and file-writer tracks unchanged and green.
+
+diff --git a/arch/unix/unix.c b/arch/unix/unix.c
+--- a/arch/unix/unix.c
++++ b/arch/unix/unix.c
+@@ -41,7 +41,15 @@
+ #include "libopenbios/ofmem.h"
+ 
+ #define MEMORY_SIZE	(4*1024*1024)	/* 4M ram for hosted system */
+-#define DICTIONARY_SIZE	(256*1024)	/* 256k for the dictionary   */
++/* mklab (patch 65): 1 MiB, as every other arch's door now has (x86 and
++ * amd64's multiboot doors, amd64's coreboot door; ppc has 384K). This is the
++ * WORKBENCH -- the target every dsl/*.fth edit is tried on first -- and
++ * dict-budget (patch 63) measured it at 95% with the B.3 toolkit loaded:
++ * 183 KiB spent at the prompt, +60 KiB for the toolkit, 13 KiB left. One more
++ * file and here! would have printed "Dictionary space overflow" and carried on
++ * into the mapping's neighbour. The dictionary is one mmap below 4 GiB at
++ * 0x30000000; the 4 MiB Forth arena is at 0x20000000, so nothing moves. */
++#define DICTIONARY_SIZE	(1024*1024)	/* 1 MiB for the dictionary  */
+ 
+ #if defined(_FILE_OFFSET_BITS) && (_FILE_OFFSET_BITS==64)
+ #define lseek lseek64
