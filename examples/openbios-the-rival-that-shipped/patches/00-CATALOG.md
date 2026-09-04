@@ -134,13 +134,14 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`61-ob-pci-unmap-gives-back-the-claims.patch`](61-ob-pci-unmap-gives-back-the-claims.patch) | `UPSTREAM-BUG` | shared | **The same leak as patch 60, one caller further in.** The config callbacks that map a BAR at *probe* (`sungem_config_cb`, 0x8000 bytes to read the MAC) gave it back with `ob_pci_unmap()`, which called `ofmem_unmap()` — the translation returned, both ofmem claims stayed, and every later `pci-map-in` of that BAR failed its claim and answered `ffffffff`. Measured on mac99 with `-device sungem` before the fix (twice `ffffffff`; an un-claimed e1000 BAR maps, releases and maps again as the control). `ob_pci_unmap()` is now `ofmem_release()`, and `pci-map-out` calls *it*, so there is one implementation of "give it back". `dsl/optrom.fth` gains `bar-map ( reg -- virt \| 0 )`; the `optrom` track's ppc row adds a sungem and maps its BAR0 after boot |
 | [`62-call-method-refuses-ihandle-0.patch`](62-call-method-refuses-ihandle-0.patch) | `UPSTREAM-BUG` | shared | **An ihandle of 0 read as an instance.** `$call-method` did `0 >in.device-node @` — on amd64 that is the real-mode IVT, the "phandle" is `f000ff54f000ff7b`, and `find-method` takes a general protection fault; on x86 the same read walked to `-21` by luck. Met by the 2026-09-03 audit as *"`$call-parent` from a parentless instance GPFs rather than throwing"* (a bridge chaining patch 59's `$call-parent` into a one-level instance). Two `abort"`s in the shape `?my-self` already had: `$call-method: ihandle is 0 (no instance).` and `no parent instance.` — a caller's `catch` gets `-2` on every arch. The `optrom` track types both shapes on x86, amd64 and ppc and asserts the throw by name and no exception line |
 | [`63-dict-limit-and-dict-used.patch`](63-dict-limit-and-dict-used.patch) | `FEATURE` | shared | **The two cells `here!` compares, readable from Forth.** Plan §6 had left the dictionary budget *"unmeasured, and no claim is made"*; measuring it needs `dictlimit` and `dicthead`, and the only way to reach the limit from Forth was to allot *past* it and read the `Dictionary space overflow` line — which is also the kernel's whole protection: `herewrite()` prints and **continues**, into whatever `.bss` follows the static array. Two kernel primitives, `dict-limit` / `dict-used`, appended to `words[]`/`wordnames[]` (kernel, so every arch has them from bootstrap on; no arch file touched). The `dict-budget` track measures the toolkit's cost per file per arch and guards every evaluate with 3× source size against the room left; its controls: allot 10 past the room → the overflow line naming the same limit, 10 short → silence |
+| [`64-amd64-dictionary-1mib.patch`](64-amd64-dictionary-1mib.patch) | `PORT` | arch-local | **The port's 256 KiB dictionary did not hold the toolkit.** Patch 63's `dict-budget` measured 205 of 256 KiB spent at the prompt (33 KiB of it compiled at init, 3× the hosted target's) and `eventlog.fth` refused for room. arch/x86's multiboot door has had 1 MiB for years and this arch's own coreboot-payload door (`builtin.c`) already carries 1 MiB, so the two amd64 doors disagreed by 4×. One constant; `.bss`, so the image does not grow. Measured after: the whole toolkit compiles on amd64 and the overflow control names `dictlimit=100000` |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
 | `UPSTREAM-BUG` | 30 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
-| `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
+| `PORT` | 12 | `arch/amd64`, which upstream ships and has not built since 2003 |
 | `FEATURE` | 16 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 3 | patch 15 (the Forth loader), patch 50 (the unix arena below 4 GiB), and patch 51 (the unix exit status) |
@@ -151,7 +152,7 @@ And by where a future rebase will hurt:
 | scope | count | |
 |---|---|---|
 | shared | 39 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
-| arch-local | 24 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
+| arch-local | 25 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only the `DIVERGENCE` rows are divergences in the sense of "we want different
 behaviour."** Everything else is something upstream would arguably want and is
