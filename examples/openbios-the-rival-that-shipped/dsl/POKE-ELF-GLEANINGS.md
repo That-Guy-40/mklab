@@ -20,6 +20,12 @@ by how much digging each is worth:
 
 ## Loose gold — on the surface, cheap to pocket
 
+> **Pocketed 2026-09-03** — both bullets below are built: `?ph-order` in `dsl/elf.fth` (shared by
+> `?phdrs64` and `?phdrs32`) and `elf-hash`, graded on all four arches by the `elf-gate` track
+> against `readelf -l` and against the linker's own `.hash` placement. One correction to the
+> text below: readelf checks the PHDR half of the ordering rule but **not** a duplicate
+> `PT_INTERP`, so there the Forth is stricter than the oracle.
+
 - **The program-header ORDERING check.** `elf64_check_phdr` (wired as a
   whole-table field constraint: `phdr : elf64_check_phdr(phdr)`) encodes a real
   ELF invariant — `PT_INTERP` and `PT_PHDR` must appear **before** any `PT_LOAD`

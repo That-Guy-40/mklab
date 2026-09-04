@@ -532,8 +532,18 @@ requires of any other cached fact.
             refused with the word after it never running.
       - [ ] **the dictionary budget** (§6) — explicitly "unmeasured, and no claim is made"; the
             first task of any spike wanting the DSL compiled into the firmware.
-      - [ ] **`elf_hash`** (~10 pure lines, a fourth width×byte-order control like SHA-256) and
-            the **phdr ordering check** for `?phdrs64` — both from `dsl/POKE-ELF-GLEANINGS.md`.
+      - [x] **`elf_hash` and the phdr ordering check — DONE 2026-09-03, `elf-gate` track, all four
+            arches.** `?phdrs64`/`?phdrs32` share `?ph-order`: `PT_PHDR`/`PT_INTERP` at most once
+            and before every `PT_LOAD`, refused by name. Three fixtures authored at run time
+            (`fixtures/elf-gate/`, identical outside the phdr table) plus the host's `/bin/true`;
+            `readelf -l` is the foreign oracle for the PHDR half (*"must occur before any LOAD
+            segment"*) and does **not** check a duplicate INTERP — the layer is stricter there and
+            says so. `elf-hash` (ten lines) equals the gABI text in python on every arch, and that
+            python is checked against the **linker**: every symbol of an `ld --hash-style=sysv`
+            object is reachable from `bucket[elf_hash % nbucket]`. **And a retraction by control:** the
+            draft carried a `ffffffff and` as "the width control"; the negative control that removed
+            it PASSED on the 64-bit arches — `h &= ~g` clears bits 28–31 every step, so the shift
+            never reaches bit 32 on any cell, and the mask was dead code with a rationale. Gone.
       - [x] **two things the audit named but did not fix** — **DONE 2026-09-03, patches 61 and
             62, both measured before and after.** (61) `ob_pci_unmap` called `ofmem_unmap()`, which
             gives back the translation and keeps both ofmem claims, so a BAR a config callback

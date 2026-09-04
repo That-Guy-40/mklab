@@ -102,8 +102,9 @@ constant /elf32-shdr             \ 0x28
     s" e_abiversion must be 0 when e_osabi is NONE" chk? ;
 
 : ?phdrs32 ( filesize -- )
+  ?ph-order-begin                          \ the gABI ordering rule, shared with ?phdrs64
   elf32-phnum 0 ?do
-    i elf32-ph dup p32-type t@ 1 = if
+    i elf32-ph dup p32-type t@ dup ?ph-order 1 = if
       dup p32-offset t@ over p32-filesz t@ +  2 pick u> 0=
         s" a PT_LOAD segment runs past the end of the file" chk?
     then drop

@@ -181,15 +181,58 @@ constant /elf64-shdr
   @elf e_osabi t@ 0=  0=  @elf e_abiversion t@ 0=  or
     s" e_abiversion must be 0 when e_osabi is NONE" chk? ;
 
-\ Every PT_LOAD segment must fit inside the file, which is the check that
-\ catches a truncated or lying image -- poke-elf's elf64_check_phdr.
+\ ── the program-header table as a WHOLE: poke's `phdr : elf64_check_phdr` ──
+\ Two invariants, and a firmware about to RUN an image should refuse both:
+\  (1) every PT_LOAD fits inside the file -- catches a truncated or lying image;
+\  (2) the gABI's ORDERING rule (2026-09-03, from dsl/POKE-ELF-GLEANINGS.md):
+\      "PT_PHDR ... may occur only once, if at all, and must precede any
+\      loadable segment entry" -- and the same sentence for PT_INTERP.
+\ ?ph-order is class-agnostic (it takes the type VALUE), so ?phdrs32 uses it too.
+\ readelf -l is the foreign oracle for the PHDR half ("the PHDR segment must
+\ occur before any LOAD segment"); it says nothing about a duplicate INTERP, so
+\ there this layer is stricter than readelf, as it already is about e_phentsize.
+variable ph-load?  variable ph-phdr#  variable ph-interp#
+: ?ph-order-begin ( -- )  false ph-load? !  0 ph-phdr# !  0 ph-interp# ! ;
+: ?ph-order ( type -- )
+  dup 1 = if drop true ph-load? ! exit then
+  dup 6 = if
+    1 ph-phdr# +!  ph-phdr# @ 1  s" more than one PT_PHDR (gABI: at most once)" chk
+    ph-load? @ 0=  s" PT_PHDR after a PT_LOAD (gABI: it must precede every loadable segment)" chk?
+  then
+  dup 3 = if
+    1 ph-interp# +!  ph-interp# @ 1  s" more than one PT_INTERP (gABI: at most once)" chk
+    ph-load? @ 0=  s" PT_INTERP after a PT_LOAD (gABI: it must precede every loadable segment)" chk?
+  then drop ;
+
 : ?phdrs64 ( filesize -- )
+  ?ph-order-begin
   elf64-phnum 0 ?do
-    i elf64-ph dup p_type t@ 1 = if
+    i elf64-ph dup p_type t@ dup ?ph-order 1 = if
       dup p_offset-lo t@ over p_filesz-lo t@ +  2 pick u> 0=
         s" a PT_LOAD segment runs past the end of the file" chk?
     then drop
   loop drop ;
+
+\ ── elf-hash ( adr len -- h ): the SysV symbol hash ─────────────────
+\ gABI Figure 5-13; poke's elf_hash in elf-common.pk. Pure, ten lines:
+\ h = (h<<4)+c; g = h & f0000000; if g: h ^= g>>24; h &= ~g.
+\ THERE IS NO 32-BIT MASK, AND THAT WAS MEASURED, NOT REASONED. The first draft
+\ had `ffffffff and` after the add, described as "the width control: on a 64-bit
+\ cell the shift carries above bit 31". The elf-gate track's negative control
+\ removed it -- and PASSED on unix and amd64, hashes unchanged. The algorithm
+\ bounds itself: `h &= ~g` clears bits 28-31 whenever they are set, so the next
+\ `h << 4` can never reach bit 32 on ANY cell width, and the mask was dead
+\ code wearing a rationale. What the four-arch row does prove is that lshift,
+\ rshift, xor and invert/and agree across 32- and 64-bit cells for this loop.
+\ Oracles: the SysV text transliterated in python, and the LINKER -- a symbol
+\ is reachable from bucket[elf_hash(name) % nbucket] of an ld --hash-style=sysv
+\ .hash section only if this function agrees with ld's.
+: elf-hash ( adr len -- h )
+  0 -rot  over + swap ?do
+    4 lshift i c@ +                   ( h )
+    dup f0000000 and                  ( h g )
+    dup if  dup 18 rshift  rot xor  swap invert and  else drop then
+  loop ;
 
 \ ── §E4: methods — semantics, not layout ───────────────────────────
 \ poke-elf's get_load_base and vaddr_to_file_offset. These are the two the

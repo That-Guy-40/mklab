@@ -12,7 +12,9 @@ Extends [`examples/openbios-the-rival-that-shipped/`](examples/openbios-the-riva
 The direction and the primitives it needs were identified in
 [`dsl/POKE-ELF-GLEANINGS.md`](examples/openbios-the-rival-that-shipped/dsl/POKE-ELF-GLEANINGS.md)
 and [`DESIGN-NOTES-preboot-forth-binary-structures.md`](DESIGN-NOTES-preboot-forth-binary-structures.md)
-§8; this plan turns the claim map into spikes.
+§8; this plan turns the claim map into spikes. *(The gleanings' two "loose gold" items —
+the gABI phdr ordering rule and `elf_hash` — were pocketed 2026-09-03 as the `elf-gate` track,
+outside the spike numbering.)*
 
 > **The one pattern this family enforces (LOCKED): Spike 0 runs first and it is a
 > DECISION, not a warm-up.** It decides whether `struct.fth`'s static-offset
