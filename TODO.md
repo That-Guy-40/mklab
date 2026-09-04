@@ -514,7 +514,10 @@ requires of any other cached fact.
       `dtc` accepts on all four arches, `fdtdump`'s counts equal the firmware's, the four trees
       differ, an LE magic and a shrunk bound are refused by name. Bytes out by `write-file`,
       QEMU **QMP** `pmemsave` (HMP reads a filename as an expression — the memory's own trap,
-      hit again), and ppc's console `dump` parsed back. History below. —
+      hit again), and ppc's console `dump` parsed back. **Spike 5** (`dsl/fdt-read.fth`, the
+      `fdt-import` track): the reader half — a DTB `dtc` authored is ingested under `/imported`,
+      re-flattened, and `dtc` decompiles the round trip **identically** on all four arches.
+      History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
       dissect). A preboot TLV toolkit over the four OpenBIOS arches as an

@@ -698,10 +698,15 @@ the hosted target, which has no `/memory` node), and the four trees must
 
 | door | bytes out | tree |
 |---|---|---|
-| unix | `write-file` | 21 nodes / 63 props, 2325 B |
-| x86 | `fb >phys` → QEMU **QMP** `pmemsave` — an observer outside the guest | 30 / 175, 5952 B |
-| amd64 | same (the two-cell root of patch 43 shows in `/memory reg`) | 29 / 171, 5892 B |
-| ppc | pty-only console: the firmware's own `dump`, parsed back on the host | 46 / 280, 10314 B |
+| unix | `write-file` | 21 nodes / 43 props, 1777 B |
+| x86 | `fb >phys` → QEMU **QMP** `pmemsave` — an observer outside the guest | 30 / 146, 5167 B |
+| amd64 | same (the two-cell root of patch 43 shows in `/memory reg`) | 29 / 143, 5124 B |
+| ppc | pty-only console: the firmware's own `dump`, parsed back on the host | 46 / 235, 9089 B |
+
+*(Counts as of Spike 5: the `name` property is skipped on **every** node, not
+only the root's — FDT derives names from `BEGIN_NODE` and deprecates `name`, and
+the round trip through `fdt>dt` is what made the rule general. Spike 4's first
+numbers were 63/175/171/280.)*
 
 **Two things it cost, both worth keeping.** The x86/amd64 door had to be QMP,
 because HMP `pmemsave` reads its *filename* as an expression (`invalid char
@@ -715,6 +720,33 @@ one property skipped — by name, in the source.
 `dtc` as `incorrect magic`; the struct bound shrunk to 0x100 makes `dt>fdt`
 refuse with `OVERFLOW` and answer 0 instead of writing property values over
 its own strings block. Track: `fdt` (CI installs `device-tree-compiler`).
+
+### Spike 5 — the reader half: a DTB ingested, materialized, and round-tripped (✅ 2026-09-03)
+
+Spike 4 hands the firmware's world over; this takes one in.
+[`dsl/fdt-read.fth`](examples/openbios-the-rival-that-shipped/dsl/fdt-read.fth)
+walks a flattened device tree (`fdt-walk`) and **materializes** it into the live
+tree (`fdt>dt`: the blob's root properties land on the active package, every
+child becomes a `new-device`, every property a `property`). Two subjects on
+every arch:
+
+- **(a) a blob `dtc` authored** on the host from
+  [`fixtures/fdt/import.dts`](examples/openbios-the-rival-that-shipped/fixtures/fdt/README.md)
+  — compiled at run time, never cached — delivered over the CD, ingested under
+  `/imported`, re-flattened from that node by Spike 4's writer, pulled back out,
+  and decompiled by `dtc`: **the two decompiles are identical** on unix, x86,
+  amd64 and ppc. Both are made *from binary*, so dtc's rendering guesses cancel
+  (from a `.dts` it prints `[de ad be ef]`, from a blob `<0xdeadbeef>`, for the
+  same four bytes) and only the tree can differ.
+- **(b) the firmware's own blob** read back: the reader's counts equal the
+  writer's.
+
+Every field is read big-endian, so ppc reads native and the LE arches swap. The
+reader refuses by name — an LE magic → `BAD-MAGIC`, 0; a token of 7 →
+`BAD-TOKEN`, 0. What the round trip forced on the *writer*: FDT derives names
+from `BEGIN_NODE` and deprecates the `name` property, so `dt>fdt` now skips it
+on every node (a materialized node gets one from `device-name`; a blob dtc
+authored has none). Track: `fdt-import`.
 
 ---
 
@@ -823,6 +855,10 @@ Docs, `link_check.py`, and the patch record stay green at every step.
   files as `$OBJDIR/cbfstool print`, on all four arches, the `ppc` row proving the
   big-endian reads and telling the payload kinds apart; an authored `raw` entry
   round-trips through `cbfstool`.
+- **Spike 5 (✅ 2026-09-03):** a DTB `dtc` authored is ingested under
+  `/imported`, re-flattened, and `dtc` decompiles the round trip identically on
+  all four arches; the firmware's own blob reads back with the writer's counts;
+  `BAD-MAGIC` and `BAD-TOKEN` are refused by name.
 - **Spike 4 (✅ 2026-09-03):** the live device tree flattens to a v17 FDT that
   `dtc` accepts on `unix`, `x86`, `amd64` and `ppc`; `fdtdump`'s node/property
   counts equal the firmware's on each; the four trees differ; an LE magic is
