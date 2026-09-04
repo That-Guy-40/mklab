@@ -72,12 +72,15 @@ constant /elf32-shdr             \ 0x28
 
 \ ── the same shape as the 64-bit half ──────────────────────────────
 
-: elf32-phnum ( -- n )   @elf e32-phnum t@ ;
-: elf32-shnum ( -- n )   @elf e32-shnum t@ ;
-: elf32-phtab ( -- adr ) @elf  @elf e32-phoff t@ + ;
-: elf32-shtab ( -- adr ) @elf  @elf e32-shoff t@ + ;
-: elf32-ph ( i -- adr )  elf32-phtab swap phdr32[] ;
-: elf32-sh ( i -- adr )  elf32-shtab swap shdr32[] ;
+' e32-phoff ' e32-phnum /elf32-phdr table: phdr32-table
+' e32-shoff ' e32-shnum /elf32-shdr table: shdr32-table
+
+: elf32-phnum ( -- n )   @elf phdr32-table tbl-count ;
+: elf32-shnum ( -- n )   @elf shdr32-table tbl-count ;
+: elf32-phtab ( -- adr ) @elf phdr32-table tbl-base ;
+: elf32-shtab ( -- adr ) @elf shdr32-table tbl-base ;
+: elf32-ph ( i -- adr )  @elf swap phdr32-table tbl@ ;
+: elf32-sh ( i -- adr )  @elf swap shdr32-table tbl@ ;
 
 \ ── §E1: constraints ───────────────────────────────────────────────
 \ The mirror of ?elf64, including the class check pointed the other way -- so an

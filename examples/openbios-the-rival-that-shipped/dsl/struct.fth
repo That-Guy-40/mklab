@@ -192,6 +192,38 @@ hex
     @ * +
   ;
 
+\ ── §E3: a TABLE — an array whose BASE and COUNT are fields of a header ─────
+\ poke:  Elf64_Phdr[ehdr.e_phnum] phdr @ ehdr.e_phoff
+\ Three things bound once: the field the OFFSET is read from, the field the
+\ COUNT is read from, and the stride. `array:` gives the stride and nothing
+\ else, so until 2026-09-03 the other two were spelled out at every use
+\ (elf64-phtab, elf64-phnum, elf64-ph -- REVIEW E3's complaint, verbatim). A
+\ table takes the two field words by xt, because a field word is what knows
+\ its own offset/width/order: `' e_phoff-lo ' e_phnum /elf64-phdr table: NAME`.
+\
+\ THIS IS THE OFFSET-MODE `file:`; vfield: (below) IS THE CURSOR-MODE ONE. The
+\ plan's Spike 0 wrote that "vfield: IS the cursor-mode file:" and read that as
+\ answering E3 -- it did not: E3's example is a member mapped AT an offset read
+\ from an earlier member, with a count from another, not a member whose bytes
+\ FOLLOW its length. Both shapes exist in the subjects (ELF's phdr/shdr tables
+\ are offset-mode; a TLV note, an event-log entry and an FDT token stream are
+\ cursor-mode), so both definers exist, and the decision is written here.
+\
+\ tbl@ is BOUND-CHECKED. An index at or past the count is refused by name
+\ (T-ERR-index), because `array:` at a bad index reads N plausible structures out
+\ of whoever's bytes come next and every field "succeeds" -- the same silence
+\ the stride control in `struct-array` exists to expose.
+: table: ( off-xt count-xt stride "name" -- )  create , , , ;
+: tbl-stride ( tbl -- n )        @ ;
+: tbl-count  ( hdr tbl -- n )    cell+ @ execute t@ ;
+: tbl-base   ( hdr tbl -- adr )  over swap 2 cells + @ execute t@ + ;
+: tbl-index-err ( i n -- )  ." T-ERR-index=" swap u. ." count=" u. cr abort ;
+: tbl@ ( hdr i tbl -- adr )
+  >r  over r@ tbl-count           ( hdr i count )
+  2dup u< 0= if r> drop tbl-index-err then
+  drop  r@ tbl-stride *           ( hdr off )
+  over r> tbl-base + nip ;
+
 
 \ ── the address space, which a type layer does NOT give you ────────
 \ A layout makes field access convenient. It does nothing whatsoever to make an

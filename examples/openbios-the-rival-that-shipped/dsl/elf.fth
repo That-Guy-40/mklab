@@ -110,12 +110,13 @@ struct
   4 le-field: p_align-lo    4 le-field: p_align-hi
 constant /elf64-phdr
 
-/elf64-phdr array: phdr[]
+/elf64-phdr array: phdr[]          \ stride only -- struct-array's stride control uses it
 
 \ ── the ELF64 section header ───────────────────────────────────────
-\ The SECOND table, which is what makes REVIEW §E3 worth having: `shdr[]` and
-\ `phdr[]` are declared once each instead of the base/count/stride being spelled
-\ out at every use.
+\ The SECOND table, which is what made REVIEW §E3 worth having -- and until
+\ 2026-09-03 `array:` gave only the stride, so the base and the count were
+\ still spelled out per use (elf64-phtab, elf64-phnum). `table:` binds all
+\ three; see phdr-table/shdr-table below.
 
 struct
   4 le-field: sh_name          \ an offset into the section-name string table
@@ -144,12 +145,18 @@ constant /elf64-shdr
 \ defines `1 constant elf`, and shadowing it would have broken the
 \ client-program debugging path for a spelling nobody needed. @elf is the name.
 
-: elf64-phnum ( -- n )   @elf e_phnum t@ ;
-: elf64-shnum ( -- n )   @elf e_shnum t@ ;
-: elf64-phtab ( -- adr ) @elf  @elf e_phoff-lo t@ + ;
-: elf64-shtab ( -- adr ) @elf  @elf e_shoff-lo t@ + ;
-: elf64-ph ( i -- adr )  elf64-phtab swap phdr[] ;
-: elf64-sh ( i -- adr )  elf64-shtab swap shdr[] ;
+\ §E3, built: the two tables, each declared ONCE -- offset field, count field,
+\ stride -- and every accessor below reads through them. poke's
+\ `Elf64_Phdr[ehdr.e_phnum] phdr @ ehdr.e_phoff`, in one line each.
+' e_phoff-lo ' e_phnum /elf64-phdr table: phdr-table
+' e_shoff-lo ' e_shnum /elf64-shdr table: shdr-table
+
+: elf64-phnum ( -- n )   @elf phdr-table tbl-count ;
+: elf64-shnum ( -- n )   @elf shdr-table tbl-count ;
+: elf64-phtab ( -- adr ) @elf phdr-table tbl-base ;
+: elf64-shtab ( -- adr ) @elf shdr-table tbl-base ;
+: elf64-ph ( i -- adr )  @elf swap phdr-table tbl@ ;    \ bound-checked (T-ERR-index)
+: elf64-sh ( i -- adr )  @elf swap shdr-table tbl@ ;
 
 \ ── §E1: constraints — this REFUSES a file it cannot describe ──────
 \ Every line names what it wants and prints what it got. ?elf64 is driven

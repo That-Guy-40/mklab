@@ -5405,9 +5405,21 @@ hex
 /elf64-phdr 8 + array: badphdr[]
 0 value phtab
 0 value nph
+\ §E3, BUILT (2026-09-03): the base and the count come from the TABLE declared
+\ once in elf.fth (phdr-table: offset field, count field, stride), not from
+\ `load-base e_phoff-lo t@ +` spelled out here -- which is what this word did
+\ until then, and what REVIEW E3 called "Forth spells it out at every use".
+\ ga-tbl* print the same two numbers through the table so the host can see they
+\ are the ones the bytes say; ga-oob is the bound check, and MUST NOT reach
+\ GA-OOB-END: `array:` at index == count reads the bytes after the table and
+\ every field "succeeds", which is the silence tbl@ refuses by name.
 : ga-walk
-  load-base load-base e_phoff-lo t@ + to phtab
-  load-base e_phnum t@ to nph
+  load-base elf-at
+  elf64-phtab to phtab
+  elf64-phnum to nph
+  ." ga-tblbase=" @elf phdr-table tbl-base load-base - u. cr
+  ." ga-tblcount=" @elf phdr-table tbl-count u. cr
+  ." ga-tbl1="    1 elf64-ph load-base - u. cr
   ." ga-ehsize="    load-base e_ehsize    t@ u. cr
   ." ga-phentsize=" load-base e_phentsize t@ u. cr
   ." ga-phnum="     nph u. cr
@@ -5430,6 +5442,7 @@ hex
   ." ga-bad1type=" phtab 1 badphdr[] p_type t@ u. cr
   ." ga-bad1off="  phtab 1 badphdr[] p_offset-lo t@ u. cr
   ." GA-END" cr ;
+: ga-oob  ." ga-oob:" nph elf64-ph ." GA-OOB-END" cr ;
 ." GA-READY" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/ga.iso" -V GA -r -J "$AST"
@@ -5484,7 +5497,8 @@ PY
         --send 'load /ide@1/cdrom@0:\\ga.fth\r' --expect "0 > " \
         --send 'load-base load-size evaluate\r' --expect "GA-READY" \
         --send 'load /ide@1/cdrom@0:\\subj.elf\r' --expect "0 > " \
-        --send 'ga-walk\r' --expect "GA-END"
+        --send 'ga-walk\r' --expect "GA-END" \
+        --send 'ga-oob\r' --expect "0 > "
       ARC=$?
       kill "$AQ" 2>/dev/null   # by PID, never by pattern
       AL="$(tr -d "\r" < "$ALOG")"
@@ -5515,6 +5529,22 @@ PY
           || fail "G2/arrays on $A: program header $ei reads '${AROW:-absent}' where the host reads '$AWANT' — the array is indexing to the wrong element, or a field inside it is at the wrong offset — see $ALOG"
       done <<< "$ARROWS"
 
+      # §E3's TABLE (2026-09-03): base and count read THROUGH phdr-table, declared
+      # once in elf.fth, must be the numbers the bytes say; element 1 through the
+      # bound-checked tbl@ must sit at phoff + phentsize.
+      ATB="$(av ga-tblbase)"; ATC="$(av ga-tblcount)"; AT1="$(av ga-tbl1)"
+      AT_PH1="$(printf '%x' $((16#$AT_PHOFF + 16#$AT_PHENT)))"
+      [[ "$ATB" == "$AT_PHOFF" && "$ATC" == "$AT_PHNUM" && "$AT1" == "$AT_PH1" ]] \
+        || fail "G2/§E3 on $A: phdr-table reads base=${ATB:-absent} count=${ATC:-absent} element1=${AT1:-absent} where the host reads $AT_PHOFF / $AT_PHNUM / $AT_PH1 — table: bound the wrong field, or tbl@ strides wrong — see $ALOG"
+      # THE BOUND CHECK: index == count is refused BY NAME and the word after it
+      # never runs. array: at that index reads plausible bytes past the table and
+      # every field succeeds — the silence this row exists to see refused.
+      AOOB="$(sed -n '\|ga-oob:|,\|^0 > |p' <<<"$AL")"
+      grep -qE "T-ERR-index=$AT_PHNUM count=$AT_PHNUM" <<<"$AOOB" \
+        || fail "G2/§E3 on $A: tbl@ at index $AT_PHNUM (== count) did not refuse by name (want 'T-ERR-index=$AT_PHNUM count=$AT_PHNUM'): $(grep -aoE 'ga-oob:.*' <<<"$AOOB" | head -1) — see $ALOG"
+      grep -qF 'GA-OOB-END' <<<"$AOOB" \
+        && fail "G2/§E3 on $A: the word after the out-of-bounds tbl@ RAN (GA-OOB-END printed) — printing a refusal is not refusing — see $ALOG"
+
       # THE DERIVED NUMBER — one value over the whole traversal.
       ASUM="$(av ga-loadsum)"
       [[ "$ASUM" == "$AT_SUM" ]] \
@@ -5532,7 +5562,7 @@ PY
 
       note "$A: ehdr decl 0x$AED == file e_ehsize 0x$AEF; phdr decl 0x$APD == e_phentsize 0x$APF; $AN headers at +0x$AOFF walked, PT_LOAD filesz sum 0x$ASUM; wrong stride reads type=$ABT where the right one reads $AGOODT"
     done
-    pass "REVIEW G2, arrays: dsl/struct.fth's 'array:' walks the ELF64 program-header table of a real image — the amd64 firmware's own boot image, loaded off ISO9660 — on BOTH arches, and every element matches ground truth unpacked from the same bytes on the host. The layout is checked against the SUBJECT rather than against constants: /elf64-ehdr equals the file's own e_ehsize and /elf64-phdr equals its e_phentsize, so a drifted offset is caught by the field the drift itself moved. The traversal is graded by a DERIVED number — the firmware's own sum of p_filesz across PT_LOAD — which a single mis-stepped element changes. And the control is the stride: the same element type walked at a stride wrong by 8 reads exactly the bytes the host says live at that wrong place, and a DIFFERENT type from the correct walk, so 'the walk worked' cannot be satisfied by an array whose index does nothing"
+    pass "REVIEW G2, arrays: dsl/struct.fth's 'array:' walks the ELF64 program-header table of a real image — the amd64 firmware's own boot image, loaded off ISO9660 — on BOTH arches, and every element matches ground truth unpacked from the same bytes on the host. The layout is checked against the SUBJECT rather than against constants: /elf64-ehdr equals the file's own e_ehsize and /elf64-phdr equals its e_phentsize, so a drifted offset is caught by the field the drift itself moved. The traversal is graded by a DERIVED number — the firmware's own sum of p_filesz across PT_LOAD — which a single mis-stepped element changes. And the control is the stride: the same element type walked at a stride wrong by 8 reads exactly the bytes the host says live at that wrong place, and a DIFFERENT type from the correct walk, so 'the walk worked' cannot be satisfied by an array whose index does nothing. AND §E3 IS BUILT (2026-09-03): the base and the count no longer come from 'load-base e_phoff-lo t@ +' spelled out in the probe — struct.fth's table: binds the offset field, the count field and the stride ONCE (phdr-table / shdr-table in elf.fth, poke's Elf64_Phdr[e_phnum] @ e_phoff in one line each), every accessor reads through it, the numbers it yields are the ones the bytes say, and tbl@ is BOUND-CHECKED: index == count is refused by name (T-ERR-index) and the word after it never runs. vfield: is the CURSOR-mode file: (a member whose bytes follow its length); table: is the OFFSET-mode one E3 actually sketched — the plan had read the first as answering the second, and that reading is corrected in writing"
     ;;
   struct-device)
     # REVIEW G2's last named gap: map a layout over a LIVE DEVICE's registers
