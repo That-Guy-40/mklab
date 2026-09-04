@@ -245,9 +245,23 @@ and (ii) a **bare** tid to describe each element. Baking a cursor into the field
 word would contaminate the static-offset path that ELF/CBFS *headers* rely on, for
 zero gain. So (B) is a parallel cursor vocabulary — `>rec`/`rec@`/`+rec`/`alignto`
 + `t@+`/`vfield:` + a bare-tid `type:` definer — that **reuses `t@`/`t!`
-unchanged** and leaves `field:`/`array:`/`(tfield)` untouched. This also answers
+unchanged** and leaves `field:`/`array:`/`(tfield)` untouched. ~~This also answers
 review E3: `vfield:` **is** the cursor-mode `file:` (a member whose extent is read
-from an earlier member), built, not beside a second thing.
+from an earlier member), built, not beside a second thing.~~ **Corrected
+2026-09-03 — that sentence answered a different question than E3 asked.** E3's
+example is `Elf64_Shdr[ehdr.e_shnum] shdr @ ehdr.e_shoff`: a member mapped **at
+an offset read from one earlier field**, with a **count from another** — the
+*offset-mode* form. `vfield:` is the *cursor-mode* form (a member whose bytes
+**follow** its length). The subjects have both: ELF's phdr/shdr tables are
+offset-mode; a TLV note, an event-log entry and an FDT token stream are
+cursor-mode. So **both definers exist, and the decision is written down**:
+`struct.fth`'s **`table:`** (`' e_phoff-lo ' e_phnum /elf64-phdr table: phdr-table`
+— offset field, count field, stride, bound once; `tbl-base`/`tbl-count`/`tbl@`,
+the last **bound-checked**, `T-ERR-index` by name) is E3's `file:`, and
+`elf.fth`/`elf32.fth` declare their four tables through it instead of spelling
+`load-base e_phoff-lo t@ +` out per use. `struct-array` reads base, count and an
+element through the table against the host's parse and watches index == count
+refused with the word after it never running.
 
 **COMPLETE (2026-09-02).** The primitives ship as a new **cursor section of
 `dsl/struct.fth`** (`type:`/`>rec`/`rec@`/`+rec`/`rec-off`/`alignto`/`t@+`/`t!+`/

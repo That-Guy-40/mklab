@@ -519,10 +519,17 @@ requires of any other cached fact.
       re-flattened, and `dtc` decompiles the round trip **identically** on all four arches.
       **Named candidates left in the plan, none started** (from §6, review F7, the gleanings
       note, and the 2026-09-03 audit):
-      - [ ] **§E3's `file:` definer** — the declarative form of `vfield:` ("maybe twenty lines…
-            worth having the moment a second table is added"). Three tables exist now (CBFS,
-            event log, FDT); the review said to decide whether `vfield:` *is* it or sits beside
-            it, and that decision was never written down.
+      - [x] **§E3's `file:` definer — DONE 2026-09-03, and the decision written down.** The plan
+            had said *"`vfield:` IS the cursor-mode `file:`"* and read that as answering E3; it
+            did not — E3's example (`Elf64_Shdr[e_shnum] @ e_shoff`) is the **offset-mode** form
+            (a member mapped at an offset from one earlier field, count from another), while
+            `vfield:` is the **cursor-mode** form (bytes follow their length). Both shapes are in
+            the subjects (ELF tables vs. TLV/event-log/FDT streams), so both definers exist:
+            `struct.fth` gains `table:` (`' e_phoff-lo ' e_phnum /elf64-phdr table: phdr-table`;
+            `tbl-base`/`tbl-count`/`tbl@`, the last bound-checked, `T-ERR-index` by name),
+            `elf.fth`/`elf32.fth` declare their four tables through it, and `struct-array` reads
+            base/count/element through the table against the host and watches index == count
+            refused with the word after it never running.
       - [ ] **the dictionary budget** (§6) — explicitly "unmeasured, and no claim is made"; the
             first task of any spike wanting the DSL compiled into the firmware.
       - [ ] **`elf_hash`** (~10 pure lines, a fourth width×byte-order control like SHA-256) and
