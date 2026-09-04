@@ -527,9 +527,20 @@ requires of any other cached fact.
             first task of any spike wanting the DSL compiled into the firmware.
       - [ ] **`elf_hash`** (~10 pure lines, a fourth width×byte-order control like SHA-256) and
             the **phdr ordering check** for `?phdrs64` — both from `dsl/POKE-ELF-GLEANINGS.md`.
-      - [ ] **two things the audit named but did not fix:** `$call-parent` from a parentless
-            instance **GPFs rather than throwing** (patch 59), and `ob_pci_unmap` at `pci.c:823`
-            still leaks its ofmem claims the way `map-in` did before patch 60.
+      - [x] **two things the audit named but did not fix** — **DONE 2026-09-03, patches 61 and
+            62, both measured before and after.** (61) `ob_pci_unmap` called `ofmem_unmap()`, which
+            gives back the translation and keeps both ofmem claims, so a BAR a config callback
+            mapped at *probe* could never be mapped again: on mac99 with `-device sungem`, the
+            sungem's BAR0 answered `ffffffff` to every later `pci-map-in` (an un-claimed e1000 BAR
+            mapped, released and mapped again as the control). It is `ofmem_release()` now, and
+            `pci-map-out` calls it, one implementation. (62) `$call-method` with ihandle 0 read
+            address 0 as an instance record — on amd64 the real-mode IVT, `rax=f000ff54f000ff7b`,
+            a general protection fault at `08:102d93`; on x86 the same read walked to `-21` by
+            luck. Two `abort"`s in `?my-self`'s shape (`$call-method: ihandle is 0`, `no parent
+            instance.`) and every arch throws `-2` under `catch`. The `optrom` track types both
+            shapes on x86/amd64/ppc and maps the sungem BAR on ppc; `dsl/optrom.fth` gains
+            `bar-map ( reg -- virt | 0 )`. The audit's `pci.c:823` was the *call site*; the
+            function is at `pci.c:428`.
       History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to

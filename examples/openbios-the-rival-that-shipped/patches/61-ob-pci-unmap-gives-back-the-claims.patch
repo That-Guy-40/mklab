@@ -1,0 +1,76 @@
+Subject: [PATCH 61/62] drivers/pci: ob_pci_unmap gives back the CLAIMS, not just the translation -- the leak one caller further in from patch 60
+
+Arch-tested: x86 amd64 ppc unix
+
+Patch 60 found that pci-map-in on ppc CLAIMS the physical and virtual ranges
+through ofmem (ofmem_claim_phys, ofmem_claim_virt) before mapping them, and
+bound the pci-map-out that releases them. It left a second caller of the same
+ob_pci_map() alone: the config callbacks that map a BAR at PROBE time and
+unmap it with ob_pci_unmap(), which called ofmem_unmap() -- the translation
+comes back, both claims stay. The 2026-09-03 audit named it (TODO: "ob_pci_unmap
+still leaks its ofmem claims the way map-in did before patch 60") and did not
+fix it.
+
+MEASURED 2026-09-03 on mac99 with `-device sungem` (sungem_config_cb maps BAR0
+for 0x8000 bytes to read the MAC, then ob_pci_unmap()s it), BEFORE this patch:
+
+    dev /pci/ethernet@3  10 bar-map      ffffffff   (the BAR the firmware already
+    10 bar-map                           ffffffff    mapped and "unmapped": every
+                                                     later claim on it fails)
+    dev /pci/e1000@2     10 bar-map      80080000   (CONTROL: a BAR nothing had
+    optrom-unmap  10 bar-map             80080000    claimed maps, releases, maps)
+
+The sungem's BAR was unreachable to any Forth caller for the rest of the boot,
+and nothing said so -- pci-map-in answered -1, which the caller reads as an
+address. The e1000 row is what shows the mechanism is the claim and not the
+device: an un-claimed BAR maps twice when released in between (patch 60).
+
+THE FIX IS THE SAME ONE LINE PATCH 60 USED. ofmem_release() (6.3.2.4) is unmap
++ release virt + release phys -- the inverse of what ob_pci_map() did.
+ob_pci_unmap() now calls it, and ob_pci_bus_map_out() calls ob_pci_unmap() so
+there is ONE implementation of "give it back" rather than two that could drift.
+Without CONFIG_OFMEM (x86/amd64) both were and remain no-ops: map-in there
+returns the physical address and claims nothing.
+
+dsl/optrom.fth grows `bar-map ( reg -- virt | 0 )` -- optrom-map generalised
+to any BAR by its config register -- because the probe-time mapping is the
+thing being watched; the optrom track's ppc row adds a sungem and asserts its
+BAR0 maps AFTER this patch, beside MAPY, the two-map-ins-no-release control
+that shows the claim conflict is still real when nothing releases.
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -425,9 +425,18 @@
+ 	return virt;
+ }
+ 
++/* mklab (patch 61): the inverse of ob_pci_map(), which CLAIMS phys and virt
++ * through ofmem before mapping. ofmem_unmap() alone gave back only the
++ * translation and left both claims standing, so a region a config callback had
++ * mapped at probe (sungem_config_cb, below) could never be mapped again: the
++ * next ofmem_claim on it failed and pci-map-in answered -1. The same leak patch
++ * 60 found under pci-map-out's missing half, one caller further in.
++ * ofmem_release() (6.3.2.4) is unmap + release virt + release phys. */
+ static void ob_pci_unmap(ucell virt, ucell size) {
+ #if defined(CONFIG_OFMEM)
+-	ofmem_unmap(virt, size); 
++	ofmem_release(virt, size);
++#else
++	(void)virt; (void)size;
+ #endif
+ }
+ 
+@@ -526,11 +535,7 @@
+ 	ucell size = POP();
+ 	ucell virt = POP();
+ 
+-#if defined(CONFIG_OFMEM)
+-	ofmem_release(virt, size);
+-#else
+-	(void)virt; (void)size;
+-#endif
++	ob_pci_unmap(virt, size);	/* one implementation of "give it back" (patch 61) */
+ }
+ 
+ NODE_METHODS(ob_pci_bus_node) = {

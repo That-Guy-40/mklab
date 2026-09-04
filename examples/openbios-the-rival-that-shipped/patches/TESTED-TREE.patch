@@ -5224,7 +5224,7 @@ index f6abb7b..c277f18 100644
  #define WIN_PACKET		0xA0
  #define WIN_IDENTIFY_PACKET	0xA1
 diff --git a/drivers/pci.c b/drivers/pci.c
-index f30e427..7762d63 100644
+index f30e427..15351c7 100644
 --- a/drivers/pci.c
 +++ b/drivers/pci.c
 @@ -60,13 +60,41 @@ const pci_arch_t *arch;
@@ -5289,7 +5289,27 @@ index f30e427..7762d63 100644
  
  	return 3;
  }
-@@ -454,12 +482,70 @@ ob_pci_dma_sync(int *idx)
+@@ -397,9 +425,18 @@ static ucell ob_pci_map(uint32_t ba, ucell size) {
+ 	return virt;
+ }
+ 
++/* mklab (patch 61): the inverse of ob_pci_map(), which CLAIMS phys and virt
++ * through ofmem before mapping. ofmem_unmap() alone gave back only the
++ * translation and left both claims standing, so a region a config callback had
++ * mapped at probe (sungem_config_cb, below) could never be mapped again: the
++ * next ofmem_claim on it failed and pci-map-in answered -1. The same leak patch
++ * 60 found under pci-map-out's missing half, one caller further in.
++ * ofmem_release() (6.3.2.4) is unmap + release virt + release phys. */
+ static void ob_pci_unmap(ucell virt, ucell size) {
+ #if defined(CONFIG_OFMEM)
+-	ofmem_unmap(virt, size); 
++	ofmem_release(virt, size);
++#else
++	(void)virt; (void)size;
+ #endif
+ }
+ 
+@@ -454,12 +491,66 @@ ob_pci_dma_sync(int *idx)
      call_parent_method("dma-sync");
  }
  
@@ -5337,11 +5357,7 @@ index f30e427..7762d63 100644
 +	ucell size = POP();
 +	ucell virt = POP();
 +
-+#if defined(CONFIG_OFMEM)
-+	ofmem_release(virt, size);
-+#else
-+	(void)virt; (void)size;
-+#endif
++	ob_pci_unmap(virt, size);	/* one implementation of "give it back" (patch 61) */
 +}
 +
  NODE_METHODS(ob_pci_bus_node) = {
@@ -5360,7 +5376,7 @@ index f30e427..7762d63 100644
  	{ "dma-alloc",		ob_pci_dma_alloc	},
  	{ "dma-free",		ob_pci_dma_free		},
  	{ "dma-map-in",		ob_pci_dma_map_in	},
-@@ -476,12 +562,43 @@ ob_pci_bridge_map_in(int *idx)
+@@ -476,12 +567,43 @@ ob_pci_bridge_map_in(int *idx)
  	call_parent_method("pci-map-in");
  }
  
@@ -5404,7 +5420,7 @@ index f30e427..7762d63 100644
  	{ "dma-alloc",		ob_pci_dma_alloc	},
  	{ "dma-free",		ob_pci_dma_free		},
  	{ "dma-map-in",		ob_pci_dma_map_in	},
-@@ -499,8 +616,8 @@ static void pci_set_bus_range(const pci_config_t *config)
+@@ -499,8 +621,8 @@ static void pci_set_bus_range(const pci_config_t *config)
  	phandle_t dev = find_dev(config->path);
  	u32 props[2];
  
@@ -5415,7 +5431,7 @@ index f30e427..7762d63 100644
  
  	PCI_DPRINTF("setting bus range for %s PCI device, "
  	        "package handle " FMT_ucellx " "
-@@ -854,11 +971,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
+@@ -854,11 +976,42 @@ static void pci_set_AAPL_address(const pci_config_t *config)
  			     ncells * sizeof(cell));
  }
  
@@ -5459,7 +5475,7 @@ index f30e427..7762d63 100644
  	int ncells;
  	int i;
  	uint32_t mask;
-@@ -877,9 +1025,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
+@@ -877,9 +1030,12 @@ static void pci_set_assigned_addresses(phandle_t phandle,
  				     PCI_BASE_ADDR_0 + (i * sizeof(uint32_t)),
  				     config->assigned[i] & ~mask);
  
@@ -5474,7 +5490,7 @@ index f30e427..7762d63 100644
  	if (ncells)
  		set_property(dev, "assigned-addresses", (char *)props,
  			     ncells * sizeof(props[0]));
-@@ -908,7 +1059,7 @@ static void pci_set_reg(phandle_t phandle,
+@@ -908,7 +1064,7 @@ static void pci_set_reg(phandle_t phandle,
                          pci_config_t *config, int num_bars)
  {
  	phandle_t dev = phandle;
@@ -5483,7 +5499,7 @@ index f30e427..7762d63 100644
  	int ncells;
  	int i;
  	uint32_t mask;
-@@ -938,6 +1089,9 @@ static void pci_set_reg(phandle_t phandle,
+@@ -938,6 +1094,9 @@ static void pci_set_reg(phandle_t phandle,
  		/* set size */
  		ncells += pci_encode_size(props + ncells, config->sizes[i]);
  	}
@@ -5493,7 +5509,7 @@ index f30e427..7762d63 100644
  
  	set_property(dev, "reg", (char *)props, ncells * sizeof(props[0]));
      ob_pci_reload_device_path(dev, config);
-@@ -965,7 +1119,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -965,7 +1124,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* child address */
  
@@ -5502,7 +5518,7 @@ index f30e427..7762d63 100644
  
  		/* parent address */
  
-@@ -977,7 +1131,7 @@ static void pci_set_ranges(const pci_config_t *config)
+@@ -977,7 +1136,7 @@ static void pci_set_ranges(const pci_config_t *config)
  
  		/* size */
  
@@ -5511,7 +5527,7 @@ index f30e427..7762d63 100644
    	}
  	set_property(dev, "ranges", (char *)props, ncells * sizeof(props[0]));
  }
-@@ -1096,15 +1250,15 @@ int ebus_config_cb(const pci_config_t *config)
+@@ -1096,15 +1255,15 @@ int ebus_config_cb(const pci_config_t *config)
          pci_decode_pci_addr(config->assigned[i],
                              &flags, &space_code, &mask);
  
@@ -5530,7 +5546,7 @@ index f30e427..7762d63 100644
  
          /* Store base of IO space for NVRAM */
          if (io_phys_base == 0x0 && space_code == IO_SPACE) {
-@@ -1827,6 +1981,31 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+@@ -1827,6 +1986,31 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
  
      phandle = get_cur_dev();
  
@@ -5562,7 +5578,7 @@ index f30e427..7762d63 100644
      switch (class) {
      case PCI_BASE_CLASS_BRIDGE:
          if (subclass != PCI_SUBCLASS_BRIDGE_HOST) {
-@@ -1834,6 +2013,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
+@@ -1834,6 +2018,42 @@ static phandle_t ob_configure_pci_device(const char* parent_path,
          } else {
              BIND_NODE_METHODS(phandle, ob_pci_bus_node);
          }
@@ -5605,7 +5621,7 @@ index f30e427..7762d63 100644
          break;
      }
  
-@@ -2054,7 +2269,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2054,7 +2274,8 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
                  val = (u32 *)reg;
  
                  for (i = 0; i < (len / sizeof(u32)); i += 5) {
@@ -5615,7 +5631,7 @@ index f30e427..7762d63 100644
  
                      /* Device address is in 1st 32-bit word of encoded PCI address for config space */
                      if ((addr & PCI_RANGE_TYPE_MASK) == PCI_RANGE_CONFIG) {
-@@ -2080,6 +2296,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
+@@ -2080,6 +2301,74 @@ static void ob_pci_bus_set_interrupt_map(phandle_t pcibus, phandle_t dnode,
      }
  }
  
@@ -5893,6 +5909,39 @@ index 1bed9b8..f645620 100644
  
  : rx@ ( oaddr - o )
    state @ if
+diff --git a/forth/device/package.fs b/forth/device/package.fs
+index f83ef7a..b6adbdc 100644
+--- a/forth/device/package.fs
++++ b/forth/device/package.fs
+@@ -82,7 +82,18 @@
+ ;
+ 
+ 
++\ mklab (patch 62): an ihandle of 0 is not an instance, and reading one as if
++\ it were -- `0 >in.device-node @` -- fetches whatever sits at address 0. On
++\ amd64 that is the real-mode interrupt vector table, and the "phandle" it yields
++\ (f000ff54f000ff7b) sends find-method through a general protection fault; on
++\ x86 the same read happened to hit bytes that walked to -21 by luck. Measured
++\ 2026-09-03 with `s" x" 0 $call-method` and, the way it was first met, with a
++\ card behind a PCI-PCI bridge whose bridge instance had my-parent = 0: the
++\ bridge's C method chains $call-parent (patch 59) and the firmware faulted
++\ instead of throwing. ?my-self already refuses my-self = 0 by name; these two
++\ refuse the other two zeros the same way, so a caller's `catch` gets a throw.
+ : $call-method  ( ... method-str method-len ihandle -- ??? )
++  dup 0= abort" $call-method: ihandle is 0 (no instance)."
+   dup >r >in.device-node @ find-method if
+     r> call-package
+   else
+@@ -91,7 +102,8 @@
+ ;
+ 
+ : $call-parent  ( ... method-str method-len -- ??? )
+-  my-parent $call-method
++  my-parent dup 0= abort" no parent instance."
++  $call-method
+ ;
+ 
+ 
 diff --git a/forth/device/property.fs b/forth/device/property.fs
 index 1d54e3e..6ef2eb9 100644
 --- a/forth/device/property.fs
