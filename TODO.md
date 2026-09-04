@@ -517,8 +517,10 @@ requires of any other cached fact.
       hit again), and ppc's console `dump` parsed back. **Spike 5** (`dsl/fdt-read.fth`, the
       `fdt-import` track): the reader half — a DTB `dtc` authored is ingested under `/imported`,
       re-flattened, and `dtc` decompiles the round trip **identically** on all four arches.
-      **Named candidates left in the plan, none started** (from §6, review F7, the gleanings
-      note, and the 2026-09-03 audit):
+      **Named candidates left in the plan — ALL FOUR CLOSED 2026-09-03/04** (#395 #396 #397
+      #398, plus #399 for the one constant the budget pointed at). Sources: §6, review F7, the
+      gleanings note, the 2026-09-03 audit. Two claims were retracted by their own controls on
+      the way (`elf-hash`'s "width control" mask; the plan's "`vfield:` IS `file:`"):
       - [x] **§E3's `file:` definer — DONE 2026-09-03, and the decision written down.** The plan
             had said *"`vfield:` IS the cursor-mode `file:`"* and read that as answering E3; it
             did not — E3's example (`Elf64_Shdr[e_shnum] @ e_shoff`) is the **offset-mode** form
@@ -569,6 +571,26 @@ requires of any other cached fact.
             shapes on x86/amd64/ppc and maps the sungem BAR on ppc; `dsl/optrom.fth` gains
             `bar-map ( reg -- virt | 0 )`. The audit's `pci.c:823` was the *call site*; the
             function is at `pci.c:428`.
+      **New candidates the closing surfaced, none started:**
+      - [ ] **`here!` prints `Dictionary space overflow` and CONTINUES** (`kernel/forth.c`
+            `herewrite`). The dictionary is a static array; the next `,` past the end lands in
+            whatever `.bss` follows. Measured by `dict-budget`'s OVER control on every arch: the
+            line prints, nothing refuses. The kernel's only protection is a message — a refusal
+            (`abort"` after the print) would be a real `UPSTREAM-BUG` patch; `dict-budget`'s
+            guard exists only because this does not.
+      - [ ] **no `marker`/`forget` in OpenBIOS.** Measured 2026-09-04 on unix: saving `here` and
+            `last @` into pre-existing values and writing them back reclaims the bytes exactly and
+            the words vanish (`w2: undefined word`), and new definitions compile after. Two traps
+            for a `marker` word to encode: the marks must live BELOW the restore point (a
+            `here value mark` captured `here` under the marker itself → segfault at `ffffffff` on
+            the next definition), and the device tree lives in the same dictionary, so forgetting
+            past a node creation (`fdt>dt`) leaves the tree dangling.
+      - [ ] **unix's dictionary is at 95%** with the toolkit loaded (256 KiB, 13 KiB left). The
+            same one-line constant as patch 64 (`arch/unix/unix.c` `DICTIONARY_SIZE`), if the
+            hosted target is ever meant to hold more than the toolkit.
+      - [ ] **`readelf` does not check a duplicate `PT_INTERP`** — `?ph-order` is stricter than
+            the oracle there, said so per run; a second oracle for that half (e.g. `llvm-readobj`
+            or the kernel's `load_elf_binary`) would close the asymmetry.
       History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
