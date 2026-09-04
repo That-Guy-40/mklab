@@ -1,0 +1,26 @@
+/dts-v1/;
+
+/ {
+	compatible = "mklab,fdt-import";
+	#address-cells = <1>;
+	#size-cells = <1>;
+	model = "authored by dtc on the host, ingested by OpenBIOS";
+	answer = <0x2a>;
+	bytes = [de ad be ef];
+	flag;
+	list = "one", "two";
+
+	first {
+		label = "child one";
+		depth = <1>;
+
+		nested {
+			depth = <2>;
+			cells = <1 2 3 4>;
+		};
+	};
+
+	second {
+		label = "child two";
+	};
+};

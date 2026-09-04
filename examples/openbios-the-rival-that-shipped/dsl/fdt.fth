@@ -50,6 +50,7 @@ variable fd-buf  variable fd-cur   \ the struct cursor
 variable fd-str  variable fd-str0  \ the strings cursor and its base
 variable fd-nodes  variable fd-props  variable fd-over
 variable fd-soff   variable fd-ssz    \ the header's two derived offsets
+variable fd-root                      \ the node the flatten starts from
 
 \ ── stores through the struct cursor ────────────────────────────────────────
 : f32! ( u -- )        fd-cur @ l!-be  4 fd-cur +! ;
@@ -71,16 +72,18 @@ variable fd-soff   variable fd-ssz    \ the header's two derived offsets
   0 fd-str @ c!  1 fd-str +!  r> ;
 
 \ ── one property ────────────────────────────────────────────────────────────
-\ THE ROOT'S `name` IS THE ONE PROPERTY WITH NO FDT HOME. 1275 gives every node
-\ a `name` and OpenBIOS's root says "OpenBiosTeam,OpenBIOS"; FDT derives node
-\ names from BEGIN_NODE, requires the root's to be "", and dtc REFUSES a `name`
-\ property that disagrees with the node's base name (name_properties). Every
-\ other node's `name` equals its base name by construction, so only the root's
-\ is skipped -- and it is skipped by name, not silently.
-: root-name? ( ph name$ -- ph name$ flag )
-  2dup " name" $= if 2 pick parent 0= else false then ;
+\ `name` IS THE ONE PROPERTY WITH NO FDT HOME. 1275 gives every node a `name`;
+\ FDT derives node names from BEGIN_NODE and DEPRECATES the property (dtc
+\ refuses one that disagrees with the base name, name_properties -- which is
+\ how the root's "OpenBiosTeam,OpenBIOS" was found). In OpenBIOS the `name`
+\ property IS the base name by construction, so it carries nothing BEGIN_NODE
+\ does not, and it is skipped on every node -- by name, not silently. (Spike 4
+\ skipped only the root's; Spike 5's round trip through fdt>dt is what made the
+\ rule general: a materialized node gets a `name` from device-name, and a blob
+\ dtc authored has none.)
+: name-prop? ( ph name$ -- ph name$ flag )  2dup " name" $= ;
 : fprop ( ph name$ -- )
-  root-name? if 2drop drop exit then
+  name-prop? if 2drop drop exit then
   2dup 2>r  rot get-package-property if 2r> 2drop exit then   ( adr len )
   dup froom? 0= if -1 fd-over !  2r> 2drop 2drop exit then     \ refuse first
   FDT_PROP f32!  dup f32!  2r> fname f32!  fbytes fpad
@@ -92,7 +95,7 @@ variable fd-soff   variable fd-ssz    \ the header's two derived offsets
   40 froom? 0= if -1 fd-over ! drop exit then      \ token + a name + END_NODE
   1 fd-nodes +!
   FDT_BEGIN_NODE f32!
-  dup parent 0= if 0 0 else dup pnodename then      \ the root's name is ""
+  dup fd-root @ = if 0 0 else dup pnodename then    \ the flatten root's name is ""
   fstr0 fpad                                        ( ph )
   >r  0 0                                           ( prev$ ) ( r: ph )
   begin r@ next-property while  2dup r@ -rot fprop  repeat
@@ -100,13 +103,14 @@ variable fd-soff   variable fd-ssz    \ the header's two derived offsets
   begin dup while  dup recurse  peer  repeat  drop
   FDT_END_NODE f32! ;
 
-\ ── the whole thing: ( buf -- len ), 0 on refusal ───────────────────────────
-: dt>fdt ( buf -- len )
+\ ── the whole thing, from any node: ( ph buf -- len ), 0 on refusal ────────
+: dt>fdt-from ( ph buf -- len )
+  swap fd-root !
   dup fd-buf !  0 fd-nodes ! 0 fd-props ! 0 fd-over !
   dup /fdt-hdr + /fdt-rsv 0 fill                    \ rsvmap: {0,0}
   dup /fdt-hdr + /fdt-rsv + fd-cur !
   dup fdt-struct-max + dup fd-str ! fd-str0 !
-  " /" find-package 0= if drop 0 exit then  fnode
+  fd-root @ fnode
   fd-over @ if ." fdt| OVERFLOW, refused" cr drop 0 exit then
   FDT_END f32!
   ( buf )
@@ -123,6 +127,9 @@ variable fd-soff   variable fd-ssz    \ the header's two derived offsets
   fd-ssz @ f32!                                     \ size_dt_strings
   fd-soff @ /fdt-hdr /fdt-rsv + - f32!              \ size_dt_struct (END token included)
   drop  fd-soff @ fd-ssz @ + ;
+\ …and from `/`: the whole live tree
+: dt>fdt ( buf -- len )
+  " /" find-package 0= if drop 0 exit then  swap dt>fdt-from ;
 
 \ what the firmware says it wrote, for the track to grade against dtc
 : .fdt-counts ( len -- )

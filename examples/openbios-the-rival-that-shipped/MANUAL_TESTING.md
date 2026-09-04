@@ -531,11 +531,11 @@ plus the hosted one. Four doors, one grader:
 
 ```console
 $ ./smoke-openbios.sh fdt
-  - unix: dtc parses it; fdtdump: 21 nodes, 63 properties == the firmware's NODES/PROPS; /chosen stdin = 536890280 (2325 bytes)
+  - unix: dtc parses it; fdtdump: 21 nodes, 43 properties == the firmware's NODES/PROPS; /chosen stdin = 536890280 (1777 bytes)
   - unix controls: the LE-magic blob is refused ('incorrect magic'); a 0x100-byte struct bound makes dt>fdt refuse with OVERFLOW and answer 0
-  - x86: dtc parses it; fdtdump: 30 nodes, 175 properties == the firmware's NODES/PROPS; /memory reg = 0 654336 1048576 535691264 (5952 bytes)
-  - amd64: dtc parses it; fdtdump: 29 nodes, 171 properties == …; /memory reg = 0 0 0 654336 0 1048576 0 535691264 (5892 bytes)
-  - ppc: dtc parses it; fdtdump: 46 nodes, 280 properties == …; /memory reg = 0 134217728 (10314 bytes)
+  - x86: dtc parses it; fdtdump: 30 nodes, 146 properties == the firmware's NODES/PROPS; /memory reg = 0 654336 1048576 535691264 (5167 bytes)
+  - amd64: dtc parses it; fdtdump: 29 nodes, 143 properties == …; /memory reg = 0 0 0 654336 0 1048576 0 535691264 (5124 bytes)
+  - ppc: dtc parses it; fdtdump: 46 nodes, 235 properties == …; /memory reg = 0 134217728 (9089 bytes)
   - four doors, four different trees …
 PASS: B.3 Spike 4 (FDT): the firmware's LIVE device tree, flattened by dsl/fdt.fth …
 ```
@@ -551,7 +551,7 @@ that came back as `rep: undefined word` with a cascade behind it):
 ```console
 $ { cat dsl/struct.fth dsl/fdt.fth; printf '/fdt-buf alloc-mem value fb\nfb dt>fdt dup .fdt-counts\nfb swap s" out.dtb" write-file . cr\nbye\n'; } \
     | ~/openbios-lab/openbios/obj-amd64/openbios-unix ~/openbios-lab/openbios/obj-amd64/openbios-unix.dict | grep -a FDTL
-FDTL=915 NODES=15 PROPS=3f
+FDTL=6f1 NODES=15 PROPS=2b
 $ dtc -I dtb -O dts out.dtb | head -12
 /dts-v1/;
 
@@ -567,10 +567,31 @@ $ dtc -I dtb -O dts out.dtb | head -12
 		model = "OpenFirmware 3";
 ```
 
-The one property the writer skips, by name, is the **root's** `name`:
-OpenBIOS says `OpenBiosTeam,OpenBIOS`, FDT's root base name must be `""`, and
-`dtc` refuses the disagreement (`name_properties`). That refusal is how it was
-found.
+The one property the writer skips, by name, is `name` — on every node since
+Spike 5. It was found on the **root**: OpenBIOS says `OpenBiosTeam,OpenBIOS`,
+FDT's root base name must be `""`, and `dtc` refuses the disagreement
+(`name_properties`); the round trip then made the rule general, because FDT
+derives names from `BEGIN_NODE` and deprecates the property.
+
+### The `fdt-import` track — the reader half: dtc's blob ingested, round-tripped (B.3 Spike 5)
+
+```console
+$ ./smoke-openbios.sh fdt-import
+  - subject (a): …/fixtures/fdt/import.dts → dtc → 499-byte blob, 4 nodes / 13 properties per fdtdump
+  - unix: dtc's blob ingested (4 nodes, 13 props as fdtdump counts), re-flattened, and dtc decompiles the round trip IDENTICALLY; the firmware's own 25-node/58-prop blob reads back with the same counts
+  - unix controls: an LE magic → BAD-MAGIC, 0; a token of 7 → BAD-TOKEN, 0 — the reader refuses by name, it does not guess
+  - x86: … IDENTICALLY …
+  - amd64: … IDENTICALLY …
+  - ppc: … IDENTICALLY …
+PASS: B.3 Spike 5 (FDT, the reader half) …
+```
+
+**Why the reference is decompiled from the blob, not from the `.dts`.** The
+first comparison diffed against `dtc -I dts -O dts import.dts` and showed two
+lines: `bytes = [de ad be ef]` vs `bytes = <0xdeadbeef>`, `list = "one", "two"`
+vs `"one\0two"`. Same bytes — from a source file dtc knows the author's form,
+from a blob it guesses. Deriving both sides from binary is what makes
+*identical* a statement about the tree.
 
 Getting bytes out of the emulated arches: **QMP** `pmemsave`, not the HMP
 monitor's — HMP reads its *filename* as an expression (`invalid char 't' in
