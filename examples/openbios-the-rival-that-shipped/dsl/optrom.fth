@@ -59,16 +59,17 @@ constant /pcir
 \ optrom-cells keeps the WHOLE entry, because the parent bus's `pci-map-in`
 \ wants all three address cells; optrom-find is the phys.lo-only form.
 variable op-hi  variable op-mid  variable op-lo  variable op-size
-: optrom-cells ( -- -1 | 0 )
-  " assigned-addresses" active-package get-package-property if 0 exit then
-  begin dup 0> while                     ( adr len )
+: (bar-cells) ( reg -- -1 | 0 )        \ the entry for ONE config register
+  " assigned-addresses" active-package get-package-property if drop 0 exit then
+  begin dup 0> while                     ( reg adr len )
     decode-int op-hi !                   \ phys.hi
     decode-int op-mid !  decode-int op-lo !
     decode-int drop  decode-int op-size !         \ size.hi (0), size.lo
-    op-hi @ ff and  dup 30 =  swap 38 =  or if
-      2drop -1 exit
+    op-hi @ ff and  3 pick = if
+      2drop drop -1 exit
     then
-  repeat 2drop 0 ;
+  repeat 2drop drop 0 ;
+: optrom-cells ( -- -1 | 0 )  30 (bar-cells) ?dup if exit then  38 (bar-cells) ;
 : optrom-find ( -- phys size -1 | 0 )
   optrom-cells 0= if 0 exit then  op-lo @ op-size @ -1 ;
 
@@ -167,12 +168,20 @@ variable op-n  variable op-made  variable op-self
 \ with optrom-map is released with optrom-unmap, and the ppc row of the track
 \ measures both directions (a map after a release works; two maps with no
 \ release in between leave the second at ffffffff).
-: optrom-map ( -- virt | 0 )
-  optrom-cells 0= if 0 exit then
+\ (map-cells) maps whatever entry op-hi/mid/lo/size currently hold, through the
+\ parent's pci-map-in, inside the instance chain. optrom-map is that for the ROM;
+\ bar-map ( reg -- virt | 0 ) is that for ANY BAR by its config register (10, 14,
+\ ...). bar-map exists because of patch 61: sungem_config_cb on mac99 maps BAR0 at
+\ probe and ob_pci_unmap() gave back only the translation, not the claims, so a
+\ later map-in of that BAR failed its claim and answered -1. `10 bar-map` on the
+\ sungem node is how the leak was measured and how its fix is watched.
+: (map-cells) ( -- virt | 0 )
   optrom-instance-in 0= if 0 exit then
   op-lo @ op-mid @ op-hi @ op-size @
   " pci-map-in" ['] $call-parent catch if 2drop 2drop 2drop 0 then
   optrom-instance-out ;
+: optrom-map ( -- virt | 0 )  optrom-cells 0= if 0 exit then  (map-cells) ;
+: bar-map    ( reg -- virt | 0 )  (bar-cells) 0= if 0 exit then  (map-cells) ;
 
 \ optrom-unmap ( virt -- )  give a mapping back through the parent's pci-map-out
 \ (the size is the one optrom-cells found -- the same call must have preceded).

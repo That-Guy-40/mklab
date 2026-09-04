@@ -4623,6 +4623,27 @@ PY
       note "subject built; romheaders not present, host-side validation skipped (the firmware and QEMU's monitor grade it below)"
     fi
     cp "$HERE/dsl/struct.fth" "$OWD/stage/STRUCT.FTH"; cp "$HERE/dsl/optrom.fth" "$OWD/stage/OPTROM.FTH"
+    # NOINST.FTH — the two zero-ihandle probes (patch 62). Before it, `s" x" 0
+    # $call-method` read address 0 as an instance record: on amd64 that is the
+    # real-mode IVT and find-method took a general protection fault
+    # (rax=f000ff54f000ff7b); on x86 the same read walked to -21 by luck. Each
+    # probe prints its catch result and clears its own stack so the prompt comes
+    # back as `0 > ` whatever the arguments left behind.
+    # IT IS LOADED AFTER A `device-end`, because `$create` follows the ACTIVE
+    # PACKAGE: the `dev …/e1000@1` typed just before would have left that card as
+    # the active package, the evaluate would have compiled ni-* into ITS wordlist,
+    # and the next `dev` would make them "undefined word." — which is exactly how
+    # the first run of this row failed, and a trap this lab has met before.
+    cat > "$OWD/stage/NOINST.FTH" <<'FTH'
+: ni-0sp ( ... -- )  depth 0 ?do drop loop ;
+: ni-zero ( -- )  ." NI:" s" x" 0 ['] $call-method catch ." NIRC=" . cr ni-0sp ;
+\ a ONE-level instance for the active package (a bridge): its my-parent is 0,
+\ and the bridge's C method chains $call-parent into it (patch 59).
+: ni-chain ( -- )
+  0 to my-self  active-package create-instance to my-self  my-self >r
+  ." NP:" 0 s" config-l@" my-self ['] $call-method catch ." NPRC=" . cr
+  r> dup if destroy-instance else drop then  0 to my-self  ni-0sp ;
+FTH
     genisoimage -quiet -o "$OWD/dsl.iso" -V DSL -r -J "$OWD/stage" 2>/dev/null || fail "optrom: genisoimage failed"
     OSUBJ64="$(od -An -tx1 -N64 "$OWD/fcode.rom" | tr -d ' \n')"   # od, not xxd: coreutils only
     _omon() {  # _omon <monitor-sock> <hmp command...> -> the monitor's raw reply
@@ -4673,6 +4694,10 @@ PY
         --send "dev $OP/e1000@3 .probe-addr\r" --expect "0 > " \
         --send "dev $OP/e1000@7 .probe-addr optrom-run .cfg-id\r" --expect "0 > " \
         --send "dev $OP/pci1b36,1@8/e1000@1 .probe-addr optrom-run .cfg-id\r" --expect "0 > " \
+        --send 'device-end\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\NOINST.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send "dev $OP/pci1b36,1@8 ni-chain\r" --expect "0 > " \
+        --send 'ni-zero\r' --expect "0 > " \
         --send "dev $OP ls\r" --expect "0 > "
       ORC=$?
       OG="$(tr -d '\r' < "$OLOG" 2>/dev/null)"
@@ -4769,6 +4794,20 @@ PY
       grep -qE '^  Bus  1, device   1,' <<<"$OPCI" \
         || fail "optrom on $A: QEMU reports no bus 1 device 1 — the bridged card is not where the firmware says it read it"
       note "$A: the same card BEHIND a PCI-PCI bridge (bus 1, device 1 per QEMU; probe-addr $OBPA) reads its own $OBCID through the bridge — config space chained to the parent bus (patch 59)"
+
+      # ── patch 62: an ihandle of 0 THROWS; it does not fault. Measured before the
+      # patch on this exact probe: amd64 printed "Unexpected Exception: general
+      # protection fault @ 08:0000000000102d93" for BOTH shapes, x86 answered -21
+      # from whatever its address 0 held. -2 is abort"'s throw code, and the message
+      # is asserted by name so a different refusal cannot stand in for this one.
+      S13="$(osec "pci1b36,1@8 ni-chain")"; S14="$(osec "ni-zero")"
+      grep -qF 'NIRC=-2' <<<"$S14" && grep -qF '$call-method: ihandle is 0' <<<"$S14" \
+        || fail "optrom on $A: \`s\" x\" 0 \$call-method\` did not throw by name (want NIRC=-2 and the ihandle-is-0 message): $(grep -oE 'NI:.*' <<<"$S14" | head -1) — before patch 62 this read address 0 as an instance and GPF'd on amd64"
+      grep -qF 'NPRC=-2' <<<"$S13" && grep -qF 'no parent instance.' <<<"$S13" \
+        || fail "optrom on $A: a bridge method called from a ONE-level instance (my-parent 0) did not make \$call-parent throw 'no parent instance.' (want NPRC=-2): $(grep -oE 'NP:.*' <<<"$S13" | head -1) — the shape the 2026-09-03 audit met as a general protection fault"
+      grep -qaE 'Unexpected Exception|general protection|invalid opcode' <<<"$OG" \
+        && fail "optrom on $A: the firmware took a CPU exception somewhere in this run — $(grep -aoE 'Unexpected Exception.*' <<<"$OG" | head -1) — see $OLOG"
+      note "$A: an ihandle of 0 is refused by name (patch 62): \$call-method throws '\$call-method: ihandle is 0', a bridge chaining \$call-parent from a parentless instance throws 'no parent instance.' — both -2 under catch, no exception line in the log"
     done
 
     # ── ROW F: the BIG-ENDIAN arch does all of it too ────────────────────────────
@@ -4790,8 +4829,13 @@ PY
       --send 'optrom-run-mapped .fcode-marker\r' --expect "0 > " \
       --send 'optrom-map ." MAPX=" u. cr optrom-map ." MAPY=" u. cr\r' --expect "0 > " \
       --send 'dev /pci/e1000@3 optrom-run .cfg-id\r' --expect "0 > " \
+      --send 'dev /pci/ethernet@4 10 bar-map ." SGM=" dup u. cr optrom-unmap\r' --expect "0 > " \
+      --send 'device-end\r' --expect "0 > " \
+      --send 'load cd:\\NOINST.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'ni-zero\r' --expect "0 > " \
       -- qemu-system-ppc -bios "$OPPCELF" -nographic -vga none -cdrom "$OWD/dsl.iso" \
-         -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/cfgcard.rom"
+         -device "e1000,romfile=$OWD/fcode.rom" -device "e1000,romfile=$OWD/cfgcard.rom" \
+         -device sungem
     OPRC=$?
     OPG="$(tr -d '\r' < "$OPSER" 2>/dev/null)"
     [[ $OPRC -eq 0 ]] || fail "optrom on ppc: the prompt driver did not complete (rc=$OPRC) — see $OPSER"
@@ -4821,9 +4865,24 @@ PY
     OPCID="$(grep -oE 'CFGID=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
     [[ "$OPCID" == 100e8086 ]] \
       || fail "optrom on ppc: the config-space card computed cfg-id=${OPCID:-<none>}, not its own 100e8086 — config-l@ is not reachable as a bus method here"
+    # ── patch 61: a BAR the FIRMWARE mapped at probe can be mapped again ──────
+    # sungem_config_cb maps BAR0 (0x8000 bytes) to read the MAC and gives it back
+    # with ob_pci_unmap(), which released only the translation: both ofmem claims
+    # stayed, and every later pci-map-in of that BAR failed its claim. Measured
+    # before the patch: SGM=ffffffff, twice. MAPY above is the control that the
+    # claim conflict is still real when nothing releases — so this row and that
+    # one together say "released", not "stopped claiming".
+    OSGM="$(grep -oE 'SGM=[0-9a-f]+' <<<"$OPG" | head -1 | cut -d= -f2)"
+    [[ -n "$OSGM" && "$OSGM" != 0 && "$OSGM" != ffffffff ]] \
+      || fail "optrom on ppc: the sungem's BAR0 — mapped by sungem_config_cb at probe and given back with ob_pci_unmap — answered ${OSGM:-<absent>} to a later pci-map-in (10 bar-map). Before patch 61 that was ffffffff on every call: ob_pci_unmap released the translation and kept both ofmem claims"
+    grep -qF 'NIRC=-2' <<<"$OPG" && grep -qF '$call-method: ihandle is 0' <<<"$OPG" \
+      || fail "optrom on ppc: \`s\" x\" 0 \$call-method\` did not throw by name (patch 62): $(grep -oE 'NI:.*' <<<"$OPG" | head -1)"
+    grep -qaE 'Unexpected Exception|general protection|Exception vector' <<<"$OPG" \
+      && fail "optrom on ppc: the firmware took an exception in this run — $(grep -aoE 'Exception.*' <<<"$OPG" | head -1) — see $OPSER"
+    note "ppc: the sungem's BAR0, mapped and 'unmapped' by the firmware's own probe, maps again at $OSGM (patch 61: ob_pci_unmap now releases the claims) — while MAPY=$OMAPY says two map-ins with no release still conflict; and \$call-method with ihandle 0 throws by name here too"
     note "ppc (BIG-endian): the same little-endian ROM header parses at the live BAR with no mapping call (probe-addr $OPPA, which ppc already set — the defect patch 57 fixes is x86/amd64-only), the card's FCode byte-loads from it (MARK), and the config-space card reads its own 100e8086"
     note "ppc: pci-map-in answered $OMAP (the address the property published — mac99 maps PCI memory 1:1); RELEASED with pci-map-out (patch 60), the same region mapped again and its FCode byte-loaded from the mapped address; two map-ins with no release in between: $OMAPX then $OMAPY — the claim conflict that a missing map-out had been hiding under 'call-once-and-keep'"
-    pass "B.3 Spike 3 COMPLETE — a PCI option ROM read from REAL device memory and its FCode run from there, on x86, amd64 AND ppc. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. THE BIG-ENDIAN ROW: ppc parses the same little-endian header at its own live BAR with NO mapping call, byte-loads the card from it, and reads its own id too — the TODO's \"ppc needs pci-map-in\" gap was wrong, and what the first attempt actually lacked was an INSTANCE. And map-in is now HALF OF A PAIR: pci-map-out (patch 60) releases a mapping, a released region maps again and byte-loads from the mapped address, while two map-ins with no release between them leave the second at ffffffff — the leak the first version of this track had called call-once-and-keep. BEHIND A PCI-PCI BRIDGE (patch 59): the config-space card's parent is the bridge node, which patch 56 had left without the config methods; it now chains them to its parent the way it chains pci-map-in, and the bridged card reads its own 100e8086 on x86 and amd64. AND THE CARD THAT ASKS WHO IT IS: a second FCode driver doing my-space + a \" config-l@\" call to the parent bus — the 1275 PCI binding's own route, since config-l@ has no FCode number at all — computes cfg-id=100e8086 about ITSELF on all three arches. That needed patch 56 (the config words as PCI BUS-NODE methods, not just globals: a card cannot see a global word) and patch 57 (every probed node's probe-addr, which only ppc had: on x86/amd64 my-space answered 0, so a card read the HOST BRIDGE's 8086:1237 while every mechanism looked like it worked)"
+    pass "B.3 Spike 3 COMPLETE — a PCI option ROM read from REAL device memory and its FCode run from there, on x86, amd64 AND ppc. Patch 55 publishes the expansion ROM base register in reg/assigned-addresses (the 1275 PCI binding's entry the allocator assigned and enabled but never announced) and binds config-{b,w,l}@/!; dsl/optrom.fth finds the ROM from the property at the address QEMU's own info pci reports for BAR6, reads the same address (enable bit set) and the vendor/device from config space, parses the PCI ROM header and PCIR at the live BAR through the device-register backend — and QEMU's xp of those physical bytes equals the ROM file on the host. byte-load straight out of the ROM makes the card's own FCode rename the node to fcode-card and stamp fcode-marker=FCODE-FROM-CARD-RAN: the OFW lab's success signature, reproduced on the rival firmware from the same artifact. Controls differ from the subject by ONE byte and are refused by name (code type 0: NOT-FCODE; signature 55ab: BAD-SIG); a ROM-less device is none inside and has no BAR6 outside. config-l! clears the enable bit and the header vanishes at the same address, then returns. THE BIG-ENDIAN ROW: ppc parses the same little-endian header at its own live BAR with NO mapping call, byte-loads the card from it, and reads its own id too — the TODO's \"ppc needs pci-map-in\" gap was wrong, and what the first attempt actually lacked was an INSTANCE. And map-in is now HALF OF A PAIR: pci-map-out (patch 60) releases a mapping, a released region maps again and byte-loads from the mapped address, while two map-ins with no release between them leave the second at ffffffff — the leak the first version of this track had called call-once-and-keep. AND THE OTHER CALLER OF THE SAME LEAK (patch 61): sungem_config_cb maps BAR0 at probe and ob_pci_unmap gave back only the translation, so the sungem's BAR answered ffffffff to every later map-in — it maps again now, beside MAPY, the control that shows the claim conflict is still real when nothing releases. AN IHANDLE OF 0 THROWS (patch 62): \$call-method read address 0 as an instance — the real-mode IVT on amd64, a general protection fault — and now refuses by name, as does \$call-parent from a parentless instance, the shape the audit met behind the bridge. BEHIND A PCI-PCI BRIDGE (patch 59): the config-space card's parent is the bridge node, which patch 56 had left without the config methods; it now chains them to its parent the way it chains pci-map-in, and the bridged card reads its own 100e8086 on x86 and amd64. AND THE CARD THAT ASKS WHO IT IS: a second FCode driver doing my-space + a \" config-l@\" call to the parent bus — the 1275 PCI binding's own route, since config-l@ has no FCode number at all — computes cfg-id=100e8086 about ITSELF on all three arches. That needed patch 56 (the config words as PCI BUS-NODE methods, not just globals: a card cannot see a global word) and patch 57 (every probed node's probe-addr, which only ppc had: on x86/amd64 my-space answered 0, so a card read the HOST BRIDGE's 8086:1237 while every mechanism looked like it worked)"
     ;;
   region-diff)
     # B.3 Spike 3's OTHER half, and the last unmet line of plan §9: "a region

@@ -648,6 +648,21 @@ named gaps. Neither survived being measured.
   `optrom-unmap` calls it, and the ppc row now measures both directions — a
   released region maps again and byte-loads from the mapped address; two map-ins
   with no release between them leave the second at `ffffffff`.)*
+- **The two the audit named and left — closed 2026-09-03, patches 61 and 62,
+  each measured before and after.** `ob_pci_unmap()` was patch 60's leak one
+  caller in: the config callbacks that map a BAR at *probe* gave it back with
+  `ofmem_unmap()`, translation returned, both claims kept — so on mac99 with
+  `-device sungem` the sungem's BAR0 answered `ffffffff` to every later
+  `pci-map-in` (an un-claimed e1000 BAR mapped, released and mapped again as the
+  control). It is `ofmem_release()` now and `pci-map-out` calls it; `dsl/optrom.fth`
+  gains `bar-map ( reg -- virt | 0 )` and the ppc row maps the sungem after boot
+  beside `MAPY`, which still says two unreleased map-ins conflict. And the GPF was
+  not really about parents: `$call-method` with **ihandle 0** read address 0 as an
+  instance record — on amd64 the real-mode IVT (`rax=f000ff54f000ff7b`), a
+  general protection fault at `08:102d93`; on x86 the same read happened to walk
+  to `-21`. Two `abort"`s in the shape `?my-self` already had, and every arch now
+  throws `-2` under `catch` for a bare `0 $call-method` *and* for a bridge chaining
+  `$call-parent` from a one-level instance; the `optrom` track types both.
 - **And patch 56 stopped one bus level short — found by the same audit, patch
   59.** A card behind a PCI-PCI bridge has the *bridge* node as its parent, and
   `ob_pci_bridge_node` had none of the config methods: measured on amd64 with
