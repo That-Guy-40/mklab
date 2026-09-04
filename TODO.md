@@ -530,8 +530,17 @@ requires of any other cached fact.
             `elf.fth`/`elf32.fth` declare their four tables through it, and `struct-array` reads
             base/count/element through the table against the host and watches index == count
             refused with the word after it never running.
-      - [ ] **the dictionary budget** (§6) — explicitly "unmeasured, and no claim is made"; the
-            first task of any spike wanting the DSL compiled into the firmware.
+      - [x] **the dictionary budget — MEASURED 2026-09-04** (patch 63 `dict-limit`/`dict-used`,
+            the two cells `here!` compares; `dict-budget` track, all four arches). x86 1 MiB: fits
+            with 85% left; ppc 384 KiB: fits, 55% left; unix 256 KiB: fits with **5%** left;
+            **amd64 256 KiB: does NOT fit** — 205 KiB spent before the prompt (33 KiB of it
+            compiled at init, 3× unix's), 9 of 13 files in, `eventlog.fth` the first refused.
+            `arch/amd64/openbios.c` still has the 256 KiB `DICTIONARY_SIZE` x86 outgrew to 1 MiB;
+            one constant would change the answer — left for a spike that wants it, since this one's
+            task was to measure. Controls per arch: allot 10 past the room → the kernel's overflow
+            line naming the SAME limit `dict-limit` answers; 10 short → silent; and that line is the
+            kernel's *only* protection — `here!` prints and continues — so the track guards every
+            evaluate at 1.5× source size and refuses by name rather than compiling past the end.
       - [x] **`elf_hash` and the phdr ordering check — DONE 2026-09-03, `elf-gate` track, all four
             arches.** `?phdrs64`/`?phdrs32` share `?ph-order`: `PT_PHDR`/`PT_INTERP` at most once
             and before every `PT_LOAD`, refused by name. Three fixtures authored at run time

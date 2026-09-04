@@ -60,6 +60,7 @@ tracks=(
     test-smoke-fdt.sh
     test-smoke-fdt-import.sh
     test-smoke-elf-gate.sh
+    test-smoke-dict-budget.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh
