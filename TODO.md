@@ -517,6 +517,19 @@ requires of any other cached fact.
       hit again), and ppc's console `dump` parsed back. **Spike 5** (`dsl/fdt-read.fth`, the
       `fdt-import` track): the reader half — a DTB `dtc` authored is ingested under `/imported`,
       re-flattened, and `dtc` decompiles the round trip **identically** on all four arches.
+      **Named candidates left in the plan, none started** (from §6, review F7, the gleanings
+      note, and the 2026-09-03 audit):
+      - [ ] **§E3's `file:` definer** — the declarative form of `vfield:` ("maybe twenty lines…
+            worth having the moment a second table is added"). Three tables exist now (CBFS,
+            event log, FDT); the review said to decide whether `vfield:` *is* it or sits beside
+            it, and that decision was never written down.
+      - [ ] **the dictionary budget** (§6) — explicitly "unmeasured, and no claim is made"; the
+            first task of any spike wanting the DSL compiled into the firmware.
+      - [ ] **`elf_hash`** (~10 pure lines, a fourth width×byte-order control like SHA-256) and
+            the **phdr ordering check** for `?phdrs64` — both from `dsl/POKE-ELF-GLEANINGS.md`.
+      - [ ] **two things the audit named but did not fix:** `$call-parent` from a parentless
+            instance **GPFs rather than throwing** (patch 59), and `ob_pci_unmap` at `pci.c:823`
+            still leaks its ofmem claims the way `map-in` did before patch 60.
       History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
@@ -751,6 +764,11 @@ requires of any other cached fact.
       (III) it reads a PCI option ROM at the card's live BAR, byte-loads the card's FCode from
       there, and asks a second card who it is through config space; (IV) it computes SHA-256 in
       Forth, authors a TCG event log in RAM and replays PCR0 — graded against python's hashlib.
+      **Acts V and VI (2026-09-03):** (V) it flattens the live tree the earlier acts just changed
+      into a DTB, QMP pulls it out, and `dtc`/`fdtget` read Act III's `fcode-card@3` and
+      `cfg-id=100e8086` back out of it; (VI) a tree `dtc` authored arrives over the CD, is
+      materialized into the live tree, re-flattened, and `dtc` decompiles the round trip
+      identically. Six acts, 60 s.
     - **The payload-substitution matrix** ([plan §12](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md#12-the-payload-substitution-matrix--where-spikes-23-go-live-and-the-cell-thats-missing)).
       The coreboot/OpenBIOS/Linux chains are a matrix with ONE instrument (this toolkit)
       pointed at all of it: dissect the CBFS to see which payload a ROM carries, replay

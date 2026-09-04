@@ -637,7 +637,7 @@ point (POC-4). Needs `genisoimage` + a kernel/initrd pair (defaults:
 
 [`showcase-preboot-toolkit.sh`](showcase-preboot-toolkit.sh), documented in
 [SHOWCASE-PREBOOT-TOOLKIT.md](SHOWCASE-PREBOOT-TOOLKIT.md). Where the showcase
-above ends in an OS, this one never leaves the firmware: five acts at the `0 >`
+above ends in an OS, this one never leaves the firmware: six acts at the `0 >`
 prompt of the amd64 payload booted from a coreboot ROM, with two FCode
 option-ROM cards on the bus and every `dsl/` reader delivered over a CD.
 
@@ -676,13 +676,21 @@ $ ./showcase-preboot-toolkit.sh
   - …and fcode-card@3, the node Act III's FCode renamed, is a node in the blob
      THIS IS THE HANDOFF FORMAT: what a kernel would be given.
 
+══ ACT VI — the firmware takes a world in: dtc's tree, ingested and round-tripped ══
+     host:  dtc -I dts -O dtb fixtures/fdt/import.dts → IMPORT.DTB, on the CD (4 nodes, 13 properties)
+  - WALK=-1 RNODES=4 RPROPS=d — the reader parses dtc's blob and counts what fdtdump counts
+  - MADE=-1 — root properties onto /imported, every child a new-device, every property a property
+  - IDENTICAL — 517 bytes back out, and dtc decompiles both blobs to the same 26-line tree
+  - "authored by dtc on the host, ingested by OpenBIOS" — a string dtc wrote on the host, read back from a blob this firmware built
+     IN, OUT, AND THE COMPILER CANNOT TELL …
+
 PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
 ```
 
 **It is graded, not narrated.** Every act asserts its outcome and the run exits
 1 if one does not happen — verified 2026-09-03 by making `lb-walk` a no-op,
 which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
-≈ 45 s under KVM (measured 2026-09-03: 44.6 s wall, one boot, five acts).
+≈ 60 s under KVM (measured 2026-09-03: 60.3 s wall, one boot, six acts).
 
 ## 5. The firmware as a Unix process (no QEMU)
 
