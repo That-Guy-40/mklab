@@ -1,9 +1,9 @@
 # Showcase — the preboot structure toolkit, in one boot
 
-`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~40 s on KVM (measured, not guessed: 39 s wall).
+`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~45 s on KVM (measured, not guessed: 44.6 s wall with five acts).
 
 Every B.3 smoke track proves one reader against one foreign oracle. This is the
-other view: **one machine, one boot, four acts**, in the order a real preboot
+other view: **one machine, one boot, five acts**, in the order a real preboot
 investigation would take them. It is a demo *and* a test — every act is graded,
 and the run fails if any of them does not happen.
 
@@ -17,7 +17,8 @@ The point of putting them together is what the last line of each act says:
 ./build-coreboot-openbios.sh amd64
 ```
 
-plus `qemu-system-x86_64`, `genisoimage`, `python3`, and `toke` — which the
+plus `qemu-system-x86_64`, `genisoimage`, `python3`, `device-tree-compiler`
+(`dtc`, `fdtdump`, `fdtget` — Act V's reader), and `toke` — which the
 script builds on demand from the pinned `fcode-utils` clone `build-openbios.sh`
 already made. Anything missing is a **SKIP with the reason**, never a quiet pass.
 
@@ -35,11 +36,12 @@ qemu-system-x86_64 -M pc -m 512 -bios coreboot.rom -nic none \
 
 - the **firmware** is the amd64 OpenBIOS payload *inside* that coreboot ROM;
 - the **readers** (`struct.fth cbfs.fth region.fth lbregion.fth optrom.fth
-  sha256.fth eventlog.fth`) arrive over a **CD** — nothing is compiled into the
+  sha256.fth eventlog.fth fdt.fth`) arrive over a **CD** — nothing is compiled into the
   firmware for the occasion;
 - the two **cards** carry real PCI expansion ROMs built by `toke` from
   [`fixtures/optrom/`](fixtures/optrom/README.md);
-- QEMU's **monitor** is the observer from outside, used by the graded tracks.
+- QEMU's **monitor** is the observer from outside, used by the graded tracks —
+  and its **QMP** socket is how Act V's bytes leave the guest.
 
 Everything after the boot is typed at the `0 >` prompt over serial.
 
@@ -153,6 +155,44 @@ claimed value. Whether a machine really measured those events needs a
 hardware-signed quote, which nothing here can produce. That is a third verdict,
 not a soft pass — the script prints it on every run.
 
+## ACT V — the firmware hands its world over: the live tree, flattened
+
+```
+0 > /fdt-buf alloc-mem value fb  fb dt>fdt .fdt-counts
+FDTL=1cde NODES=1f PROPS=d3
+0 > ." FDTP=" fb >phys u. cr
+FDTP=17978
+```
+
+Then, from outside: QMP `pmemsave` pulls those 7390 bytes out of guest-physical
+memory, and the host runs **the device-tree compiler itself** on them:
+
+```
+$ dtc -I dtb -O dts tree.dtb          # rc 0 — 31 nodes, 211 properties
+$ fdtget -t x tree.dtb /pci8086,1237@0/cfg-card@4 cfg-id
+100e8086
+$ grep 'fcode-card@3 {' tree.dts
+		fcode-card@3 {
+```
+
+`dsl/fdt.fth` walks the firmware's own tree from `/` and writes a version-17
+FDT — every field big-endian, the boot-handoff format a kernel is given. It is
+the **last** act on purpose: the tree it flattens is the tree the earlier acts
+just *changed*. Act III's FCode renamed `e1000@3` to `fcode-card@3` — that node
+is in the blob. Act III's second card asked its own config space who it is and
+published `cfg-id` — `fdtget` reads `100e8086` back out of the blob. The
+evidence of the firmware's work, in the format it would hand over, read by a
+tool that has never heard of this firmware.
+
+**Graded:** `dtc` must parse it; `fdtdump`'s node and property counts must equal
+the counts the firmware says it wrote; `cfg-id` must read back as `100e8086`;
+`fcode-card@3` must be a node; `/memory reg` must decode (and it shows two cells
+per address — the 64-bit root of patch 43).
+
+> The bytes leave through **QMP**, not the HMP monitor: HMP reads a filename as
+> an expression, a trap this repo's memory carried and the `fdt` track still
+> walked into once.
+
 ---
 
 ## Where each act is proven properly
@@ -166,6 +206,7 @@ piece against its full oracle set, with the negative controls:
 | II | `region-diff` | QEMU `xp`; three re-injected controls (blind instrument, no `>virt`, no walk) |
 | III | `optrom` | QEMU `info pci` + `xp`, `romheaders`, one-byte controls, and **ppc** |
 | IV | `event-replay`, `event-real`, `event-bench` | `tpm2_eventlog`, python `hashlib`, a real edk2/swtpm log and the guest's own PCRs |
+| V | `fdt` | `dtc`/`fdtdump`/`fdtget` on **all four arches**; an LE-magic control and an overflow control |
 
 ```
 ./smoke-openbios.sh region-diff      # one verdict line
