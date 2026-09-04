@@ -104,6 +104,11 @@ TRACK (default multiboot):
                               re-flattened, dtc decompiles the round trip IDENTICALLY
                               on all four arches; the firmware's own blob reads back
                               with the writer's counts; BAD-MAGIC/BAD-TOKEN controls
+  elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
+                              joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
+                              readelf is the oracle) and elf-hash, the SysV symbol
+                              hash graded vs python AND the linker's own .hash — on
+                              all four arches, the 32-bit mask being the width control
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -5355,6 +5360,197 @@ PY
     imp_grade "$IPLOG" "$IWD/ppc-rt.dtb" ppc
     pass "B.3 Spike 5 (FDT, the reader half): dsl/fdt-read.fth walks a flattened device tree and MATERIALIZES it into the live tree, on unix, x86, amd64 AND ppc. Subject (a): a blob dtc AUTHORED on the host from fixtures/fdt/import.dts, delivered over the CD, ingested under /imported (root properties onto the node, every child a new-device, every property a property), re-flattened by Spike 4's writer from that node, pulled back out (write-file / QMP pmemsave / the console dump) — and dtc decompiles the round trip IDENTICALLY to its own blob on every arch: the reference and the result are both derived from binary, so dtc's rendering guesses cancel and only the tree can differ. Subject (b): the firmware's OWN blob read back — the reader's node and property counts equal the writer's. Every field is read big-endian, so ppc reads native and the three little-endian arches swap. The reader refuses by name: an LE magic → BAD-MAGIC and 0, a token of 7 → BAD-TOKEN and 0. What the round trip forced on the writer: FDT derives names from BEGIN_NODE and deprecates the `name` property, so dt>fdt now skips it on every node (Spike 4 skipped only the root's) — a materialized node gets one from device-name, and a blob dtc authored has none"
     ;;
+  elf-gate)
+    # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
+    # cheap things left in the pan, pocketed together because they are graded the
+    # same way — a pure function and a whole-table constraint, each against a
+    # FOREIGN oracle, on all four arches.
+    #
+    # (1) THE ORDERING RULE. ?phdrs64/?phdrs32 checked one thing: no PT_LOAD runs
+    # past EOF. poke's elf64_check_phdr (a whole-table constraint, `phdr :
+    # elf64_check_phdr(phdr)`) also encodes the gABI's ordering invariant — PT_PHDR
+    # and PT_INTERP "may occur only once, if at all, and must precede any loadable
+    # segment entry". A firmware about to RUN an image should refuse a malformed
+    # one; now it does, by name. Three synthetic ELF64s that differ ONLY in their
+    # p_type words (good / PHDR-after-LOAD / INTERP-twice) plus a real host binary
+    # (/bin/true, when it is an ELF64 LE) are the subjects; readelf -l is the
+    # oracle for the PHDR half — it prints "the PHDR segment must occur before any
+    # LOAD segment" for the bad-order fixture and nothing for the good one. It does
+    # NOT check a duplicate INTERP, so that row is this layer being stricter than
+    # readelf (as it already is about e_phentsize), and it says so.
+    #
+    # (2) elf-hash — the SysV symbol hash, ten lines of pure Forth, graded against
+    # a python transliteration of the gABI text AND against the LINKER: the
+    # fixture builder emits a .so with `ld --hash-style=sysv` and requires every
+    # symbol to be reachable from bucket[elf_hash(name) % nbucket] of the .hash
+    # section ld wrote. If cc is absent that cross-check is UNKNOWN, and the note
+    # says so; the python oracle still grades the firmware.
+    #
+    # WHY FOUR ARCHES FOR A HASH, and what the first draft got wrong: it carried a
+    # `ffffffff and` described as "the width control" (a 64-bit cell would carry
+    # above bit 31). The negative control that REMOVED the mask passed on unix and
+    # amd64 unchanged — the gABI loop bounds itself (`h &= ~g` clears bits 28-31
+    # every step, so `h<<4` never reaches bit 32) and the mask was dead code with a
+    # rationale. The four-arch agreement still stands, and now says what it proves:
+    # this loop's lshift/rshift/xor/invert behave alike on 32- and 64-bit cells.
+    #
+    # Every fixture is padded with 512 zero bytes and bound at load-base+200, as
+    # elf-methods does for its ELF32: `load` of a bare ELF the firmware's own
+    # loader recognises never returns, and inspecting a payload inside a container
+    # is the realistic case anyway.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the 32-bit BE row is where the hash mask is a no-op"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed — it is the foreign oracle for the ordering rule"
+    GUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; GUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    GXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   GXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    GAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; GADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    GPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$GUBIN" "$GUDICT" "$GXMB" "$GXDI" "$GAMB" "$GADI" "$GPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    for f in "$HERE/dsl/struct.fth" "$HERE/dsl/elf.fth" "$HERE/dsl/elf32.fth" "$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py"; do
+      [[ -f "$f" ]] || fail "elf-gate: missing $f — this track stages the SHIPPED files"
+    done
+    GWD="$WORKDIR/elf-gate"; rm -rf "$GWD"; mkdir -p "$GWD/stage"
+    cp "$HERE/dsl/struct.fth" "$GWD/stage/STRUCT.FTH"; cp "$HERE/dsl/elf.fth" "$GWD/stage/ELF.FTH"; cp "$HERE/dsl/elf32.fth" "$GWD/stage/ELF32.FTH"
+    GNAMES=(a abc hello_world supercalifragilistic Z3foov)
+    python3 "$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py" "$GWD/fx" --names "${GNAMES[@]}" > "$GWD/oracle.txt" \
+      || fail "elf-gate: the fixture builder failed: $(tail -1 "$GWD/oracle.txt")"
+    for f in good badord baddup; do { head -c 512 /dev/zero; cat "$GWD/fx/$f.elf"; } > "$GWD/stage/$(tr a-z A-Z <<<"$f").BIN"; done
+    # the fixtures must differ ONLY inside the program-header table (ehdr and body
+    # identical) — or a refusal could be about anything. (The first draft said
+    # "only in the p_type words" and its own guard refused that: a segment's offset
+    # and size follow its type, so 28 bytes differ, all of them in the table.)
+    for gb in badord baddup; do
+      GOUT="$(cmp -l "$GWD/fx/good.elf" "$GWD/fx/$gb.elf" | awk '$1 < 65 || $1 > 288 {n++} END {print n+0, NR}')"
+      [[ "${GOUT% *}" -eq 0 && "${GOUT#* }" -ge 1 ]] \
+        || fail "elf-gate: good.elf and $gb.elf differ outside the program-header table (${GOUT% *} of ${GOUT#* } differing bytes are outside offsets 64..288) — the control is not a control"
+    done
+    # the real subject, when the host has one this layer can describe
+    GREAL=0
+    if file -b /bin/true | grep -qE '^ELF 64-bit LSB'; then
+      { head -c 512 /dev/zero; cat /bin/true; } > "$GWD/stage/TRUE.BIN"; GREAL=1
+    fi
+    # ── the oracles, before any firmware boots ──────────────────────────────
+    GLINK="$(grep '^LINKER' "$GWD/oracle.txt")"
+    GRO_GOOD="$(readelf -lW "$GWD/fx/good.elf" 2>&1 >/dev/null | grep -E '^readelf: (Error|Warning)' || true)"
+    GRO_ORD="$(readelf -lW "$GWD/fx/badord.elf" 2>&1 >/dev/null | grep -E '^readelf: Error' || true)"
+    GRO_DUP="$(readelf -lW "$GWD/fx/baddup.elf" 2>&1 >/dev/null | grep -E '^readelf: Error' || true)"
+    [[ -z "$GRO_GOOD" ]] || fail "elf-gate: readelf complains about the GOOD fixture — $GRO_GOOD — so the good/bad split is not what this track thinks it is"
+    grep -qF 'must occur before any LOAD' <<<"$GRO_ORD" \
+      || fail "elf-gate: readelf did not refuse the PHDR-after-LOAD fixture ('${GRO_ORD:-silent}') — the oracle does not see the defect the firmware is asked to see"
+    if [[ $GREAL == 1 ]]; then
+      readelf -lW /bin/true 2>&1 >/dev/null | grep -qE '^readelf: Error' && fail "elf-gate: readelf refuses the host's own /bin/true — not a valid real subject"
+    fi
+    # measured, not asserted: whether readelf sees the duplicate INTERP decides how the row is described
+    if [[ -z "$GRO_DUP" ]]; then GDUPSAYS="baddup.elf (two PT_INTERP) it does NOT flag — that row is this layer being stricter than readelf"
+    else GDUPSAYS="baddup.elf (two PT_INTERP) it now refuses too ('$GRO_DUP') — the README's 'stricter than readelf' remark is out of date"; fi
+    note "oracles: readelf refuses badord.elf ('the PHDR segment must occur before any LOAD segment'), accepts good.elf$( [[ $GREAL == 1 ]] && echo ' and /bin/true'); $GDUPSAYS; $GLINK"
+    cat > "$GWD/stage/EG.FTH" <<'FTH'
+hex
+: gate ( -- )  load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;
+\ each subject is its OWN word: a refusal aborts the word, and the marker after
+\ the gate is what must NOT print for the bad ones
+: eg-good ." eg-good:" gate ." EG-GOOD-END" cr ;
+: eg-real ." eg-real:" gate ." EG-REAL-END" cr ;
+: eg-ord  ." eg-ord:"  gate ." EG-ORD-END"  cr ;
+: eg-dup  ." eg-dup:"  gate ." EG-DUP-END"  cr ;
+: eg-hash
+  ." H0=" s" " elf-hash u. ." H1=" s" a" elf-hash u. ." H2=" s" abc" elf-hash u. cr
+  ." H3=" s" hello_world" elf-hash u. ." H4=" s" supercalifragilistic" elf-hash u. cr
+  ." H5=" s" Z3foov" elf-hash u. cr ." EG-HASH-END" cr ;
+." EG-READY" cr
+FTH
+    genisoimage -quiet -o "$GWD/eg.iso" -V EG -r -J "$GWD/stage" 2>/dev/null || fail "elf-gate: genisoimage failed"
+
+    # ── the same grading for every door ─────────────────────────────────────
+    eg_grade() {  # eg_grade <arch> <log>
+      local a="$1" g; g="$(tr -d '\r' < "$2")"
+      grep -qF 'EG-GOOD-END' <<<"$g" || fail "elf-gate ($a): the gate REJECTED good.elf (PHDR, INTERP, LOAD, LOAD — the gABI order): $(grep -aoE 'CONSTRAINT:[^|]*' <<<"$g" | head -1) — a constraint that refuses everything is as useless as one that refuses nothing — see $2"
+      if [[ $GREAL == 1 ]]; then
+        grep -qF 'EG-REAL-END' <<<"$g" || fail "elf-gate ($a): the gate REJECTED the host's own /bin/true, which readelf accepts: $(grep -aoE 'CONSTRAINT:[^|]*' <<<"$g" | head -1) — see $2"
+      fi
+      grep -qF 'PT_PHDR after a PT_LOAD' <<<"$g" || fail "elf-gate ($a): badord.elf (LOAD before PHDR) was not refused BY NAME — readelf refuses it and this layer did not — see $2"
+      grep -qF 'EG-ORD-END' <<<"$g" && fail "elf-gate ($a): the word after the gate RAN on badord.elf — printing a refusal is not refusing — see $2"
+      grep -qF 'more than one PT_INTERP' <<<"$g" || fail "elf-gate ($a): baddup.elf (two PT_INTERP) was not refused by name — see $2"
+      grep -qF 'EG-DUP-END' <<<"$g" && fail "elf-gate ($a): the word after the gate RAN on baddup.elf — see $2"
+      local n; n="$(grep -ac 'CONSTRAINT:' <<<"$g")"
+      [[ "$n" -eq 2 ]] || fail "elf-gate ($a): $n constraint failures fired where exactly 2 are expected (one per bad fixture) — a good subject was refused, or a refusal fired twice — see $2"
+      grep -qE 'H0=0 ' <<<"$g" || fail "elf-gate ($a): elf-hash of the empty string is $(grep -aoE 'H0=[0-9a-f]+' <<<"$g" | head -1), not 0 — see $2"
+      local i=1 nm want got
+      for nm in "${GNAMES[@]}"; do
+        want="$(awk -v n="$nm" '$1==n {print $2}' "$GWD/oracle.txt" | sed 's/^0*//')"; want="${want:-0}"
+        got="$(grep -aoE "H$i=[0-9a-f]+" <<<"$g" | head -1 | cut -d= -f2)"
+        [[ "$got" == "$want" ]] || fail "elf-gate ($a): elf-hash(\"$nm\") = ${got:-absent} where the SysV text (and ld's own .hash placement) says $want — see $2"
+        i=$((i+1))
+      done
+      grep -qaE 'Unexpected Exception|general protection|invalid opcode|Exception vector' <<<"$g" && fail "elf-gate ($a): the firmware took a CPU exception — see $2"
+      echo "$(grep -aoE 'H[1-5]=[0-9a-f]+' <<<"$g" | tr '\n' ' ')" > "$GWD/$a.hashes"
+      note "$a: good.elf$( [[ $GREAL == 1 ]] && echo ' and /bin/true') pass the gate; badord.elf → 'PT_PHDR after a PT_LOAD', baddup.elf → 'more than one PT_INTERP', neither reaches its marker (2 constraint failures, no more); elf-hash: $(cat "$GWD/$a.hashes")"
+    }
+
+    # ── unix: -f iso, load-base re-pointed into the arena ───────────────────
+    GREAL_LINES=(); [[ $GREAL == 1 ]] && GREAL_LINES=('load hd:\TRUE.BIN' 'eg-real')
+    ( cd "$GWD" && printf '%s\n' \
+      '80000 alloc-mem value egb' 'egb (u.) s" load-base" $setenv' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\ELF.FTH'    'load-base load-size evaluate' \
+      'load hd:\ELF32.FTH'  'load-base load-size evaluate' \
+      'load hd:\EG.FTH'     'load-base load-size evaluate' \
+      'load hd:\GOOD.BIN' 'eg-good' "${GREAL_LINES[@]}" \
+      'load hd:\BADORD.BIN' 'eg-ord' 'load hd:\BADDUP.BIN' 'eg-dup' 'eg-hash' 'bye' \
+      | "$GUBIN" -f "$GWD/eg.iso" "$GUDICT" > "$GWD/unix.log" 2>&1 )
+    grep -qF 'EG-READY' "$GWD/unix.log" || fail "elf-gate (unix): EG.FTH never finished loading — see $GWD/unix.log"
+    eg_grade unix "$GWD/unix.log"
+
+    # ── x86 and amd64: -cdrom, over the serial prompt ───────────────────────
+    for GA in x86 amd64; do
+      if [[ $GA == x86 ]]; then GMB="$GXMB"; GDI="$GXDI"; else GMB="$GAMB"; GDI="$GADI"; fi
+      GSER="$WORKDIR/eg-$GA.sock"; GLOG="$GWD/$GA.log"; rm -f "$GSER" "$GLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$GMB" -initrd "$GDI" -nic none -cdrom "$GWD/eg.iso" \
+        -display none -serial "unix:$GSER,server=on" -no-reboot >/dev/null 2>&1 &
+      GQ=$!
+      GREAL_SENDS=(); [[ $GREAL == 1 ]] && GREAL_SENDS=(--send 'load /ide@1/cdrom@0:\\TRUE.BIN\r' --expect "0 > " --send 'eg-real\r' --expect "> ")
+      python3 "$REPO/tools/drive-serial-repl.py" "$GSER" "$GLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ELF.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ELF32.FTH\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\EG.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "EG-READY" \
+        --send 'load /ide@1/cdrom@0:\\GOOD.BIN\r'   --expect "0 > " --send 'eg-good\r' --expect "> " \
+        "${GREAL_SENDS[@]}" \
+        --send 'load /ide@1/cdrom@0:\\BADORD.BIN\r' --expect "0 > " --send 'eg-ord\r'  --expect "> " \
+        --send 'load /ide@1/cdrom@0:\\BADDUP.BIN\r' --expect "0 > " --send 'eg-dup\r'  --expect "> " \
+        --send 'eg-hash\r' --expect "EG-HASH-END"
+      GRC=$?
+      kill "$GQ" 2>/dev/null   # by PID, never by pattern
+      [[ $GRC -eq 0 ]] || fail "elf-gate ($GA): the prompt driver did not complete (rc=$GRC) — see $GLOG"
+      eg_grade "$GA" "$GLOG"
+    done
+
+    # ── ppc: the 32-bit BIG-endian row, pty console ─────────────────────────
+    GPLOG="$GWD/ppc.log"; rm -f "$GPLOG"
+    GREAL_PSENDS=(); [[ $GREAL == 1 ]] && GREAL_PSENDS=(--send 'load cd:\\TRUE.BIN;1\r' --expect "0 > " --send 'eg-real\r' --expect "> ")
+    python3 "$REPO/tools/drive-pty-repl.py" "$GPLOG" --timeout 500 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ELF.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ELF32.FTH;1\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\EG.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "EG-READY" \
+      --send 'load cd:\\GOOD.BIN;1\r'   --expect "0 > " --send 'eg-good\r' --expect "> " \
+      "${GREAL_PSENDS[@]}" \
+      --send 'load cd:\\BADORD.BIN;1\r' --expect "0 > " --send 'eg-ord\r'  --expect "> " \
+      --send 'load cd:\\BADDUP.BIN;1\r' --expect "0 > " --send 'eg-dup\r'  --expect "> " \
+      --send 'eg-hash\r' --expect "EG-HASH-END" \
+      -- qemu-system-ppc -bios "$GPELF" -nographic -vga none -cdrom "$GWD/eg.iso" >/dev/null 2>&1
+    GPRC=$?
+    [[ $GPRC -eq 0 ]] || fail "elf-gate (ppc): the prompt driver did not complete (rc=$GPRC) — see $GPLOG"
+    eg_grade ppc "$GPLOG"
+
+    # ── the four arches must AGREE on every hash: 64-bit cells mask, 32-bit cells don't need to ──
+    GSETS="$(cat "$GWD"/unix.hashes "$GWD"/x86.hashes "$GWD"/amd64.hashes "$GWD"/ppc.hashes | sort -u | wc -l)"
+    [[ "$GSETS" -eq 1 ]] || fail "elf-gate: the four arches disagree on elf-hash ($GSETS distinct answer sets) — a shift or invert differs between the 32- and 64-bit cells"
+    pass "B.3, the gleanings' loose gold pocketed: (1) the gABI ORDERING rule joins ?phdrs — PT_PHDR and PT_INTERP at most once and before every PT_LOAD — refused BY NAME on unix, x86, amd64 AND ppc, with readelf as the foreign oracle for the PHDR half (it refuses the same fixture: 'the PHDR segment must occur before any LOAD segment') and this layer STRICTER than readelf on a duplicate PT_INTERP, said so; three fixtures that differ only in their p_type words, plus the host's own /bin/true through the same gate; exactly 2 constraint failures per arch and neither bad fixture reaches the word after the gate. (2) elf-hash, the SysV symbol hash in ten lines of pure Forth, equals the gABI text transliterated in python on every arch — and that python is checked against the LINKER ($GLINK) — with the four arches in agreement. And one claim RETRACTED by its own control: the draft's 32-bit mask, described as the width control, was removed by a negative control and every hash stayed the same on the 64-bit arches — the gABI loop bounds itself (h &= ~g clears bits 28-31 each step), so the mask was dead code with a rationale, and it is gone"
+    ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
     # composite model a single mapped struct does not reach. poke writes
@@ -6779,5 +6975,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|elf-gate|unix]" >&2; exit 1 ;;
 esac
