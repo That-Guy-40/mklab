@@ -535,6 +535,26 @@ cycles, all this one bug.)
   `tools/tests/test-echo-gate.sh` (fixture `tools/tests/lossy-console.py` = a
   FIFO with no flow control; plain 40 ms send delivers `load-base` as `ldbe`,
   the gate delivers it whole). Verified against real OpenBIOS-ppc.
+- **The echo-gate cannot tell a SLOW echo from a dropped one — raise
+  `--echo-timeout` when a byte follows a busy operation.** The gate resends a byte
+  it has not seen echoed within `--echo-timeout` (default 2 s), *assuming* the
+  no-flow-control console dropped it. But if the console merely echoed LATE, the
+  resend **duplicates** a byte it did accept. Measured 2026-09-05: ppc under TCG
+  echoes the first byte of a command typed right after a heavy `evaluate`
+  (compiling `struct.fth`) only once it has flushed that evaluate's output — past
+  2 s — so `load cd:\S0CHK.FTH;1` arrived as **`lload`** (`lload: undefined
+  word.`), `load-base` still held the previous file, the next `evaluate` re-ran it
+  in full, and the whole drive spiralled to its 600 s timeout (the
+  `tlv-primitives` track, on CI *and* reproduced locally at 624 s). The fix is a
+  larger acknowledgment grace, not removing the gate: `--echo-timeout 8` on the
+  ppc drives lets the real echo arrive before a resend fires, and the same drive
+  runs in ~5 s with the gate's genuine drop protection intact. The **tool default
+  stays 2 s** (so `test-echo-gate.sh`'s dropped-byte timing is unchanged); a larger
+  grace only slows detection of a REAL drop, bounded by each drive's `--timeout`.
+  Negative control: `tools/tests/test-echo-gate-slow.sh` (fixture
+  `tools/tests/slow-echo-console.py` echoes every byte but holds the first one
+  `BUSY` seconds, dropping nothing) — at the 2 s default the gate delivers
+  **`lload-base`**, at `--echo-timeout 8` it delivers `load-base` whole.
 - **Testing the READER side (a SOL bridge, a boot-progress/milestone parser, the
   expect side of a driver)?** `tools/serial-source.py` is the **emitter** fixture — a
   fake serial device that streams a `--marker` or **`--replay`s a canned boot log** over
