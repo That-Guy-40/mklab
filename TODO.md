@@ -5826,7 +5826,10 @@ structures* — with poke-elf pointing at exactly which structures pay.
 
 *Discussion draft, not scheduled.* Written up in
 [`DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md`](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md);
-this entry is the pointer, so the queue can find it.
+this entry is the pointer, so the queue can find it. **Start at its
+[§0a](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md#0a-in-brief--what-gets-built-and-what-read-write-and-validate-mean-here)**,
+the one-page digest of what gets built and what read, write and validate mean per
+field class.
 
 Two ideas that use only what `examples/openbios-the-rival-that-shipped/` already has —
 the type layer, the cursor, `fdt.fth`, `region.fth`, the revived Linux loader — and
@@ -5846,5 +5849,16 @@ take the toolkit out of the firmware and **into the kernel**:
 
 **Both are gated on one patch (its §1):** the x86/amd64 `boot` word loads and jumps
 in one call, so there is no window to edit in. A `load`/`go` split for bzImages, the
-shape `init-program`/`go` already gives ELF, is patch 69 and step S0. Open questions
-for discussion are its §6.
+shape `init-program`/`go` already gives ELF, is patch 69 and step S0 — and it ships
+three named `defer`s, since OpenBIOS declares none on its boot path. Its §1a is the
+protocol's declaration half (what the loader honours, what it ignores, and
+`setup_type_max` as the refusal Idea B needs); §1b why `boot-file`/`nvramrc` are the
+front end; §2.5 a **fourth seam**, the NVRAM boot counter — the only event loop the
+firmware has once `go` runs. §1a's fields get **three verbs each — read, write,
+validate** — with the declared class writable only as a negative control; §2.6 is
+`?bootparams`, the gate that refuses every out-of-range value by name before `go` or
+says UNKNOWN by name; §2.7 inventories everything else at the prompt that can be
+read, validated or changed (`SETUP_PCI` handing Act III's card ROM to Linux,
+`SETUP_RNG_SEED`, `/chosen` versus the zero page, the ACPI/SMBIOS tables as a fifth
+seam left closed). **The seams are the build list**: §5 tabulates file, words, track
+and oracle per seam. Open questions for discussion are its §6.
