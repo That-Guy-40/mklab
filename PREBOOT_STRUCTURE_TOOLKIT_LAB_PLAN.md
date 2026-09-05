@@ -843,7 +843,10 @@ authored has none). Track: `fdt-import`.
   the active package differs (track `marker`). The `elf-gate` track's
   duplicate-`PT_INTERP` half gained `eu-elflint` as its second oracle (readelf
   checks the order, elflint the multiplicity, the kernel's loader neither),
-  UNPROBED by name when elfutils is absent.
+  UNPROBED by name when elfutils is absent. A fourth fixture, `badint.elf`
+  (`PHDR LOAD INTERP LOAD`, 2026-09-05), isolates the INTERP-order clause no fixture
+  had exercised — and no tool enforces it (readelf silent, elflint *No errors*, the
+  kernel indifferent): the firmware refuses it on the gABI's word alone, said per run.
 - **Not a hosted tool re-implemented.** The justification is the four-arch control
   and the preboot device access (Spike 3); if a spike could be done as well by
   running `readelf`/`cbfstool`/`tpm2_eventlog` alone, it isn't a spike, it's the
