@@ -5922,7 +5922,7 @@ FTH
     # ── ppc: the big-endian door, pty console ──────────────────────────────
     LDR_PLOG="$LDR_WD/ppc.log"; rm -f "$LDR_PLOG"
     mapfile -t LDR_STEPS < <(ldr_sends 'cd:\\' ';1' "$LDR_HP")
-    python3 "$REPO/tools/drive-pty-repl.py" "$LDR_PLOG" --timeout 700 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$LDR_PLOG" --timeout 700 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " "${LDR_STEPS[@]}" \
       -- qemu-system-ppc -bios "$LDR_PELF" -nographic -vga none -cdrom "$LDR_WD/ppc.iso" >/dev/null 2>&1
     LDR_RC=$?
