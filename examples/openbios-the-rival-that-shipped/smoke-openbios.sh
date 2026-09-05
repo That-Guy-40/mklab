@@ -5924,7 +5924,7 @@ PYMARK
       qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MMB" -initrd "$MDI" -nic none \
         -display none -serial "unix:$MSER,server=on" -no-reboot >/dev/null 2>&1 &
       MQ=$!
-      MSENDS=(); for l in "${MK_LINES[@]}"; do MSENDS+=(--send "$l"$'\r' --expect "0 > "); done
+      MSENDS=(); for mkl in "${MK_LINES[@]}"; do MSENDS+=(--send "$mkl"$'\r' --expect "0 > "); done
       python3 "$REPO/tools/drive-serial-repl.py" "$MSER" "$MLOG" --timeout 300 --expect "0 > " "${MSENDS[@]}"
       MRC=$?
       kill "$MQ" 2>/dev/null   # by PID, never by pattern
@@ -5933,7 +5933,7 @@ PYMARK
     done
     # ── ppc ──────────────────────────────────────────────────────────────────
     MPLOG="$MKWD/ppc.log"; rm -f "$MPLOG"
-    MPSENDS=(); for l in "${MK_LINES[@]}"; do MPSENDS+=(--send "$l"$'\r' --expect "0 > "); done
+    MPSENDS=(); for mkl in "${MK_LINES[@]}"; do MPSENDS+=(--send "$mkl"$'\r' --expect "0 > "); done
     python3 "$REPO/tools/drive-pty-repl.py" "$MPLOG" --timeout 600 --echo-gate \
       --expect "Welcome to OpenBIOS" --expect "0 > " "${MPSENDS[@]}" \
       -- qemu-system-ppc -bios "$MKPELF" -nographic -vga none >/dev/null 2>&1

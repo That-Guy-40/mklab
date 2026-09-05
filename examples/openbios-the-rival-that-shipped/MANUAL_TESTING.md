@@ -597,7 +597,9 @@ The `elf-gate` track's duplicate-`PT_INTERP` half gained its second oracle the s
 reports *more than one INTERP entry in program header*; `readelf` does not check it, and the kernel's
 `load_elf_binary` takes the first `PT_INTERP` and never looks again (read in `fs/binfmt_elf.c`,
 v6.12). The track measures elflint per run and says **UNPROBED** in its verdict when elfutils is
-absent, which it was on this host at the time of writing; CI installs it.
+absent, which it was on this host at the time of writing; CI installs it, and #403's first CI run measured it
+(elfutils 0.190): *flags baddup.elf ('more than one INTERP entry in program header') and not good.elf; on
+badord.elf it says nothing about PHDR/INTERP/LOAD order* — the split the track predicted, observed.
 
 ### The `fdt` track — the live device tree, flattened, graded by `dtc` (B.3 Spike 4)
 

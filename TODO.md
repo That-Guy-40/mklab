@@ -615,7 +615,7 @@ requires of any other cached fact.
             refuses both, the kernel neither. The `elf-gate` track measures elflint on all three
             fixtures per run (it must flag `baddup.elf` and not `good.elf`; what it says about
             `badord.elf` is recorded) and names the half **UNPROBED** in its verdict when elfutils
-            is absent; CI installs `elfutils`. Not yet measured on this host (no elfutils).
+            is absent; CI installs `elfutils`. **Measured in CI on #403's first run** (job 101224981481, elfutils 0.190): *flags baddup.elf ('more than one INTERP entry in program header') and not good.elf; on badord.elf it says nothing about PHDR/INTERP/LOAD order*. Not yet measured on the dev host (no elfutils there).
       History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to
