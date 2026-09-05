@@ -61,7 +61,7 @@ env:
   # (three boots and a screendump) and is here anyway, because it carries the
   # regression guard for patch 49 — the six 1275 device-register words that
   # shipped EMPTY, whose failure mode is a silent stack shift in an FCode driver.
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt fdt-import elf-gate dict-budget
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt fdt-import elf-gate dict-budget marker
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.
@@ -135,7 +135,7 @@ jobs:
           # eat the runner's hour, and a failed one must be visible rather than
           # turning into a sweep of SKIPs two steps later.
           timeout 180 sudo apt-get update || echo "::warning::apt-get update failed"
-          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc device-tree-compiler binutils genisoimage \
+          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc device-tree-compiler binutils elfutils genisoimage \
             || echo "::warning::install failed — the artifact gate below will say what that cost"
 
       - name: Build x86, amd64 and ppc

@@ -115,6 +115,11 @@ TRACK (default multiboot):
                               and whether the toolkit fits — from the running firmware's
                               own dict-limit/dict-used (patch 63), with the kernel's
                               overflow line as the control
+  marker                      marker/forget, which OpenBIOS never had (patch 67):
+                              byte-exact reclaim graded from dict-used on all four
+                              arches; refuses BY NAME when the device tree grew after
+                              the mark (node, method, property) or the active package
+                              differs; nested markers forget LIFO
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -5450,7 +5455,29 @@ PY
     # measured, not asserted: whether readelf sees the duplicate INTERP decides how the row is described
     if [[ -z "$GRO_DUP" ]]; then GDUPSAYS="baddup.elf (two PT_INTERP) it does NOT flag — that row is this layer being stricter than readelf"
     else GDUPSAYS="baddup.elf (two PT_INTERP) it now refuses too ('$GRO_DUP') — the README's 'stricter than readelf' remark is out of date"; fi
+    # THE SECOND ORACLE, for the half readelf does not check (TODO B.3, closed
+    # 2026-09-04). eu-elflint (elfutils) is a gABI VALIDATOR, not a printer: its
+    # check_program_header counts PT_INTERP entries and reports "more than one
+    # INTERP entry in program header" (src/elflint.c, elfutils 0.192). The kernel's
+    # own loader is NOT such an oracle and was read to be sure: fs/binfmt_elf.c
+    # (v6.12) takes the FIRST PT_INTERP and breaks, so it never sees a second one
+    # and never looks at order. Measured per run, never assumed: elflint must flag
+    # baddup.elf and must NOT flag good.elf with that message; what it says about
+    # badord.elf is recorded (it has no ordering check — that half is readelf's).
+    # Absent, the half stays UNPROBED BY NAME in the verdict rather than passing.
+    if command -v eu-elflint >/dev/null; then
+      GEL_GOOD="$(eu-elflint "$GWD/fx/good.elf" 2>&1 | grep -F 'more than one INTERP' || true)"
+      GEL_DUP="$(eu-elflint "$GWD/fx/baddup.elf" 2>&1 | grep -F 'more than one INTERP' || true)"
+      GEL_ORD="$(eu-elflint "$GWD/fx/badord.elf" 2>&1 | grep -iE 'INTERP|PHDR|LOAD' | head -2 | tr '\n' ' ' || true)"
+      [[ -z "$GEL_GOOD" ]] || fail "elf-gate: eu-elflint reports a duplicate INTERP in the GOOD fixture — the good/bad split is not what this track thinks it is"
+      grep -qF 'more than one INTERP entry' <<<"$GEL_DUP" \
+        || fail "elf-gate: eu-elflint did not report baddup.elf's duplicate PT_INTERP ('${GEL_DUP:-silent}') — the second oracle does not see the defect the firmware refuses"
+      GELSAYS="eu-elflint $(eu-elflint --version 2>/dev/null | head -1 | grep -oE '[0-9.]+$') flags baddup.elf ('more than one INTERP entry in program header') and not good.elf; on badord.elf it says ${GEL_ORD:+'$GEL_ORD'}${GEL_ORD:-nothing about PHDR/INTERP/LOAD order} — the two oracles split the gABI sentence: readelf the ORDER, elflint the MULTIPLICITY, the firmware refuses both; the kernel's loader (binfmt_elf.c) checks neither"
+    else
+      GELSAYS="eu-elflint NOT installed — the duplicate-INTERP half has NO foreign oracle on this host (UNPROBED, not passed; apt install elfutils)"
+    fi
     note "oracles: readelf refuses badord.elf ('the PHDR segment must occur before any LOAD segment'), accepts good.elf$( [[ $GREAL == 1 ]] && echo ' and /bin/true'); $GDUPSAYS; $GLINK"
+    note "second oracle: $GELSAYS"
     cat > "$GWD/stage/EG.FTH" <<'FTH'
 hex
 : gate ( -- )  load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;
@@ -5555,7 +5582,7 @@ FTH
     # ── the four arches must AGREE on every hash: 64-bit cells mask, 32-bit cells don't need to ──
     GSETS="$(cat "$GWD"/unix.hashes "$GWD"/x86.hashes "$GWD"/amd64.hashes "$GWD"/ppc.hashes | sort -u | wc -l)"
     [[ "$GSETS" -eq 1 ]] || fail "elf-gate: the four arches disagree on elf-hash ($GSETS distinct answer sets) — a shift or invert differs between the 32- and 64-bit cells"
-    pass "B.3, the gleanings' loose gold pocketed: (1) the gABI ORDERING rule joins ?phdrs — PT_PHDR and PT_INTERP at most once and before every PT_LOAD — refused BY NAME on unix, x86, amd64 AND ppc, with readelf as the foreign oracle for the PHDR half (it refuses the same fixture: 'the PHDR segment must occur before any LOAD segment') and this layer STRICTER than readelf on a duplicate PT_INTERP, said so; three fixtures that differ only in their p_type words, plus the host's own /bin/true through the same gate; exactly 2 constraint failures per arch and neither bad fixture reaches the word after the gate. (2) elf-hash, the SysV symbol hash in ten lines of pure Forth, equals the gABI text transliterated in python on every arch — and that python is checked against the LINKER ($GLINK) — with the four arches in agreement. And one claim RETRACTED by its own control: the draft's 32-bit mask, described as the width control, was removed by a negative control and every hash stayed the same on the 64-bit arches — the gABI loop bounds itself (h &= ~g clears bits 28-31 each step), so the mask was dead code with a rationale, and it is gone"
+    pass "B.3, the gleanings' loose gold pocketed: (1) the gABI ORDERING rule joins ?phdrs — PT_PHDR and PT_INTERP at most once and before every PT_LOAD — refused BY NAME on unix, x86, amd64 AND ppc, with readelf as the foreign oracle for the PHDR half (it refuses the same fixture: 'the PHDR segment must occur before any LOAD segment') and this layer STRICTER than readelf on a duplicate PT_INTERP, said so; three fixtures that differ only in their p_type words, plus the host's own /bin/true through the same gate; exactly 2 constraint failures per arch and neither bad fixture reaches the word after the gate. (2) elf-hash, the SysV symbol hash in ten lines of pure Forth, equals the gABI text transliterated in python on every arch — and that python is checked against the LINKER ($GLINK) — with the four arches in agreement. And one claim RETRACTED by its own control: the draft's 32-bit mask, described as the width control, was removed by a negative control and every hash stayed the same on the 64-bit arches — the gABI loop bounds itself (h &= ~g clears bits 28-31 each step), so the mask was dead code with a rationale, and it is gone SECOND ORACLE, measured this run: $GELSAYS"
     ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
@@ -5793,6 +5820,127 @@ PYMARK
 
     DBSUM="$(awk '{printf "%s: %d KiB limit, %d KiB at boot, +%d KiB compiled, %d KiB left — %s; ", $1, $2/1024, $3/1024, $4/1024, $5/1024, ($7==""?"FITS ("$6" files)":"DOES NOT FIT ("$6" files compiled; refused/skipped: "$7")")}' "$DWD/summary.txt")"
     pass "B.3 plan §6's unmeasured dictionary budget, MEASURED on all four arches with the running firmware's own numbers (patch 63: dict-limit/dict-used are the two cells here! compares). $DBSUM Every cost is a per-file delta of dict-used, the boot figure is the .dict file's header length (read on the host) plus what init compiled, and the controls fire on every arch: allotting 10 bytes past the room prints the kernel's 'Dictionary space overflow' line naming the SAME limit dict-limit answers AND IS REFUSED (patch 66: -8 to the catch around it, not a byte taken, a word defined afterwards runs — where before the same allot returned with here past the end, the next '.' segfaulted the hosted target and one ',' on ppc rewrote two of console_ops' function pointers behind an ok), allotting 10 bytes short prints nothing and completes, and there is exactly one such line per run. A file is compiled only when 1.5× its source size fits the room left; one that does not is named NO-ROOM whole rather than refused by the kernel halfway through a definition, and everything after it is SKIPped by name"
+    ;;
+  marker)
+    # TODO B.3 candidate (closed 2026-09-04): OpenBIOS had no marker/forget. The
+    # dict-budget measurement had shown that saving here and forth-last and writing
+    # them back reclaims the bytes exactly — and found the two traps patch 67's
+    # `marker` (forth/device/extra.fs) encodes: (1) the marks are captured BEFORE
+    # the marker's own header exists, or restoring forth-last points the chain at
+    # memory the next definition overwrites (a segfault at ffffffff on the next
+    # `:`); (2) the device tree lives in the SAME dictionary — nodes (alloc-tree),
+    # wordlist heads (`wordlist` = here 0 ,), property structs, name and value
+    # copies — so a marker REFUSES (abort", -2 under catch) when any node, node
+    # method or property lies between the mark and here, or when the active
+    # package differs from the one at the mark. Instances are alloc-mem'd.
+    #
+    # ASSERTED, on all four arches, from the running firmware's own dict-used:
+    #   positive   words defined after the mark vanish ($find answers 0), the
+    #              dictionary pointer returns to the mark BYTE-EXACTLY (DUC = DUA),
+    #              a word from before the mark still runs, a new one compiles after
+    #   refusals   a node created after the mark (M2), a method added to a
+    #              pre-existing node (M3), a property added to one (M4), the marker
+    #              executed under a different active package (M5) — each -2 by name,
+    #              each taking NOTHING (DUE = DUD), the node and its method intact
+    #   LIFO       an older marker forgets a newer marker and everything between
+    #              (X2F = 0, MBF = 0), byte-exactly (DUG = DUF)
+    # Each refusal isolates ONE sub-check: m3 is set after the node exists, so only
+    # the method is above its mark; m4 the same for the property.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the big-endian row"
+    MKUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; MKUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    MKXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   MKXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    MKAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; MKADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    MKPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$MKUBIN" "$MKUDICT" "$MKXMB" "$MKXDI" "$MKAMB" "$MKADI" "$MKPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    MKWD="$WORKDIR/marker"; rm -rf "$MKWD"; mkdir -p "$MKWD"
+    # every typed line under 80 columns (the hosted line editor truncates past ~82)
+    MK_LINES=(': w1 1 ;'
+      '." DUA=" dict-used u. cr'
+      'marker m1'
+      ': w2 2 ; create buf 100 allot'
+      'w2 ." W2=" . cr'
+      '." DUB=" dict-used u. cr'
+      'm1'
+      '." DUC=" dict-used u. cr'
+      's" w2" $find if drop 1 else 2drop 0 then ." W2F=" . cr'
+      'w1 ." W1=" . cr'
+      ': w3 3 ; w3 ." W3=" . cr'
+      'marker m2'
+      'dev / new-device s" mk-node" device-name finish-device device-end'
+      '." DUD=" dict-used u. cr'
+      "' m2 catch .\" M2RC=\" . cr"
+      '." DUE=" dict-used u. cr'
+      'marker m3'
+      'dev /mk-node : mk-meth 6 ; device-end'
+      "' m3 catch .\" M3RC=\" . cr"
+      'dev /mk-node mk-meth ." MM=" . cr device-end'
+      'marker m4'
+      'dev /mk-node 7 encode-int s" mk-prop" property device-end'
+      "' m4 catch .\" M4RC=\" . cr"
+      'marker m5'
+      "dev /mk-node ' m5 catch .\" M5RC=\" . cr device-end"
+      '." DUF=" dict-used u. cr'
+      'marker ma : x1 1 ; marker mb : x2 2 ; ma'
+      '." DUG=" dict-used u. cr'
+      's" x2" $find if drop 1 else 2drop 0 then ." X2F=" . cr'
+      's" mb" $find if drop 1 else 2drop 0 then ." MBF=" . cr'
+      ': w4 4 ; w4 ." W4=" . cr')
+    mk_grade() {  # mk_grade <arch> <log>
+      local a="$1" g v; g="$(tr -d '\r' < "$2")"
+      mkv() { grep -aoE "$1=[0-9a-f]+" <<<"$g" | head -1 | cut -d= -f2; }
+      local dua dub duc dud due duf dug
+      dua=$(mkv DUA); dub=$(mkv DUB); duc=$(mkv DUC); dud=$(mkv DUD); due=$(mkv DUE); duf=$(mkv DUF); dug=$(mkv DUG)
+      for v in dua dub duc dud due duf dug; do [[ -n "${!v}" ]] || fail "marker ($a): $v not printed — the run stopped early — see $2"; done
+      grep -qE 'W2=2 ' <<<"$g" || fail "marker ($a): w2, defined after the mark, did not run BEFORE the marker was executed (no 'W2=2') — see $2"
+      [[ $((16#$dub)) -gt $((16#$dua)) ]] || fail "marker ($a): dict-used did not grow across the definitions after the mark ($dua → $dub) — see $2"
+      [[ "$duc" == "$dua" ]] || fail "marker ($a): executing the marker left dict-used at $duc, the mark was $dua — the pointer was not restored BYTE-EXACTLY — see $2"
+      grep -qE 'W2F=0 ' <<<"$g" || fail "marker ($a): w2 is still findable after the marker ran (W2F != 0) — the forth wordlist head was not restored — see $2"
+      grep -qE 'W1=1 ' <<<"$g" || fail "marker ($a): w1, defined BEFORE the mark, no longer runs — the marker forgot too much — see $2"
+      grep -qE 'W3=3 ' <<<"$g" || fail "marker ($a): a definition typed after the marker ran did not compile and run (no 'W3=3') — trap (1): the restored chain points at reclaimed memory — see $2"
+      grep -qE 'M2RC=-2 ' <<<"$g" || fail "marker ($a): a marker set BEFORE a device node was created was not refused (M2RC != -2) — the tree would be left dangling — see $2"
+      [[ "$due" == "$dud" ]] || fail "marker ($a): the refused marker moved dict-used ($dud → $due) — a refusal must take nothing — see $2"
+      grep -qE 'M3RC=-2 ' <<<"$g" || fail "marker ($a): a method added to a PRE-EXISTING node after the mark did not make the marker refuse (M3RC != -2) — see $2"
+      grep -qE 'MM=6 ' <<<"$g" || fail "marker ($a): the node's method did not run after the refusal (no 'MM=6') — the refusal damaged the tree — see $2"
+      grep -qE 'M4RC=-2 ' <<<"$g" || fail "marker ($a): a property added to a pre-existing node after the mark did not make the marker refuse (M4RC != -2) — see $2"
+      grep -qE 'M5RC=-2 ' <<<"$g" || fail "marker ($a): a marker executed under a DIFFERENT active package was not refused (M5RC != -2) — see $2"
+      local n; n="$(grep -ac 'the device tree grew after the mark' <<<"$g")"
+      [[ "$n" -eq 3 ]] || fail "marker ($a): $n 'device tree grew' refusals where exactly 3 are expected (node, method, property) — see $2"
+      grep -qF 'active package is not the one at the mark' <<<"$g" || fail "marker ($a): the active-package refusal did not print its own reason — see $2"
+      [[ "$dug" == "$duf" ]] || fail "marker ($a): the older marker did not reclaim the newer marker and everything between BYTE-EXACTLY ($duf → $dug) — see $2"
+      grep -qE 'X2F=0 ' <<<"$g" || fail "marker ($a): x2 (defined after the newer marker) survived the older marker — not LIFO — see $2"
+      grep -qE 'MBF=0 ' <<<"$g" || fail "marker ($a): the newer marker word itself survived the older marker — see $2"
+      grep -qE 'W4=4 ' <<<"$g" || fail "marker ($a): no definition compiles after the LIFO forget (no 'W4=4') — see $2"
+      grep -qaE 'Unexpected Exception|general protection|invalid opcode|Exception vector|segmentation|panic' <<<"$g" && fail "marker ($a): the firmware took a fault — see $2"
+      note "$a: mark $dua → +$((16#$dub - 16#$dua)) bytes → back to $duc; w2 gone, w1 intact, w3 compiles; node/method/property/active-package refusals -2 (dict-used $dud unchanged), node method still answers 6; LIFO $duf → $dug, x2 and mb gone, w4 compiles"
+    }
+    # ── unix ─────────────────────────────────────────────────────────────────
+    { printf '%s\n' "${MK_LINES[@]}"; printf 'bye\n'; } | "$MKUBIN" "$MKUDICT" > "$MKWD/unix.log" 2>&1
+    mk_grade unix "$MKWD/unix.log"
+    # ── x86 and amd64 ────────────────────────────────────────────────────────
+    for MA in x86 amd64; do
+      if [[ $MA == x86 ]]; then MMB="$MKXMB"; MDI="$MKXDI"; else MMB="$MKAMB"; MDI="$MKADI"; fi
+      MSER="$WORKDIR/mk-$MA.sock"; MLOG="$MKWD/$MA.log"; rm -f "$MSER" "$MLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MMB" -initrd "$MDI" -nic none \
+        -display none -serial "unix:$MSER,server=on" -no-reboot >/dev/null 2>&1 &
+      MQ=$!
+      MSENDS=(); for mkl in "${MK_LINES[@]}"; do MSENDS+=(--send "$mkl"$'\r' --expect "0 > "); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$MSER" "$MLOG" --timeout 300 --expect "0 > " "${MSENDS[@]}"
+      MKRC=$?
+      kill "$MQ" 2>/dev/null   # by PID, never by pattern
+      [[ $MKRC -eq 0 ]] || fail "marker ($MA): the prompt driver did not complete (rc=$MKRC) — see $MLOG"
+      mk_grade "$MA" "$MLOG"
+    done
+    # ── ppc ──────────────────────────────────────────────────────────────────
+    MPLOG="$MKWD/ppc.log"; rm -f "$MPLOG"
+    MPSENDS=(); for mkl in "${MK_LINES[@]}"; do MPSENDS+=(--send "$mkl"$'\r' --expect "0 > "); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$MPLOG" --timeout 600 --echo-gate \
+      --expect "Welcome to OpenBIOS" --expect "0 > " "${MPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$MKPELF" -nographic -vga none >/dev/null 2>&1
+    MPRC=$?
+    [[ $MPRC -eq 0 ]] || fail "marker (ppc): the prompt driver did not complete (rc=$MPRC) — see $MPLOG"
+    mk_grade ppc "$MPLOG"
+    pass "marker/forget, which OpenBIOS never had (patch 67, forth/device/extra.fs), on unix, x86, amd64 AND ppc, graded from the running firmware's own dict-used: executing a marker returns the dictionary pointer to the mark BYTE-EXACTLY, the words after it vanish (\$find answers 0), a word from before it still runs and a new one compiles after — the shape whose first hand-rolled draft segfaulted at ffffffff, because its marks were captured under the marker's own header. And the trap that makes a plain forget unsafe HERE is refused by name: the device tree lives in the same dictionary, so a marker set before a node was created, before a method was added to an existing node, or before a property was added to one refuses with 'the device tree grew after the mark' (-2 under catch, dict-used unchanged, the node's method still answering), and one executed under a different active package refuses with its own reason. Nested markers forget LIFO: the older one reclaims the newer marker and everything between, byte-exactly"
     ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
@@ -7218,5 +7366,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|elf-gate|dict-budget|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|elf-gate|dict-budget|marker|unix]" >&2; exit 1 ;;
 esac
