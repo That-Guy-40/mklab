@@ -837,6 +837,13 @@ authored has none). Track: `fdt-import`.
   stays, -8 is thrown from C through `enterforth`, and the track's OVER control
   asserts the refusal on all four arches. The 1.5× guard stays so a file that
   does not fit is named whole (`NO-ROOM`) rather than refused mid-definition.
+  **Patch 67 (2026-09-04) adds `marker`**, which OpenBIOS never had: byte-exact
+  reclaim on all four arches, and a refusal by name when the device tree — which
+  lives in the same dictionary — grew after the mark (node, method, property) or
+  the active package differs (track `marker`). The `elf-gate` track's
+  duplicate-`PT_INTERP` half gained `eu-elflint` as its second oracle (readelf
+  checks the order, elflint the multiplicity, the kernel's loader neither),
+  UNPROBED by name when elfutils is absent.
 - **Not a hosted tool re-implemented.** The justification is the four-arch control
   and the preboot device access (Spike 3); if a spike could be done as well by
   running `readelf`/`cbfstool`/`tpm2_eventlog` alone, it isn't a spike, it's the

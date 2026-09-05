@@ -1,0 +1,102 @@
+Subject: [PATCH 67/67] forth/device: marker -- ANS forget, with the two refusals this dictionary needs (the device tree lives in it)
+
+Arch-tested: x86 amd64 ppc unix
+
+OpenBIOS had no marker/forget. The dict-budget measurement (2026-09-04) had
+shown that saving here and forth-last and writing them back reclaims the bytes
+exactly and the words vanish -- and found the two traps a marker word here has
+to encode, which is why it is not the four-line ANS definition:
+
+  1. The marks must be captured BEFORE the marker's own header is created. A
+     first hand-rolled draft (`here value mark`) captured here under the
+     value's header; restoring forth-last then pointed the chain at memory
+     the next definition overwrote, and the firmware segfaulted at ffffffff on
+     the next `:`. `marker` reads here, forth-last @ and active-package first,
+     then `create , , ,`, so executing the marker reclaims the marker itself
+     (ANS 15.6.2.1850) and the restored chain never touches its memory.
+
+  2. The device tree lives in the SAME dictionary: every node is alloc-tree'd
+     (= here swap allot), each node's two wordlist heads are `wordlist` (= here
+     0 ,), and every property struct, name copy and value copy is alloc-tree'd
+     too. A plain forget past any of them leaves the tree pointing into space
+     the next definition reuses. So a marker walks the tree (iterate-tree) and
+     REFUSES with abort" when any node, any word in a node's two wordlists, or
+     any property piece lies between the mark and here, and when the active
+     package is not the one at the mark (the compilation wordlist would be a
+     node's). Instances are alloc-mem'd and are not the dictionary's concern.
+     The address test is bounded to the dictionary (mark <= adr < here), so a
+     property whose value points elsewhere cannot refuse spuriously.
+
+Measured on all four arches (the `marker` track): the pointer returns to the
+mark BYTE-EXACTLY (unix 2de90 +384 -> 2de90; x86 1cb28 +324 -> 1cb28; amd64
+33828 +384 -> 33828; ppc 212c8 +324 -> 212c8), the words after the mark vanish
+($find answers 0), a word from before it still runs, a new one compiles after.
+A marker set before a node was created, before a method was added to an
+existing node, or before a property was added to one refuses -2 under catch
+with "the device tree grew after the mark -- forget refused", taking nothing
+(dict-used unchanged) and leaving the node's method answering; one executed
+under a different active package refuses with its own reason. Nested markers
+forget LIFO: the older reclaims the newer marker and everything between,
+byte-exactly. Each refusal isolates one sub-check: the method and property
+markers are set after the node exists.
+
+The first draft of mk-node-above? compared the node with ITSELF (a `dup` where
+`2dup` was needed) and refused the positive case on every run -- caught
+because the positive case is asserted beside the refusals, not instead of them.
+
+diff --git a/forth/device/extra.fs b/forth/device/extra.fs
+--- a/forth/device/extra.fs
++++ b/forth/device/extra.fs
+@@ -102,3 +102,52 @@
+   link-nodes
+ ;
+ 
++\ -------------------------------------------------------------------
++\ mklab (patch 67): marker -- ANS Forth 15.6.2.1850, with the two refusals
++\ THIS dictionary needs. OpenBIOS had no marker/forget; the dict-budget
++\ track measured (2026-09-04) that saving here and forth-last and writing
++\ them back reclaims the bytes exactly and the words vanish, and found the
++\ two traps: (1) the marks must be captured BEFORE the marker's own header
++\ is created, or restoring forth-last points the chain at memory the next
++\ definition overwrites (a segfault at ffffffff on the next `:`); (2) the
++\ device tree lives in the SAME dictionary -- every node (alloc-tree), each
++\ node's two wordlist heads (`wordlist` = here 0 ,), every property struct,
++\ name copy and value copy -- so forgetting past any of them leaves the
++\ tree pointing into reclaimed space. So a marker REFUSES when any node,
++\ node method, or property lies between the mark and here, or when the
++\ active package is not the one at the mark. Instances are alloc-mem'd and
++\ are not the dictionary's concern.
++\ -------------------------------------------------------------------
++
++\ true when adr is inside the dictionary at or above the mark
++: mk-above? ( mark adr -- flag )
++  dup here u< if swap u< 0= else 2drop false then ;
++
++\ the node itself, a word in either wordlist, or any property piece
++: mk-node-above? ( mark node -- flag )
++  2dup mk-above? if 2drop true exit then
++  2dup >dn.methods @ @ mk-above? if 2drop true exit then
++  2dup >dn.priv-methods @ @ mk-above? if 2drop true exit then
++  >dn.properties @
++  begin ?dup while
++    2dup mk-above? if 2drop true exit then
++    2dup >prop.name @ mk-above? if 2drop true exit then
++    2dup >prop.addr @ mk-above? if 2drop true exit then
++    >prop.next @
++  repeat drop false ;
++
++: mk-tree-above? ( mark -- flag )
++  iterate-tree-begin
++  begin dup while
++    2dup mk-node-above? if 2drop true exit then
++    iterate-tree
++  repeat 2drop false ;
++
++: marker ( "name" -- )
++  here forth-last @ active-package          ( h head ap -- captured first )
++  create , , ,                              \ body: ap | head | h
++  does>
++    dup @ active-package <> abort" marker: the active package is not the one at the mark"
++    dup 2 cells + @ mk-tree-above? abort" marker: the device tree grew after the mark -- forget refused"
++    dup cell+ @ dup forth-last ! latest !
++    2 cells + @ here! ;

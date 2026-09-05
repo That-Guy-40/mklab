@@ -137,6 +137,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`64-amd64-dictionary-1mib.patch`](64-amd64-dictionary-1mib.patch) | `PORT` | arch-local | **The port's 256 KiB dictionary did not hold the toolkit.** Patch 63's `dict-budget` measured 205 of 256 KiB spent at the prompt (33 KiB of it compiled at init, 3× the hosted target's) and `eventlog.fth` refused for room. arch/x86's multiboot door has had 1 MiB for years and this arch's own coreboot-payload door (`builtin.c`) already carries 1 MiB, so the two amd64 doors disagreed by 4×. One constant; `.bss`, so the image does not grow. Measured after: the whole toolkit compiles on amd64 and the overflow control names `dictlimit=100000` |
 | [`65-unix-dictionary-1mib.patch`](65-unix-dictionary-1mib.patch) | `DIVERGENCE` | arch-local | **The workbench was one file from the edge.** `dict-budget` measured the hosted target at 95% with the toolkit loaded (183 KiB spent at the prompt, +60 KiB, 13 KiB of 256 KiB left) — and `here!` only *prints* on overflow. Every other door now has 1 MiB (or ppc's 384 KiB); the target every `dsl/*.fth` edit is tried on first should not be the tightest. One constant, one mmap below 4 GiB at 0x30000000, clear of the arena. After: 781 KiB left (76%) — the whole toolkit compiles, and the overflow control names `dictlimit=100000` |
 | [`66-here-refuses-a-dictionary-overflow.patch`](66-here-refuses-a-dictionary-overflow.patch) | `UPSTREAM-BUG` | shared | **`here!` printed `Dictionary space overflow` and CONTINUED**, the pointer already past the end — the `dict-budget` track's OVER control showed it on every arch, and the byte after the dictionary is somebody else's: an unmapped page on unix (the next `.` segfaulted the firmware — its pad is at `here`), `console_ops` on ppc (one `,` rewrote two console function pointers behind an `ok`), `x86_nvram_backend` on x86, `last_key` on amd64. Now the pointer stays and -8 (ANS *dictionary overflow*) is thrown from C through `enterforth`, as ppc's `methods.c` has thrown -13 all along; `print-status` names it. Measured after on unix and ppc: -8 to the `catch`, `dict-used` unchanged, the neighbour bytes identical, the prompt intact. One consequence: `[DEFINE]` at a *running* prompt (its buffer is outside the dictionary) is refused where it used to be flagged and carried on |
+| [`67-marker-with-the-two-refusals-this-dictionary-needs.patch`](67-marker-with-the-two-refusals-this-dictionary-needs.patch) | `FEATURE` | shared | **`marker`, which OpenBIOS never had — with the two refusals THIS dictionary needs.** The marks are captured before the marker's own header (a draft that captured `here` under it segfaulted at `ffffffff` on the next `:`), and because the device tree is `allot`ed from the same dictionary — nodes, wordlist heads, property structs, names and values — a marker walks the tree and **refuses by name** when any of them lies above the mark, or when the active package differs. Byte-exact reclaim measured on all four arches; the three tree refusals each isolate one sub-check; nested markers forget LIFO. Track: `marker` |
 
 ## What the sort says
 
@@ -144,7 +145,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 |---|---|---|
 | `UPSTREAM-BUG` | 31 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 12 | `arch/amd64`, which upstream ships and has not built since 2003 |
-| `FEATURE` | 16 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
+| `FEATURE` | 17 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, a build that can be made reproducible on request, and a `write-file` that lets the hosted firmware author a real host file |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 4 | patch 15 (the Forth loader), patch 50 (the unix arena below 4 GiB), patch 51 (the unix exit status), and patch 65 (the unix dictionary at 1 MiB) |
 | `RECORD` | 1 | bookkeeping |
@@ -153,7 +154,7 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 40 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 41 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 26 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only the `DIVERGENCE` rows are divergences in the sense of "we want different

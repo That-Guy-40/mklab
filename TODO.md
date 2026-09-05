@@ -587,19 +587,35 @@ requires of any other cached fact.
             consequence: `[DEFINE]` typed at a *running* prompt (its buffer is outside the
             dictionary; upstream's check already flagged it and carried on) is refused now; every
             shipped `[DEFINE]` runs at dictionary-build time, where the check is off.
-      - [ ] **no `marker`/`forget` in OpenBIOS.** Measured 2026-09-04 on unix: saving `here` and
-            `last @` into pre-existing values and writing them back reclaims the bytes exactly and
-            the words vanish (`w2: undefined word`), and new definitions compile after. Two traps
-            for a `marker` word to encode: the marks must live BELOW the restore point (a
-            `here value mark` captured `here` under the marker itself → segfault at `ffffffff` on
-            the next definition), and the device tree lives in the same dictionary, so forgetting
-            past a node creation (`fdt>dt`) leaves the tree dangling.
+      - [x] **no `marker`/`forget` in OpenBIOS** — **[patch 67](examples/openbios-the-rival-that-shipped/patches/67-marker-with-the-two-refusals-this-dictionary-needs.patch),
+            2026-09-04, track `marker`.** Measured first on unix: saving `here` and `last @` and
+            writing them back reclaims the bytes exactly and the words vanish. The two traps are
+            encoded: the marks are captured BEFORE the marker's own header (`here forth-last @
+            active-package create , , ,` — the draft that captured `here` under a `value` segfaulted
+            at `ffffffff` on the next `:`), and because the device tree is `allot`ed from the same
+            dictionary (nodes via `alloc-tree`, wordlist heads via `wordlist`, property structs,
+            names and values), the marker walks the tree and REFUSES by name when any of them lies
+            between the mark and `here`, or when the active package differs. On all four arches:
+            byte-exact reclaim (unix `2de90 +384 → 2de90`, x86 `1cb28`, amd64 `33828`, ppc `212c8`),
+            the words after the mark gone, one from before intact, a new one compiles after; node /
+            method / property / active-package refusals each `-2` with nothing taken and the node's
+            method still answering; nested markers forget LIFO. The first draft of the tree check
+            compared a node with ITSELF and refused the positive case — caught because the positive
+            case is asserted beside the refusals.
       - [x] **unix's dictionary was at 95%** with the toolkit loaded (256 KiB, 13 KiB left) —
             **patch 65, 2026-09-04: 1 MiB**, like every other door (ppc 384 KiB). The workbench every
             dsl file is tried on first should not be the tightest. After: 781 KiB left (76%) — the whole toolkit compiles, and the overflow control names `dictlimit=100000`
-      - [ ] **`readelf` does not check a duplicate `PT_INTERP`** — `?ph-order` is stricter than
-            the oracle there, said so per run; a second oracle for that half (e.g. `llvm-readobj`
-            or the kernel's `load_elf_binary`) would close the asymmetry.
+      - [x] **`readelf` does not check a duplicate `PT_INTERP`** — **second oracle wired 2026-09-04:
+            `eu-elflint`** (elfutils), whose `check_program_header` counts `PT_INTERP` entries and
+            reports *"more than one INTERP entry in program header"* (`src/elflint.c`, 0.192). The
+            two candidates the note named were read and rejected: `llvm-readobj` is a printer, and
+            the kernel's `load_elf_binary` (`fs/binfmt_elf.c`, v6.12) takes the FIRST `PT_INTERP`
+            and `break`s — it never sees a second one and never looks at order. So the two oracles
+            split the gABI sentence: `readelf` the ORDER, `elflint` the MULTIPLICITY, the firmware
+            refuses both, the kernel neither. The `elf-gate` track measures elflint on all three
+            fixtures per run (it must flag `baddup.elf` and not `good.elf`; what it says about
+            `badord.elf` is recorded) and names the half **UNPROBED** in its verdict when elfutils
+            is absent; CI installs `elfutils`. Not yet measured on this host (no elfutils).
       History below. —
       v1 (2026-09-01), feasibility checked before writing (CBFS is BE `'ORBC'`; the two
       `struct.fth` primitives are genuinely absent; a real `coreboot.rom` exists to

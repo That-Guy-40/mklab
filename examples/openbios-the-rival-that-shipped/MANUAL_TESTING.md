@@ -564,6 +564,41 @@ blanked: *"a word defined after the refused allot did not run"*.
 PASS: B.3 plan §6's unmeasured dictionary budget, MEASURED on all four arches with the running firmware's own numbers (patch 63: dict-limit/dict-used are the two cells here! compares). unix: 1024 KiB limit, 183 KiB at boot, +59 KiB compiled, 780 KiB left — FITS (12 files); x86: 1024 KiB limit, 114 KiB at boot, +37 KiB compiled, 871 KiB left — FITS (13 files); amd64: 1024 KiB limit, 205 KiB at boot, +67 KiB compiled, 750 KiB left — FITS (13 files); ppc: 384 KiB limit, 132 KiB at boot, +37 KiB compiled, 214 KiB left — FITS (12 files);  Every cost is a per-file delta of dict-used, the boot figure is the .dict file's header length (read on the host) plus what init compiled, and the controls fire on every arch: allotting 10 bytes past the room prints the kernel's 'Dictionary space overflow' line naming the SAME limit dict-limit answers AND IS REFUSED (patch 66: -8 to the catch around it, not a byte taken, a word defined afterwards runs — where before the same allot returned with here past the end, the next '.' segfaulted the hosted target and one ',' on ppc rewrote two of console_ops' function pointers behind an ok), allotting 10 bytes short prints nothing and completes, and there is exactly one such line per run. A file is compiled only when 1.5× its source size fits the room left; one that does not is named NO-ROOM whole rather than refused by the kernel halfway through a definition, and everything after it is SKIPped by name
 ```
 
+### `marker`, which OpenBIOS never had — patch 67, run 2026-09-04
+
+A plain ANS `marker` (save `here` and the wordlist head, write them back) is unsafe in this firmware
+for a reason the dict-budget measurement surfaced: the device tree is `allot`ed from the same
+dictionary — every node (`alloc-tree` = `here swap allot`), each node's two wordlist heads
+(`wordlist` = `here 0 ,`), every property struct, name copy and value copy. Forgetting past any of
+them leaves the tree pointing into space the next definition reuses. And the marks must be captured
+*before* the marker's own header exists: a draft that did `here value mark` captured `here` under the
+value, and restoring the chain to it segfaulted at `ffffffff` on the next `:`.
+
+So patch 67's `marker` captures `here forth-last @ active-package` first, then `create , , ,`, and
+on execution walks the tree (`iterate-tree`) and **refuses** when any node, any word in a node's two
+wordlists, or any property piece lies between the mark and `here`, or when the active package is not
+the one at the mark. The `marker` track types the same 31 lines at all four prompts:
+
+| arch | mark → after definitions → after the marker | refusals (node / method / property / active pkg) | LIFO |
+|---|---|---|---|
+| unix | `2de90` → `+384` → `2de90` | `-2` ×4, `dict-used` unchanged, `MM=6` | `2e0e0` → `2e0e0`, `x2` and `mb` gone |
+| x86 | `1cb28` → `+324` → `1cb28` | same | `1cc60` → `1cc60` |
+| amd64 | `33828` → `+384` → `33828` | same | `33a78` → `33a78` |
+| ppc | `212c8` → `+324` → `212c8` | same | `21400` → `21400` |
+
+Each tree refusal isolates one sub-check (the method and property markers are set after the node
+exists). **The grader was watched to bite** on six mutations of the real unix log: an inexact
+restore (`DUC` +8), `w2` still findable, the node refusal answering 0, a refusal that took bytes,
+`x2` surviving the older marker, and no definition compiling afterwards — each fails by name.
+**And the control found the first defect:** the draft of `mk-node-above?` compared a node with
+*itself* (`dup` where `2dup` was needed) and refused the positive case on every run.
+
+The `elf-gate` track's duplicate-`PT_INTERP` half gained its second oracle the same day: `eu-elflint`
+reports *more than one INTERP entry in program header*; `readelf` does not check it, and the kernel's
+`load_elf_binary` takes the first `PT_INTERP` and never looks again (read in `fs/binfmt_elf.c`,
+v6.12). The track measures elflint per run and says **UNPROBED** in its verdict when elfutils is
+absent, which it was on this host at the time of writing; CI installs it.
+
 ### The `fdt` track — the live device tree, flattened, graded by `dtc` (B.3 Spike 4)
 
 Needs `device-tree-compiler` (`dtc`, `fdtdump`, `fdtget`) and all three firmwares
