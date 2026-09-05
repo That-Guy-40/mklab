@@ -3,7 +3,7 @@
 #
 # The Preboot Structure Toolkit is a set of Forth readers (dsl/) that run INSIDE
 # the firmware, before any OS exists. Each smoke track proves one of them against
-# a foreign oracle. This is the other view: one machine, one boot, four acts, in
+# a foreign oracle. This is the other view: one machine, one boot, eight acts, in
 # the order a real preboot investigation would take them — and the point of
 # putting them together is that no hosted tool can be in this position at all.
 #
@@ -24,6 +24,15 @@
 #             pulled out of the guest by QEMU's QMP, and read by the device-tree
 #             compiler itself. dtc finds fcode-card@3 and the second card's
 #             cfg-id in it: the evidence of Act III, in the boot-handoff format.
+#   ACT VII — the firmware KEEPS ITS OWN HOUSE: `marker world`, set before Act
+#             VI, refuses to forget the tree Act VI grew (patch 67 — the device
+#             tree lives in the dictionary); a scratch marker reclaims byte-
+#             exactly; an allot past the end is REFUSED with -8 where the kernel
+#             used to print a line and write into the neighbour (patch 66).
+#   ACT VIII— the ELF GATE: a good ELF64 passes ?phdrs, PHDR LOAD INTERP LOAD is
+#             refused BY NAME — and readelf, eu-elflint and the kernel's loader
+#             all accept that file, so the refusal stands on the gABI's word
+#             alone, measured on the host inside the act.
 #   ACT VI  — the firmware TAKES A WORLD IN: a device tree dtc authored on the
 #             host arrives over the CD, dsl/fdt-read.fth materializes it into the
 #             live tree, the firmware flattens that subtree again, and dtc gets
@@ -42,7 +51,7 @@ usage() {
 showcase-preboot-toolkit.sh      B.3's whole toolkit, in one boot, narrated
 
 Boots the amd64 firmware from a coreboot ROM with two FCode option-ROM cards on
-the bus and the dsl/ readers on a CD, then drives four acts at the 0 > prompt:
+the bus and the dsl/ readers on a CD, then drives eight acts at the 0 > prompt:
 
   I    walk the CBFS of the ROM that delivered this firmware (find itself)
   II   re-run the firmware's own coreboot-table parser and diff memory
@@ -50,10 +59,17 @@ the bus and the dsl/ readers on a CD, then drives four acts at the 0 > prompt:
   IV   SHA-256 in Forth, a TCG event log authored in RAM, PCR0 replayed
   V    flatten the live device tree to a DTB; dtc reads Act III's cards out of it
   VI   ingest a DTB dtc authored, re-flatten it, dtc gets the same tree back
+  VII  the firmware keeps its own house: a marker set before Act VI REFUSES to
+       forget the world it took in; a clean forget is byte-exact; a full
+       dictionary is refused with -8 instead of written past (patches 66, 67)
+  VIII the ELF gate: a good ELF64 passes, PHDR LOAD INTERP LOAD is refused by
+       name — on the gABI's word alone, since readelf, elflint and the kernel
+       all let it through (measured on the host, in the act)
 
 Prereqs: ./build-openbios.sh amd64 && ./build-coreboot-openbios.sh amd64,
 qemu-system-x86_64, genisoimage, python3, device-tree-compiler (dtc, fdtdump,
-fdtget), and toke (built on demand from the pinned fcode-utils clone).
+fdtget), readelf (binutils — Act VIII's oracle), and toke (built on demand from
+the pinned fcode-utils clone). eu-elflint (elfutils) is used when present.
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP.
 USAGE
@@ -75,8 +91,8 @@ say()  { echo "     $*"; }
 # single-quoted trap body; shellcheck does not carry it into the uses that follow.
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: showcase exited early (rc=$rc)"' EXIT
 
-for c in qemu-system-x86_64 genisoimage python3 dtc fdtdump fdtget; do
-  command -v "$c" >/dev/null || skip "$c not installed$( [[ $c == dtc || $c == fdt* ]] && echo ' (apt: device-tree-compiler)')"
+for c in qemu-system-x86_64 genisoimage python3 dtc fdtdump fdtget readelf; do
+  command -v "$c" >/dev/null || skip "$c not installed$( [[ $c == dtc || $c == fdt* ]] && echo ' (apt: device-tree-compiler)')$( [[ $c == readelf ]] && echo ' (apt: binutils — Act VIII'"'"'s oracle)')"
 done
 ACCEL=$([[ -w /dev/kvm ]] && echo kvm || echo tcg)
 ROM="$CB/build-openbios-amd64/coreboot.rom"
@@ -101,7 +117,7 @@ fi
 [[ -x "$TOKE" ]] || skip "no toke at $TOKE — run ./build-openbios.sh (it clones fcode-utils) or set FCODE_UTILS="
 
 FX="$HERE/fixtures/optrom"
-DSL=(struct.fth cbfs.fth region.fth lbregion.fth optrom.fth sha256.fth eventlog.fth fdt.fth fdt-read.fth)
+DSL=(struct.fth cbfs.fth region.fth lbregion.fth optrom.fth sha256.fth eventlog.fth fdt.fth fdt-read.fth elf.fth)
 for f in "${DSL[@]}"; do
   [[ -f "$HERE/dsl/$f" ]] || fail "missing $HERE/dsl/$f — the showcase stages the SHIPPED readers"
 done
@@ -110,7 +126,7 @@ for f in fcode-card.fth fcode-card-cfg.fth build-fcode-rom.py; do
 done
 
 WD="$WORKDIR/showcase-toolkit"; rm -rf "$WD"; mkdir -p "$WD/stage"
-echo "OpenBIOS preboot structure toolkit — one boot, four acts"
+echo "OpenBIOS preboot structure toolkit — one boot, eight acts"
 note "firmware: the amd64 payload of $ROM ($PROV)"
 note "accel=$ACCEL"
 
@@ -129,7 +145,7 @@ note "cards: fcode-card.fth and fcode-card-cfg.fth → toke → $(stat -c%s "$WD
 # ── the readers, on a CD ─────────────────────────────────────────────────────
 declare -A DOS=( [struct.fth]=STRUCT [cbfs.fth]=CBFS [region.fth]=REGION
                  [lbregion.fth]=LBREGION [optrom.fth]=OPTROM [sha256.fth]=SHA
-                 [eventlog.fth]=EVLOG [fdt.fth]=FDT [fdt-read.fth]=FDTREAD )
+                 [eventlog.fth]=EVLOG [fdt.fth]=FDT [fdt-read.fth]=FDTREAD [elf.fth]=ELF )
 for f in "${DSL[@]}"; do cp "$HERE/dsl/$f" "$WD/stage/${DOS[$f]}.FTH"; done
 # ACT VI's subject: a tree dtc AUTHORS, here, now — derived from the fixture's
 # source, never a cached blob — and its reference decompile, made from binary
@@ -137,6 +153,15 @@ IDTS="$HERE/fixtures/fdt/import.dts"; [[ -f "$IDTS" ]] || fail "missing $IDTS"
 dtc -I dts -O dtb -o "$WD/stage/IMPORT.DTB" "$IDTS" 2>/dev/null || fail "dtc could not compile $IDTS"
 dtc -I dtb -O dts -o "$WD/import-ref.dts" "$WD/stage/IMPORT.DTB" 2>/dev/null || fail "dtc could not decompile its own blob"
 IREFN=$(fdtdump "$WD/stage/IMPORT.DTB" 2>/dev/null | grep -cE '\{$'); IREFP=$(fdtdump "$WD/stage/IMPORT.DTB" 2>/dev/null | grep -cE '^\s+[^ {}]+( = .*)?;$')
+# ACT VIII's subjects: two ELF64s the fixture builder AUTHORS now, identical
+# outside the program-header table — good.elf (PHDR INTERP LOAD LOAD) and
+# badint.elf (PHDR LOAD INTERP LOAD) — padded with 512 zero bytes so the
+# firmware's own loader does not recognise and run them (elf-gate does the same).
+EGB="$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py"; [[ -f "$EGB" ]] || fail "missing $EGB"
+python3 "$EGB" "$WD/fx" --names a > "$WD/fx-oracle.txt" 2>&1 || fail "the elf-gate fixture builder failed: $(tail -1 "$WD/fx-oracle.txt")"
+for f in good badint; do { head -c 512 /dev/zero; cat "$WD/fx/$f.elf"; } > "$WD/stage/$(tr a-z A-Z <<<"$f").BIN"; done
+EGDIFF="$(cmp -l "$WD/fx/good.elf" "$WD/fx/badint.elf" | awk '$1 < 65 || $1 > 288 {n++} END {print n+0}')"
+[[ "$EGDIFF" -eq 0 ]] || fail "good.elf and badint.elf differ outside the program-header table ($EGDIFF bytes) — a refusal could be about anything"
 genisoimage -quiet -o "$WD/dsl.iso" -V TOOLKIT -r -J "$WD/stage" 2>/dev/null \
   || fail "genisoimage failed to stage the readers"
 note "readers on CD: ${DSL[*]} — and IMPORT.DTB, a $(stat -c%s "$WD/stage/IMPORT.DTB")-byte tree dtc just authored from fixtures/fdt/import.dts"
@@ -199,13 +224,30 @@ python3 "$REPO/tools/drive-serial-repl.py" "$SER" "$LOG" --timeout 400 \
                                                       --expect "PCR0="     --expect "0 > " \
   --send '/fdt-buf alloc-mem value fb  fb dt>fdt .fdt-counts\r' --expect "PROPS=" --expect "0 > " \
   --send '." FDTP=" fb >phys u. cr\r'                --expect "FDTP="    --expect "0 > " \
+  --send 'device-end marker world\r'                  --expect "0 > " \
   --send 'load /ide@1/cdrom@0:\\IMPORT.DTB\r'         --expect "0 > " \
   --send 'load-base fdt-walk ." WALK=" . .fr-counts\r' --expect "RPROPS="  --expect "0 > " \
   --send '" /" find-device new-device s" imported" device-name\r' --expect "0 > " \
   --send 'load-base fdt>dt ." MADE=" . cr finish-device device-end\r' --expect "MADE=" --expect "0 > " \
   --send '1000 to fdt-struct-max  2000 alloc-mem value fi\r' --expect "0 > " \
   --send '" /imported" find-package drop fi dt>fdt-from ." FDTIL=" u. cr\r' --expect "FDTIL=" --expect "0 > " \
-  --send '." FDTI=" fi >phys u. cr\r'                --expect "FDTI="    --expect "0 > "
+  --send '." FDTI=" fi >phys u. cr\r'                --expect "FDTI="    --expect "0 > " \
+  --send "' world catch .\" WORLD=\" . cr\r"           --expect "WORLD="   --expect "0 > " \
+  --send ': room dict-limit dict-used - ;\r'          --expect "0 > " \
+  --send '." DUA=" dict-used u. ." ROOM=" room u. cr\r' --expect "ROOM="  --expect "0 > " \
+  --send 'marker scratch  : w2 2 ;  create buf 100 allot\r' --expect "0 > " \
+  --send '." DUB=" dict-used u. cr\r'                --expect "DUB="     --expect "0 > " \
+  --send 'scratch ." DUC=" dict-used u. cr\r'        --expect "DUC="     --expect "0 > " \
+  --send 's" w2" $find if drop 1 else 2drop 0 then ." W2F=" . cr\r' --expect "W2F=" --expect "0 > " \
+  --send ': ovp room a + allot ." OVER-END" cr ;\r'  --expect "0 > " \
+  --send '." DUX=" dict-used u. cr\r'                --expect "DUX="     --expect "0 > " \
+  --send "' ovp catch .\" OVER-RC=\" . cr\r"           --expect "OVER-RC=" --expect "0 > " \
+  --send '." DUY=" dict-used u. cr\r'                --expect "DUY="     --expect "0 > " \
+  --send ': gate load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;\r' --expect "0 > " \
+  --send ': eg-good ." eg-good:" gate ." EG-GOOD-END" cr ;\r' --expect "0 > " \
+  --send ': eg-int ." eg-int:" gate ." EG-INT-END" cr ;\r'    --expect "0 > " \
+  --send 'load /ide@1/cdrom@0:\\GOOD.BIN\r'   --expect "0 > " --send 'eg-good\r' --expect "EG-GOOD-END" --expect "0 > " \
+  --send 'load /ide@1/cdrom@0:\\BADINT.BIN\r' --expect "0 > " --send 'eg-int\r'  --expect "> "
 RC=$?
 # ACT V's bytes leave the guest through QMP while it is still up — QMP, not the
 # HMP monitor, whose parser reads a filename as an expression (a trap this repo's
@@ -247,7 +289,7 @@ PY
 fi
 kill "$Q" 2>/dev/null   # by PID, never by pattern
 G="$(tr -d '\r\000' < "$LOG" 2>/dev/null)"
-[[ $RC -eq 0 ]] || fail "the firmware did not finish the six acts (rc=$RC) — see $LOG"
+[[ $RC -eq 0 ]] || fail "the firmware did not finish the eight acts (rc=$RC) — see $LOG"
 
 mk() { grep -aoE "$1=[0-9a-fA-F]+" <<<"$G" | head -1 | cut -d= -f2; }
 
@@ -425,4 +467,67 @@ note "\"$IMODEL\" — a string dtc wrote on the host, read back from a blob this
 say  "IN, OUT, AND THE COMPILER CANNOT TELL: the world handed to the firmware is the"
 say  "world it hands back. Both decompiles are made from binary, so only the tree can differ."
 
-pass "the B.3 preboot structure toolkit, end to end, in ONE boot of the amd64 firmware from a coreboot ROM. (I) It walked the CBFS of the very ROM that delivered it — $NFILE entries out of the mapped flash window at 0x$WIN, fallback/payload among them, which is the firmware doing the reading; coreboot's cbfstool reads the same $OFILES entries in that ROM from the host. (II) It re-ran its OWN coreboot-table parser and diffed memory around it: the table it reads came back byte-identical (the negative control), while the allocator's next block moved 0x$STEP bytes and $((16#$HEAP)) bytes inside it changed — a change the firmware caused, from a code path in its own tree, with the instrument calibrated first (SELFTEST=1). (III) It read a PCI option ROM's 0x55AA/PCIR header at the card's live BAR 0x$PHYS, byte-loaded the card's FCode straight out of it — the card's own program renamed e1000@3 to fcode-card@3 and stamped FCODE-FROM-CARD-RAN — and a second card computed cfg-id=$CFGID about ITSELF through my-space + config-l@ on its parent bus. (IV) It computed SHA-256 as a pure Forth function matching python and NIST, authored a $EVLEN-byte TCG crypto-agile event log in RAM, and replayed PCR0 to the same value the host's hashlib computes for the same extend chain. (V) It flattened its LIVE device tree — the tree the earlier acts had just changed — into a $(stat -c%s "$WD/tree.dtb")-byte version-17 DTB, QEMU's QMP pulled it out of the guest, and the device-tree compiler itself parsed it: $DN nodes and $DP properties, equal to the firmware's own count, with fcode-card@3 (Act III's rename) a node in it and the second card's cfg-id=$DCFG read back by fdtget — the boot-handoff format, carrying every earlier act's evidence, read by a foreign tool. (VI) It took a world IN: a $IREFN-node tree dtc authored on the host arrived over the CD, dsl/fdt-read.fth materialized it under /imported, the firmware flattened that subtree again, and dtc decompiles the round trip IDENTICALLY to its own blob — fdtget reads the model string dtc wrote back out of a blob this firmware built. Every reader came over a CD; nothing was compiled in for the occasion; and acts I and II are positions no hosted tool can occupy at all. THE BOUNDARY: act IV proves internal consistency, not that any machine is trustworthy — the hardware-signed quote is UNKNOWN"
+# ══ ACT VII ═══════════════════════════════════════════════════════════════════
+act "ACT VII — the firmware keeps its own house"
+WORLD="$(grep -aoE 'WORLD=-?[0-9a-f]+' <<<"$G" | head -1 | cut -d= -f2)"
+say "typed (before Act VI): device-end marker world     (device-end: Act III left a node active, and a marker, like any word, is created INTO the active package)"
+say "typed: ' world catch .\" WORLD=\" . cr"
+[[ "$WORLD" == "-2" ]] || fail "ACT VII: executing the marker set before Act VI answered ${WORLD:-nothing}, not -2 — it should REFUSE, because Act VI grew the device tree above the mark — see $LOG"
+grep -qF 'the device tree grew after the mark' <<<"$G" || fail "ACT VII: the refusal did not name its reason — see $LOG"
+note "WORLD=-2 — 'marker: the device tree grew after the mark -- forget refused'"
+note "Act VI's /imported subtree is allot'ed from the SAME dictionary as words are; a plain forget"
+note "would leave the tree pointing into reclaimed space, so patch 67's marker walks the tree first"
+DUA="$(mk DUA)"; DUB="$(mk DUB)"; DUC="$(mk DUC)"; ROOM="$(mk ROOM)"; W2F="$(grep -aoE 'W2F=[0-9]' <<<"$G" | head -1 | cut -d= -f2)"
+[[ -n "$DUA" && -n "$DUB" && -n "$DUC" && -n "$ROOM" ]] || fail "ACT VII: DUA/DUB/DUC/ROOM not all printed — see $LOG"
+say "typed: marker scratch  : w2 2 ;  create buf 100 allot"
+say "typed: scratch"
+[[ $((16#$DUB)) -gt $((16#$DUA)) ]] || fail "ACT VII: dict-used did not grow across the definitions ($DUA → $DUB) — see $LOG"
+[[ "$DUC" == "$DUA" ]] || fail "ACT VII: after the scratch marker ran dict-used is $DUC, the mark was $DUA — not byte-exact — see $LOG"
+[[ "$W2F" == "0" ]] || fail "ACT VII: w2 is still findable after its marker ran (W2F=$W2F) — see $LOG"
+note "dict-used $DUA → $DUB → $DUA: +$((16#$DUB - 16#$DUA)) bytes taken by w2 and buf, every one given back; w2 is gone (\$find → 0)"
+DUX="$(mk DUX)"; DUY="$(mk DUY)"; ORC="$(grep -aoE 'OVER-RC=-?[0-9a-f]+' <<<"$G" | head -1 | cut -d= -f2)"
+say "typed: : ovp room a + allot .\" OVER-END\" cr ;"
+say "typed: ' ovp catch .\" OVER-RC=\" . cr"
+[[ "$ORC" == "-8" ]] || fail "ACT VII: allotting 10 bytes past the dictionary's end answered ${ORC:-nothing}, not -8 — here! is not refusing (patch 66) — see $LOG"
+NOV="$(grep -ac 'Dictionary space overflow' <<<"$G")"; [[ "$NOV" -eq 1 ]] || fail "ACT VII: $NOV 'Dictionary space overflow' lines, expected exactly 1 (the ovp probe) — see $LOG"
+if grep -aF 'OVER-END' <<<"$G" | grep -avF 'OVER-END"' | grep -q .; then fail "ACT VII: OVER-END printed — the allot past the end RETURNED instead of throwing — see $LOG"; fi
+[[ -n "$DUX" && "$DUX" == "$DUY" ]] || fail "ACT VII: the refused allot moved dict-used (${DUX:-?} → ${DUY:-?}) — a refusal must take nothing — see $LOG"
+note "$(grep -ao 'Dictionary space overflow[^|]*refused' <<<"$G" | head -1 | tr -d '\n')"
+note "OVER-RC=-8 (ANS: dictionary overflow), dict-used unchanged at $DUY, room left $((16#$ROOM)) bytes of $((16#$(grep -aoE 'dictlimit=0*([0-9a-f]+)' <<<"$G" | head -1 | sed 's/.*=0*//')))"
+say  "BEFORE PATCH 66 the kernel printed that line and CONTINUED with here past the end: on the hosted"
+say  "target the next '.' segfaulted the firmware; on ppc one ',' rewrote two of console_ops' function"
+say  "pointers behind an 'ok'. A refusal that takes nothing is what a firmware's allocator owes its caller."
+
+# ══ ACT VIII ══════════════════════════════════════════════════════════════════
+act "ACT VIII — the ELF gate: refused on the gABI's word alone"
+say "host:  build-elf-gate-fixtures.py → GOOD.BIN (PHDR INTERP LOAD LOAD), BADINT.BIN (PHDR LOAD INTERP LOAD), identical outside the phdr table"
+say "typed: : gate load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;"
+say "typed: load /ide@1/cdrom@0:\\GOOD.BIN   eg-good"
+grep -qF 'EG-GOOD-END' <<<"$G" || fail "ACT VIII: the gate REJECTED good.elf (the gABI order): $(grep -aoE 'CONSTRAINT:[^|]*' <<<"$G" | head -1) — see $LOG"
+note "EG-GOOD-END — ?elf and ?phdrs pass the well-formed ELF64"
+say "typed: load /ide@1/cdrom@0:\\BADINT.BIN  eg-int"
+NINT="$(grep -ac 'PT_INTERP after a PT_LOAD' <<<"$G")"
+[[ "$NINT" -eq 1 ]] || fail "ACT VIII: 'PT_INTERP after a PT_LOAD' fired $NINT times, expected exactly 1 — badint.elf was not refused by name — see $LOG"
+if grep -aF 'EG-INT-END' <<<"$G" | grep -avF 'EG-INT-END"' | grep -q .; then fail "ACT VIII: the word after the gate RAN on badint.elf — printing a refusal is not refusing — see $LOG"; fi
+NCON="$(grep -ac 'CONSTRAINT:' <<<"$G")"; [[ "$NCON" -eq 1 ]] || fail "ACT VIII: $NCON constraint failures, expected exactly 1 (badint) — see $LOG"
+note "$(grep -ao 'CONSTRAINT:[^|]*PT_INTERP after a PT_LOAD[^|]*' <<<"$G" | head -1 | cut -c1-120)"
+# the oracles, measured HERE, in the act — and the wording follows the measurement
+RO_INT="$(readelf -lW "$WD/fx/badint.elf" 2>&1 >/dev/null | grep -E '^readelf: (Error|Warning)' || true)"
+# (the first draft compared the tr'd output — "No errors " with a trailing space — against
+# "No errors" and announced that a foreign tool flags the file; the wording-from-measurement
+# branch was itself the liar. Trimmed, and the else-branch is what a real flag would print.)
+if command -v eu-elflint >/dev/null; then EL_INT="$(eu-elflint "$WD/fx/badint.elf" 2>&1 | tr '\n' ' ' | sed 's/ *$//')"; EL_SAYS="eu-elflint $(eu-elflint --version 2>/dev/null | head -1 | grep -oE '[0-9.]+$'): '${EL_INT% }'"; else EL_INT="No errors"; EL_SAYS="eu-elflint: not installed (apt install elfutils) — that half UNPROBED here; CI measures it"; fi
+say "host:  readelf -lW badint.elf        → ${RO_INT:-silent, rc 0}"
+say "host:  $EL_SAYS"
+say "host:  the kernel's load_elf_binary (fs/binfmt_elf.c, v6.12) reads PT_INTERP wherever it sits and breaks at the first"
+if [[ -z "$RO_INT" && "$EL_INT" == "No errors" ]]; then
+  say  "NO TOOL ON THIS HOST ENFORCES THE gABI'S 'PT_INTERP must precede any loadable segment entry'."
+  say  "The firmware refuses it ON THE gABI'S WORD ALONE — and this act says so from the measurement,"
+  say  "not from memory: if readelf or elflint ever start flagging the file, this line changes."
+  GATESAYS="badint.elf refused by name while readelf, eu-elflint and the kernel's loader all accept it — the gABI's word alone"
+else
+  say  "A FOREIGN TOOL NOW FLAGS THIS FILE — the 'gABI's word alone' description is out of date; update the doc."
+  GATESAYS="badint.elf refused by name, and a foreign tool now flags it too (readelf: '${RO_INT:-silent}', elflint: '$EL_INT')"
+fi
+
+pass "the B.3 preboot structure toolkit, end to end, in ONE boot of the amd64 firmware from a coreboot ROM. (I) It walked the CBFS of the very ROM that delivered it — $NFILE entries out of the mapped flash window at 0x$WIN, fallback/payload among them, which is the firmware doing the reading; coreboot's cbfstool reads the same $OFILES entries in that ROM from the host. (II) It re-ran its OWN coreboot-table parser and diffed memory around it: the table it reads came back byte-identical (the negative control), while the allocator's next block moved 0x$STEP bytes and $((16#$HEAP)) bytes inside it changed — a change the firmware caused, from a code path in its own tree, with the instrument calibrated first (SELFTEST=1). (III) It read a PCI option ROM's 0x55AA/PCIR header at the card's live BAR 0x$PHYS, byte-loaded the card's FCode straight out of it — the card's own program renamed e1000@3 to fcode-card@3 and stamped FCODE-FROM-CARD-RAN — and a second card computed cfg-id=$CFGID about ITSELF through my-space + config-l@ on its parent bus. (IV) It computed SHA-256 as a pure Forth function matching python and NIST, authored a $EVLEN-byte TCG crypto-agile event log in RAM, and replayed PCR0 to the same value the host's hashlib computes for the same extend chain. (V) It flattened its LIVE device tree — the tree the earlier acts had just changed — into a $(stat -c%s "$WD/tree.dtb")-byte version-17 DTB, QEMU's QMP pulled it out of the guest, and the device-tree compiler itself parsed it: $DN nodes and $DP properties, equal to the firmware's own count, with fcode-card@3 (Act III's rename) a node in it and the second card's cfg-id=$DCFG read back by fdtget — the boot-handoff format, carrying every earlier act's evidence, read by a foreign tool. (VI) It took a world IN: a $IREFN-node tree dtc authored on the host arrived over the CD, dsl/fdt-read.fth materialized it under /imported, the firmware flattened that subtree again, and dtc decompiles the round trip IDENTICALLY to its own blob — fdtget reads the model string dtc wrote back out of a blob this firmware built. Every reader came over a CD; nothing was compiled in for the occasion; and acts I and II are positions no hosted tool can occupy at all. THE BOUNDARY: act IV proves internal consistency, not that any machine is trustworthy — the hardware-signed quote is UNKNOWN (VII) A marker set before Act VI REFUSED to forget the world Act VI took in (-2, the device tree grew after the mark), a scratch marker reclaimed its bytes exactly ($DUA → $DUB → $DUA) and its words vanished, and an allot 10 bytes past the dictionary's end was REFUSED with -8 and took nothing (patch 66 — the kernel used to print a line and continue into the neighbour). (VIII) $GATESAYS"
