@@ -1110,6 +1110,15 @@ that is itself serving NFS. That is a run, not a role.
   **already vendored** at [`examples/debian-http-boot/upstream-tutorial/`](examples/debian-http-boot/upstream-tutorial/);
   the RAM-root-over-HTTP building block.
 
+- [ ] **`sstrip` (ELFkickers) in the RAM-boot image pipeline — parked here on 2026-09-05,
+      where it belongs.** The preboot-Forth proposal of 2026-08-29 bundled `sstrip` with the
+      firmware structure work; its review (`REVIEW-preboot-forth-as-a-poke-engine.md` G5, step 7)
+      found it is a *different project*: a host-side pass over a file at rest, before the image is
+      assembled, and none of that path goes through firmware. Never done, and nobody has asked for
+      it. If it is ever wanted, this is the lab: measure what `sstrip` saves on a real RAM-booted
+      static binary (bytes, and the boot-time delta over HTTP), and keep the un-stripped build as
+      the control — the ELFkickers source is already vendored as an oracle in the OpenBIOS lab.
+
 ## 5. AlmaLinux: demo + automated run (RHEL-family `rd.break`, mirror Rocky)
 
 The AlmaLinux sibling of the Rocky root-password-reset work
