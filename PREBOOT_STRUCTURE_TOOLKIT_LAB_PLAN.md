@@ -829,9 +829,14 @@ authored has none). Track: `fdt-import`.
   `dictlimit=100000`. **Patch 65 (2026-09-04) did the same for the hosted target** — the
   workbench every dsl file is tried on first was at 95%, one file from the edge.
   The measurement also found the kernel's only protection: `here!`
-  prints `Dictionary space overflow` and **continues** into whatever `.bss`
-  follows — which is why the track guards every evaluate at 1.5× source size
-  and refuses by name (`NO-ROOM`) instead of compiling past the end.
+  printed `Dictionary space overflow` and **continued** into whatever follows
+  the dictionary — an unmapped page on unix (the next `.` segfaulted the
+  firmware: its pad lives at `here`), `console_ops` on ppc (one `,` rewrote two
+  console function pointers behind an `ok`), `x86_nvram_backend` on x86,
+  `last_key` on amd64. **Patch 66 (2026-09-04) makes it refuse**: the pointer
+  stays, -8 is thrown from C through `enterforth`, and the track's OVER control
+  asserts the refusal on all four arches. The 1.5× guard stays so a file that
+  does not fit is named whole (`NO-ROOM`) rather than refused mid-definition.
 - **Not a hosted tool re-implemented.** The justification is the four-arch control
   and the preboot device access (Spike 3); if a spike could be done as well by
   running `readelf`/`cbfstool`/`tpm2_eventlog` alone, it isn't a spike, it's the

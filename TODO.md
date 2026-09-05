@@ -572,12 +572,21 @@ requires of any other cached fact.
             `bar-map ( reg -- virt | 0 )`. The audit's `pci.c:823` was the *call site*; the
             function is at `pci.c:428`.
       **New candidates the closing surfaced, none started:**
-      - [ ] **`here!` prints `Dictionary space overflow` and CONTINUES** (`kernel/forth.c`
-            `herewrite`). The dictionary is a static array; the next `,` past the end lands in
-            whatever `.bss` follows. Measured by `dict-budget`'s OVER control on every arch: the
-            line prints, nothing refuses. The kernel's only protection is a message — a refusal
-            (`abort"` after the print) would be a real `UPSTREAM-BUG` patch; `dict-budget`'s
-            guard exists only because this does not.
+      - [x] **`here!` printed `Dictionary space overflow` and CONTINUED** (`kernel/forth.c`
+            `herewrite`) — **[patch 66](examples/openbios-the-rival-that-shipped/patches/66-here-refuses-a-dictionary-overflow.patch),
+            2026-09-04: it REFUSES.** Measured before, per arch, what the byte after the
+            dictionary is: on unix an unmapped page — the `.` that printed `catch`'s result died,
+            `panic: segmentation violation at 30100110`, one word after the line; on ppc
+            `console_ops` — `room a + allot 12345678 ,` rewrote two of the console's function
+            pointers (`ff f0 a9 e4 ff f0` → `ff f0 12 34 56 78`) and the prompt said `ok`; on x86
+            `x86_nvram_backend`, on amd64 `last_key` (`nm`). Now the pointer stays and -8 (ANS
+            *dictionary overflow*) is thrown from C through `enterforth`, the way ppc's
+            `methods.c` throws -13; `print-status` names it. After: `OVER-RC=-8`, `dict-used`
+            unchanged across the refused allot, ppc's neighbour bytes identical, a word defined
+            afterwards runs — asserted by `dict-budget`'s OVER control on all four arches. One
+            consequence: `[DEFINE]` typed at a *running* prompt (its buffer is outside the
+            dictionary; upstream's check already flagged it and carried on) is refused now; every
+            shipped `[DEFINE]` runs at dictionary-build time, where the check is off.
       - [ ] **no `marker`/`forget` in OpenBIOS.** Measured 2026-09-04 on unix: saving `here` and
             `last @` into pre-existing values and writing them back reclaims the bytes exactly and
             the words vanish (`w2: undefined word`), and new definitions compile after. Two traps
