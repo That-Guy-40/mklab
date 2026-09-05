@@ -5821,3 +5821,30 @@ structures* — with poke-elf pointing at exactly which structures pay.
 
 ---
 
+
+## 22. The firmware edits the boot it makes — two compositions of the toolkit (2026-09-05)
+
+*Discussion draft, not scheduled.* Written up in
+[`DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md`](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md);
+this entry is the pointer, so the queue can find it.
+
+Two ideas that use only what `examples/openbios-the-rival-that-shipped/` already has —
+the type layer, the cursor, `fdt.fth`, `region.fth`, the revived Linux loader — and
+take the toolkit out of the firmware and **into the kernel**:
+
+- **A — the boot-handoff edit.** Between the loader authoring the zero page, the
+  command line and the initrd, and the jump, the prompt reads them back, changes them,
+  and the booted kernel is the grade (`/proc/cmdline`, `/proc/iomem`,
+  `/proc/sys/…`, what u-root's `ls` shows). Kernel tunables three ways, ranked:
+  `sysctl.<name>=` on the command line (kernel 5.8+, ours is 6.3), the e820 table
+  edited as a structure instead of `memmap=` as a string, and a config file
+  **appended** into the initrd as a second cpio archive. Its own §2.4 says which of the
+  three is a file edit and which is not.
+- **B — the device tree handed to Linux on x86** through `setup_data`/`SETUP_DTB`,
+  so `/proc/device-tree` shows the card Act III renamed — or, if the cached kernel
+  lacks `CONFIG_OF`, through a reserved-e820 mailbox with no kernel support at all.
+
+**Both are gated on one patch (its §1):** the x86/amd64 `boot` word loads and jumps
+in one call, so there is no window to edit in. A `load`/`go` split for bzImages, the
+shape `init-program`/`go` already gives ELF, is patch 69 and step S0. Open questions
+for discussion are its §6.
