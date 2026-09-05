@@ -5891,8 +5891,10 @@ anywhere to link into.
   serves files to the client, not to the firmware's `load`; or **transliterate**
   GRUB 2's ext4 extent walk into a Forth package with GRUB as the specification.
 - **U-Boot's `fs/`** is the license-compatible alternative for an in-firmware lift
-  (GPLv2+, ext4 with extents) — at the price of **no ISO 9660**, the door every
-  track here uses.
+  (its §2.1a: GPLv2+, ext4 with extents, FAT, btrfs, squashfs, erofs, its own CBFS
+  reader; the sandbox build's `ext4load` as the shim's oracle) — at the price of
+  **no ISO 9660**, the door every track here uses, a path-based file API the shim
+  must cache around, and per-mount globals of the bug-5 family.
 - **Grading:** the shim is the only new code, so `grub-fstest` reading the same
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern

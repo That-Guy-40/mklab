@@ -66,9 +66,11 @@ collects them. §0a is the digest.
 - **The three routes, ranked by what they cost and where they can go:**
   - **GRUB 2 shim in OpenBIOS** — most drivers, best-tested code, the cheapest shim;
     lab-only unless the license measurement surprises.
-  - **U-Boot's `fs/` in OpenBIOS** — GPLv2-or-later, so *shippable*; ext4 with
-    extents, FAT, btrfs, squashfs, erofs — and **no ISO 9660** at all, which is the
-    door most of this repo's labs use. Also the survey's "U-Boot has zero coverage".
+  - **U-Boot's `fs/` in OpenBIOS** (§2.1a) — GPLv2-or-later, so *shippable*; ext4
+    with extents, FAT, btrfs, squashfs, erofs, and its own CBFS reader — and **no
+    ISO 9660** at all, which is the door most of this repo's labs use. A path-based
+    file API and per-mount globals make its shim a slightly worse fit than GRUB 2's,
+    not a smaller one. Also the survey's "U-Boot has zero coverage".
   - **A client program with FreeBSD's `libsa`** — BSD-licensed, bootloader-shaped
     (its `devread` is nearly the 0.97 interface grubfs already wraps), runs on **OFW
     and OpenBIOS unchanged**, needs no firmware patch; ext2 without extents, FAT,
@@ -166,6 +168,59 @@ arch): `fs/grub2fs/{glue.c, shim.h}` + the tier-1 drivers + `fshelp.c`, behind
 `grub2fs`, that reads **the same image through both packages** and asserts the
 modern-`mke2fs` row diverges the right way. The **license decision** is recorded in
 the patch catalog row, whichever way §1(1) fell.
+
+### 2.1a Seam 1, the other source — U-Boot's `fs/` in OpenBIOS
+
+The same seam, a different tree: U-Boot's `fs/` is **GPL-2.0-or-later**, so a
+combined ROM can leave the lab whatever §1(1) finds in OpenBIOS's headers. It is the
+mainstream embedded loader's filesystem layer, in production on every ARM board that
+boots from an SD card, and it reads what this repo's disks actually carry: **ext4
+with extents** (`fs/ext4/`, read *and* write — the write half is not wanted here),
+FAT12/16/32 (`fs/fat/`, read and write), btrfs, squashfs, erofs, ubifs, cramfs,
+jffs2, a ZFS reader, and **`fs/cbfs/`** — so, like GRUB 2, a second foreign reader
+of the ROM Act I walks.
+
+**What it does not have is ISO 9660.** U-Boot's CD support stops at El Torito
+partition discovery; there is no `fs/iso9660`. That is not a footnote: the ISO door
+is the one **every** track in the rival lab and both habitats use, and the native
+`fs/iso9660` in OpenBIOS is the driver with the two path-syntax defects the toolkit
+plan measured (no comma, no `;1` strip). A U-Boot lift therefore leaves ISO where it
+is, or pairs with GRUB 2's `iso9660.c` — which reintroduces the license question for
+that one file.
+
+**What the drivers ask of the environment**, read from `fs/fs.c` and
+`include/fs.h`, `include/blk.h`:
+
+| the drivers call | what it is | the shim provides |
+|---|---|---|
+| `blk_dread (desc, start, blkcnt, buf)` / `blk_dwrite` (unused) | whole-block I/O on a `struct blk_desc` (`blksz`, `lba`, `log2blksz`) | the parent node's `seek` + `read`, **block-granular** — the shim buffers the partial reads GRUB's interface handled itself |
+| `fs_set_blk_dev` / `fs_set_blk_dev_with_part` | select device + partition; probes each `fstype_info` `probe` in turn | the mount step of the package's `open`; the partition comes from OpenBIOS's own partition packages (§2.2 does not apply — U-Boot's `disk/part_efi.c` reads GPT and could, at the same price) |
+| `fs_size`, `fs_read (name, addr, offset, len, &actread)`, `fs_ls`, `fs_exists` | the file API, **path-in, bytes-out**, no open handle | `open` resolves and caches the path, `read`/`seek`/`tell` are `fs_read` at an offset, `dir` is `fs_ls` — a slightly worse fit than GRUB 2's per-file handle, since every `read` re-walks the path unless the shim caches |
+| `malloc`/`free`, `memcpy`/`strcmp`…, `printf`/`debug` | libc subset | OpenBIOS's `libc/`, `printk` |
+| `le32_to_cpu`, `be32_to_cpu`, `__le32` types, `get_unaligned_le32` | byte order | header-only (`asm/byteorder.h`, `linux/unaligned`) — the ppc row's control again |
+| `CONFIG_*` and the `fstype_info` table in `fs.c` | the Kconfig surface | a hand-written table for the drivers linked; U-Boot's `fs.c` is the dispatcher and comes along trimmed |
+| `env_get`, `hash` (`fs.c`'s `do_load` uses them for `filesize` and the `fsload` command) | U-Boot-isms in the dispatcher | stubbed — the package never runs a U-Boot command |
+
+Two divergences from the GRUB 2 shim worth stating up front: U-Boot's file API is
+**path-based, not handle-based**, so a file opened once and read in pieces (which
+is what `load` and every loader do) costs a path walk per read unless the shim
+keeps the resolved inode — a cache that has to be invalidated on `close`; and its
+ext4 driver keeps **global state** per mounted filesystem (`ext4fs_root`,
+`ext4fs_file`), so two filesystems open at once — the CD and the disk in the same
+boot, which the amd64-linux track does — need the shim to re-mount on switch. The
+0.97 driver had the same globals; that is the bug-5 family.
+
+**Tiering** is flatter than GRUB 2's: `ext4`, `fat`, `cbfs` need only the table
+above; `btrfs`, `squashfs`, `erofs` bring their decompressors (`lib/zlib`, `lib/lzo`,
+`lib/zstd`); `zfs` brings its own and is out for the same reason as §2.1's.
+
+**Build:** the same patch shape as §2.1, `fs/ubootfs/{glue.c, shim.h}` + `fs/ext4/`
++ `fs/fat/` + `fs/cbfs/` + a trimmed `fs.c`, behind `CONFIG_FSYS_UBOOT`;
+`/packages/ubootfs`; the same `grub2fs` track re-aimed (S1–S2 with U-Boot's
+`ext4ls`/`ext4load` in the **sandbox** build — `u-boot` for the host, `host bind`
+onto the image — as the shim's byte-for-byte oracle, the way `grub-fstest` is for
+§2.1). **The decision between §2.1 and §2.1a is §6 question 1**, and it is a
+license-and-ISO decision, not a code one: both shims are the same size.
 
 ### 2.2 Seam 2 — the partition maps, for the same price
 
@@ -283,7 +338,8 @@ honest, wrong is not).
 |---|---|---|---|---|
 | the measurements (§1) | a note in the patch catalog | — | — | three numbers, written down |
 | 1 — GRUB 2 shim (§2.1) | patch N, `fs/grub2fs/`, `CONFIG_FSYS_GRUB2` | `/packages/grub2fs`: `open` `read` `seek` `tell` `dir` `load` | `grub2fs` | `grub-fstest cp` byte-equal; the kernel's mount; old package as control |
-| 2 — partition maps (§2.2) | same patch, `partmap/` | `/packages/grub2parts` | `gpt-parts` | `sgdisk`-made image; MBR control |
+| 1a — U-Boot shim (§2.1a) | patch N, `fs/ubootfs/`, `CONFIG_FSYS_UBOOT` | `/packages/ubootfs`, same five methods | `grub2fs` re-aimed | U-Boot sandbox `ext4load` byte-equal; the kernel's mount; old package as control |
+| 2 — partition maps (§2.2) | same patch, `partmap/` (or U-Boot's `disk/part_efi.c`) | `/packages/grub2parts` | `gpt-parts` | `sgdisk`-made image; MBR control |
 | 3 — bring your own (§2.3) | a client under the clib lab, `libsa` vendored | `strategy` over `cif-read` | `libsa-ofw`, `libsa-openbios` | host sha256; stock firmware, no build |
 | 4 — transliteration (§2.4) | `ext4.fth` in the OFW lab | the extent walk as a package method | `ofw-ext4` | host sha256; stock package refuses by name |
 
@@ -301,9 +357,10 @@ honest, wrong is not).
 
 ## 6. Open questions — the ones to discuss
 
-1. **Which OpenBIOS route, once §1(1) is measured:** a GRUB 2 lift as a lab-only
-   artifact with the license written into the catalog row, or a U-Boot `fs/` lift
-   that could leave the lab — at the price of no ISO 9660 and a second shim shape.
+1. **Which OpenBIOS route, once §1(1) is measured:** a GRUB 2 lift (§2.1) as a
+   lab-only artifact with the license written into the catalog row, or a U-Boot
+   `fs/` lift (§2.1a) that could leave the lab — at the price of no ISO 9660, a
+   path-based API the shim has to cache around, and per-mount globals.
    The recommendation is GRUB 2 for the lab, because ISO is the door every track
    here uses, and to *state* the shipping restriction rather than avoid it.
 2. **Does the client route (§2.3) want FreeBSD's `loader` itself, or a small client
