@@ -1796,7 +1796,7 @@ FTH
         --expect "0 > " \
         --send 'load /ide@1/cdrom@0:\\memav.fth\r' --expect "0 > " \
         --send 'load-base load-size evaluate\r' --expect "MA-END"
-      MRC=$?
+      MKRC=$?
       kill "$MQ" 2>/dev/null   # by PID, never by pattern
       ML="$(tr -d "\r" < "$MLOG")"
 
@@ -5926,9 +5926,9 @@ PYMARK
       MQ=$!
       MSENDS=(); for mkl in "${MK_LINES[@]}"; do MSENDS+=(--send "$mkl"$'\r' --expect "0 > "); done
       python3 "$REPO/tools/drive-serial-repl.py" "$MSER" "$MLOG" --timeout 300 --expect "0 > " "${MSENDS[@]}"
-      MRC=$?
+      MKRC=$?
       kill "$MQ" 2>/dev/null   # by PID, never by pattern
-      [[ $MRC -eq 0 ]] || fail "marker ($MA): the prompt driver did not complete (rc=$MRC) — see $MLOG"
+      [[ $MKRC -eq 0 ]] || fail "marker ($MA): the prompt driver did not complete (rc=$MKRC) — see $MLOG"
       mk_grade "$MA" "$MLOG"
     done
     # ── ppc ──────────────────────────────────────────────────────────────────
