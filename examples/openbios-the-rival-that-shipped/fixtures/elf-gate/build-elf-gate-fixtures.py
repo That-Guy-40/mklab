@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 """build-elf-gate-fixtures.py — the subjects for smoke-openbios.sh's `elf-gate` track.
 
-Three SYNTHETIC ELF64 files that differ from each other in nothing but their
+Four SYNTHETIC ELF64 files that differ from each other in nothing but their
 program-header TYPE words, so a refusal can only be about ordering:
 
   good.elf    PT_PHDR, PT_INTERP, PT_LOAD, PT_LOAD   -- the gABI order
-  badord.elf  PT_LOAD, PT_PHDR,   PT_INTERP, PT_LOAD -- PHDR/INTERP after a LOAD
+  badord.elf  PT_LOAD, PT_PHDR,   PT_INTERP, PT_LOAD -- PHDR (and INTERP) after a LOAD
   baddup.elf  PT_PHDR, PT_INTERP, PT_INTERP, PT_LOAD -- INTERP twice
+  badint.elf  PT_PHDR, PT_LOAD,   PT_INTERP, PT_LOAD -- INTERP after a LOAD, PHDR fine
+
+badint isolates the gABI's INTERP clause: badord moves PHDR and INTERP together,
+so the firmware's refusal fires on PHDR first and the INTERP branch of ?ph-order
+was never exercised by any fixture (found 2026-09-05). Measured the day it was
+added: readelf is SILENT on badint (its order check names PHDR only), eu-elflint
+says "No errors" (it checks no order), and the kernel's loader reads PT_INTERP
+wherever it sits -- so that clause is refused on the gABI's word alone, and the
+track says so per run rather than assuming it.
 
 Every PT_LOAD fits inside the file, so ?phdrs64's EXISTING check (a segment past
 EOF) is satisfied by all three: whatever it refuses, it refuses for the new
@@ -21,7 +30,7 @@ reachable from bucket[elf_hash(name) % nbucket] only if this hash agrees with
 the linker's.  That check is the oracle for the oracle.
 
 Usage: build-elf-gate-fixtures.py <outdir> [--names NAME...]
-Writes <outdir>/{good,badord,baddup}.elf and prints "NAME HASH" lines (hex).
+Writes <outdir>/{good,badord,baddup,badint}.elf and prints "NAME HASH" lines (hex).
 """
 import struct, sys, os, subprocess, tempfile, shutil
 
@@ -109,7 +118,8 @@ if __name__ == '__main__':
     names = sys.argv[sys.argv.index('--names') + 1:] if '--names' in sys.argv else \
         ['a', 'abc', 'hello_world', 'supercalifragilistic', 'Z3foov']
     os.makedirs(out, exist_ok=True)
-    for fn, types in (('good.elf', [6, 3, 1, 1]), ('badord.elf', [1, 6, 3, 1]), ('baddup.elf', [6, 3, 3, 1])):
+    for fn, types in (('good.elf', [6, 3, 1, 1]), ('badord.elf', [1, 6, 3, 1]), ('baddup.elf', [6, 3, 3, 1]),
+                      ('badint.elf', [6, 1, 3, 1])):
         open(os.path.join(out, fn), 'wb').write(elf64(types))
     ok, msg = linker_check(names)
     print('LINKER %s %s' % ('OK' if ok else 'UNKNOWN', msg))

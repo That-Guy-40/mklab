@@ -600,6 +600,32 @@ v6.12). The track measures elflint per run and says **UNPROBED** in its verdict 
 absent, which it was on this host at the time of writing; CI installs it, and #403's first CI run measured it
 (elfutils 0.190): *flags baddup.elf ('more than one INTERP entry in program header') and not good.elf; on
 badord.elf it says nothing about PHDR/INTERP/LOAD order* — the split the track predicted, observed.
+Measured on this host too, 2026-09-05, once elfutils (0.190) was installed: `good.elf` *No errors*,
+`badord.elf` *No errors*, `baddup.elf` *more than one INTERP entry in program header* (rc 1).
+
+### The fourth elf-gate fixture — the INTERP clause on its own, run 2026-09-05
+
+Asking what could be decided about `badord.elf` surfaced the real finding: it is `LOAD PHDR INTERP LOAD`,
+so the firmware's refusal fires on PHDR first and names PHDR — and the gABI's *same* sentence for
+`PT_INTERP` ("must precede any loadable segment entry"), which `?ph-order` has a separate branch for,
+**had never been exercised by any fixture**. `badint.elf` (`PHDR LOAD INTERP LOAD`) isolates it, and its
+oracles were measured before the track was touched:
+
+| tool | on `badint.elf` | so |
+|---|---|---|
+| `readelf -lW` | silent, rc 0 | its order check names PHDR only |
+| `eu-elflint` 0.190 | *No errors*, rc 0 | it checks INTERP multiplicity, not order |
+| the kernel's `load_elf_binary` | reads `PT_INTERP` wherever it sits (source, v6.12) | order is not its concern |
+| the firmware | `PT_INTERP after a PT_LOAD (gABI: it must precede every loadable segment)` | **on the gABI's word alone** |
+
+So the honest verdict wording is exactly that, and the track **chooses it from the measurement per run**:
+if readelf or elflint ever starts flagging the file, the verdict says the description is out of date
+instead. On all four arches the refusal fires once per run (badord still refuses on PHDR first, so the
+two clauses stay isolated), the marker after the gate never prints, and the constraint count is 3.
+**Control:** the shipped `eg_grade` on the real unix log passes; with the INTERP message renamed it
+says *not refused BY NAME*, with an `EG-INT-END` added *the word after the gate RAN*, with the message
+doubled *fired 2 times where exactly 1 is expected*.
+
 
 ### The `fdt` track — the live device tree, flattened, graded by `dtc` (B.3 Spike 4)
 

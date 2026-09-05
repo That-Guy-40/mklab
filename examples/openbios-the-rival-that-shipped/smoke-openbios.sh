@@ -5382,8 +5382,11 @@ PY
     # elf64_check_phdr(phdr)`) also encodes the gABI's ordering invariant — PT_PHDR
     # and PT_INTERP "may occur only once, if at all, and must precede any loadable
     # segment entry". A firmware about to RUN an image should refuse a malformed
-    # one; now it does, by name. Three synthetic ELF64s that differ ONLY in their
-    # p_type words (good / PHDR-after-LOAD / INTERP-twice) plus a real host binary
+    # one; now it does, by name. Four synthetic ELF64s that differ ONLY in their
+    # p_type words (good / PHDR-after-LOAD / INTERP-twice / INTERP-after-LOAD with
+    # PHDR in place — the fourth added 2026-09-05, because badord moves PHDR and
+    # INTERP together and the refusal fires on PHDR first, so the INTERP branch of
+    # ?ph-order had never been exercised by any fixture) plus a real host binary
     # (/bin/true, when it is an ELF64 LE) are the subjects; readelf -l is the
     # oracle for the PHDR half — it prints "the PHDR segment must occur before any
     # LOAD segment" for the bad-order fixture and nothing for the good one. It does
@@ -5426,12 +5429,12 @@ PY
     GNAMES=(a abc hello_world supercalifragilistic Z3foov)
     python3 "$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py" "$GWD/fx" --names "${GNAMES[@]}" > "$GWD/oracle.txt" \
       || fail "elf-gate: the fixture builder failed: $(tail -1 "$GWD/oracle.txt")"
-    for f in good badord baddup; do { head -c 512 /dev/zero; cat "$GWD/fx/$f.elf"; } > "$GWD/stage/$(tr a-z A-Z <<<"$f").BIN"; done
+    for f in good badord baddup badint; do { head -c 512 /dev/zero; cat "$GWD/fx/$f.elf"; } > "$GWD/stage/$(tr a-z A-Z <<<"$f").BIN"; done
     # the fixtures must differ ONLY inside the program-header table (ehdr and body
     # identical) — or a refusal could be about anything. (The first draft said
     # "only in the p_type words" and its own guard refused that: a segment's offset
     # and size follow its type, so 28 bytes differ, all of them in the table.)
-    for gb in badord baddup; do
+    for gb in badord baddup badint; do
       GOUT="$(cmp -l "$GWD/fx/good.elf" "$GWD/fx/$gb.elf" | awk '$1 < 65 || $1 > 288 {n++} END {print n+0, NR}')"
       [[ "${GOUT% *}" -eq 0 && "${GOUT#* }" -ge 1 ]] \
         || fail "elf-gate: good.elf and $gb.elf differ outside the program-header table (${GOUT% *} of ${GOUT#* } differing bytes are outside offsets 64..288) — the control is not a control"
@@ -5478,6 +5481,23 @@ PY
     fi
     note "oracles: readelf refuses badord.elf ('the PHDR segment must occur before any LOAD segment'), accepts good.elf$( [[ $GREAL == 1 ]] && echo ' and /bin/true'); $GDUPSAYS; $GLINK"
     note "second oracle: $GELSAYS"
+    # THE FOURTH FIXTURE'S ORACLES, measured per run. badint.elf isolates the
+    # gABI's INTERP clause ("must precede any loadable segment entry"). The
+    # expectation when it was added: readelf is silent (its message is about PHDR),
+    # elflint says "No errors" (it checks no order), the kernel's loader reads
+    # PT_INTERP wherever it sits — so the firmware would be refusing on the gABI's
+    # word alone. That is measured here and WORDED FROM THE MEASUREMENT: if either
+    # tool ever starts flagging it, the verdict says so instead.
+    GRO_INT="$(readelf -lW "$GWD/fx/badint.elf" 2>&1 >/dev/null | grep -E '^readelf: (Error|Warning)' || true)"
+    if command -v eu-elflint >/dev/null; then GEL_INT="$(eu-elflint "$GWD/fx/badint.elf" 2>&1 | grep -vxF 'No errors' || true)"; GEL_INT_PROBED=1; else GEL_INT=""; GEL_INT_PROBED=0; fi
+    if [[ -z "$GRO_INT" && -z "$GEL_INT" && $GEL_INT_PROBED == 1 ]]; then
+      GINTSAYS="badint.elf (PHDR LOAD INTERP LOAD) is refused by the firmware ON THE gABI'S WORD ALONE — readelf is silent on it (its order check names PHDR only), eu-elflint says 'No errors' (it checks no order), and the kernel's loader reads PT_INTERP wherever it sits; no tool on this host enforces that sentence, so the firmware's own assertion is the only one there is"
+    elif [[ -z "$GRO_INT" && $GEL_INT_PROBED == 0 ]]; then
+      GINTSAYS="badint.elf (PHDR LOAD INTERP LOAD): readelf is silent on it; eu-elflint NOT installed, so its half is UNPROBED — the firmware refuses it on the gABI's word, with no foreign oracle measured here"
+    else
+      GINTSAYS="badint.elf (PHDR LOAD INTERP LOAD) IS flagged by a foreign tool now — readelf: '${GRO_INT:-silent}', eu-elflint: '${GEL_INT:-silent}' — the 'gABI's word alone' description is out of date"
+    fi
+    note "fourth fixture: $GINTSAYS"
     cat > "$GWD/stage/EG.FTH" <<'FTH'
 hex
 : gate ( -- )  load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;
@@ -5487,6 +5507,7 @@ hex
 : eg-real ." eg-real:" gate ." EG-REAL-END" cr ;
 : eg-ord  ." eg-ord:"  gate ." EG-ORD-END"  cr ;
 : eg-dup  ." eg-dup:"  gate ." EG-DUP-END"  cr ;
+: eg-int  ." eg-int:"  gate ." EG-INT-END"  cr ;
 : eg-hash
   ." H0=" s" " elf-hash u. ." H1=" s" a" elf-hash u. ." H2=" s" abc" elf-hash u. cr
   ." H3=" s" hello_world" elf-hash u. ." H4=" s" supercalifragilistic" elf-hash u. cr
@@ -5506,8 +5527,14 @@ FTH
       grep -qF 'EG-ORD-END' <<<"$g" && fail "elf-gate ($a): the word after the gate RAN on badord.elf — printing a refusal is not refusing — see $2"
       grep -qF 'more than one PT_INTERP' <<<"$g" || fail "elf-gate ($a): baddup.elf (two PT_INTERP) was not refused by name — see $2"
       grep -qF 'EG-DUP-END' <<<"$g" && fail "elf-gate ($a): the word after the gate RAN on baddup.elf — see $2"
+      # the fourth fixture: the INTERP clause on its own. No foreign tool checks it
+      # (measured above), so this grep is the only assertion that sentence has.
+      local ni; ni="$(grep -ac 'PT_INTERP after a PT_LOAD' <<<"$g")"
+      [[ "$ni" -ge 1 ]] || fail "elf-gate ($a): badint.elf (PHDR LOAD INTERP LOAD) was not refused BY NAME — the INTERP branch of ?ph-order, which no fixture exercised before 2026-09-05 and no foreign tool checks — see $2"
+      [[ "$ni" -eq 1 ]] || fail "elf-gate ($a): 'PT_INTERP after a PT_LOAD' fired $ni times where exactly 1 is expected — badord.elf must refuse on PHDR first (the two clauses are meant to be isolated) — see $2"
+      grep -qF 'EG-INT-END' <<<"$g" && fail "elf-gate ($a): the word after the gate RAN on badint.elf — see $2"
       local n; n="$(grep -ac 'CONSTRAINT:' <<<"$g")"
-      [[ "$n" -eq 2 ]] || fail "elf-gate ($a): $n constraint failures fired where exactly 2 are expected (one per bad fixture) — a good subject was refused, or a refusal fired twice — see $2"
+      [[ "$n" -eq 3 ]] || fail "elf-gate ($a): $n constraint failures fired where exactly 3 are expected (one per bad fixture) — a good subject was refused, or a refusal fired twice — see $2"
       grep -qE 'H0=0 ' <<<"$g" || fail "elf-gate ($a): elf-hash of the empty string is $(grep -aoE 'H0=[0-9a-f]+' <<<"$g" | head -1), not 0 — see $2"
       local i=1 nm want got
       for nm in "${GNAMES[@]}"; do
@@ -5518,7 +5545,7 @@ FTH
       done
       grep -qaE 'Unexpected Exception|general protection|invalid opcode|Exception vector' <<<"$g" && fail "elf-gate ($a): the firmware took a CPU exception — see $2"
       echo "$(grep -aoE 'H[1-5]=[0-9a-f]+' <<<"$g" | tr '\n' ' ')" > "$GWD/$a.hashes"
-      note "$a: good.elf$( [[ $GREAL == 1 ]] && echo ' and /bin/true') pass the gate; badord.elf → 'PT_PHDR after a PT_LOAD', baddup.elf → 'more than one PT_INTERP', neither reaches its marker (2 constraint failures, no more); elf-hash: $(cat "$GWD/$a.hashes")"
+      note "$a: good.elf$( [[ $GREAL == 1 ]] && echo ' and /bin/true') pass the gate; badord.elf → 'PT_PHDR after a PT_LOAD', baddup.elf → 'more than one PT_INTERP', badint.elf → 'PT_INTERP after a PT_LOAD' (once — badord refused on PHDR first), none reaches its marker (3 constraint failures, no more); elf-hash: $(cat "$GWD/$a.hashes")"
     }
 
     # ── unix: -f iso, load-base re-pointed into the arena ───────────────────
@@ -5530,7 +5557,8 @@ FTH
       'load hd:\ELF32.FTH'  'load-base load-size evaluate' \
       'load hd:\EG.FTH'     'load-base load-size evaluate' \
       'load hd:\GOOD.BIN' 'eg-good' "${GREAL_LINES[@]}" \
-      'load hd:\BADORD.BIN' 'eg-ord' 'load hd:\BADDUP.BIN' 'eg-dup' 'eg-hash' 'bye' \
+      'load hd:\BADORD.BIN' 'eg-ord' 'load hd:\BADDUP.BIN' 'eg-dup' \
+      'load hd:\BADINT.BIN' 'eg-int' 'eg-hash' 'bye' \
       | "$GUBIN" -f "$GWD/eg.iso" "$GUDICT" > "$GWD/unix.log" 2>&1 )
     grep -qF 'EG-READY' "$GWD/unix.log" || fail "elf-gate (unix): EG.FTH never finished loading — see $GWD/unix.log"
     eg_grade unix "$GWD/unix.log"
@@ -5553,6 +5581,7 @@ FTH
         "${GREAL_SENDS[@]}" \
         --send 'load /ide@1/cdrom@0:\\BADORD.BIN\r' --expect "0 > " --send 'eg-ord\r'  --expect "> " \
         --send 'load /ide@1/cdrom@0:\\BADDUP.BIN\r' --expect "0 > " --send 'eg-dup\r'  --expect "> " \
+        --send 'load /ide@1/cdrom@0:\\BADINT.BIN\r' --expect "0 > " --send 'eg-int\r'  --expect "> " \
         --send 'eg-hash\r' --expect "EG-HASH-END"
       GRC=$?
       kill "$GQ" 2>/dev/null   # by PID, never by pattern
@@ -5573,6 +5602,7 @@ FTH
       "${GREAL_PSENDS[@]}" \
       --send 'load cd:\\BADORD.BIN;1\r' --expect "0 > " --send 'eg-ord\r'  --expect "> " \
       --send 'load cd:\\BADDUP.BIN;1\r' --expect "0 > " --send 'eg-dup\r'  --expect "> " \
+      --send 'load cd:\\BADINT.BIN;1\r' --expect "0 > " --send 'eg-int\r'  --expect "> " \
       --send 'eg-hash\r' --expect "EG-HASH-END" \
       -- qemu-system-ppc -bios "$GPELF" -nographic -vga none -cdrom "$GWD/eg.iso" >/dev/null 2>&1
     GPRC=$?
@@ -5582,7 +5612,7 @@ FTH
     # ── the four arches must AGREE on every hash: 64-bit cells mask, 32-bit cells don't need to ──
     GSETS="$(cat "$GWD"/unix.hashes "$GWD"/x86.hashes "$GWD"/amd64.hashes "$GWD"/ppc.hashes | sort -u | wc -l)"
     [[ "$GSETS" -eq 1 ]] || fail "elf-gate: the four arches disagree on elf-hash ($GSETS distinct answer sets) — a shift or invert differs between the 32- and 64-bit cells"
-    pass "B.3, the gleanings' loose gold pocketed: (1) the gABI ORDERING rule joins ?phdrs — PT_PHDR and PT_INTERP at most once and before every PT_LOAD — refused BY NAME on unix, x86, amd64 AND ppc, with readelf as the foreign oracle for the PHDR half (it refuses the same fixture: 'the PHDR segment must occur before any LOAD segment') and this layer STRICTER than readelf on a duplicate PT_INTERP, said so; three fixtures that differ only in their p_type words, plus the host's own /bin/true through the same gate; exactly 2 constraint failures per arch and neither bad fixture reaches the word after the gate. (2) elf-hash, the SysV symbol hash in ten lines of pure Forth, equals the gABI text transliterated in python on every arch — and that python is checked against the LINKER ($GLINK) — with the four arches in agreement. And one claim RETRACTED by its own control: the draft's 32-bit mask, described as the width control, was removed by a negative control and every hash stayed the same on the 64-bit arches — the gABI loop bounds itself (h &= ~g clears bits 28-31 each step), so the mask was dead code with a rationale, and it is gone SECOND ORACLE, measured this run: $GELSAYS"
+    pass "B.3, the gleanings' loose gold pocketed: (1) the gABI ORDERING rule joins ?phdrs — PT_PHDR and PT_INTERP at most once and before every PT_LOAD — refused BY NAME on unix, x86, amd64 AND ppc, with readelf as the foreign oracle for the PHDR half (it refuses the same fixture: 'the PHDR segment must occur before any LOAD segment') and this layer STRICTER than readelf on a duplicate PT_INTERP, said so; three fixtures that differ only in their p_type words, plus the host's own /bin/true through the same gate; exactly 2 constraint failures per arch and neither bad fixture reaches the word after the gate. (2) elf-hash, the SysV symbol hash in ten lines of pure Forth, equals the gABI text transliterated in python on every arch — and that python is checked against the LINKER ($GLINK) — with the four arches in agreement. And one claim RETRACTED by its own control: the draft's 32-bit mask, described as the width control, was removed by a negative control and every hash stayed the same on the 64-bit arches — the gABI loop bounds itself (h &= ~g clears bits 28-31 each step), so the mask was dead code with a rationale, and it is gone SECOND ORACLE, measured this run: $GELSAYS. FOURTH FIXTURE, measured this run: $GINTSAYS"
     ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
