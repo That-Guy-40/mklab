@@ -3182,7 +3182,7 @@ index 253394c..8670e9a 100644
  
      /* Allocate 8MB memory at load-base */
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
-index cb9757e..e5dedb8 100644
+index cb9757e..33cfa2b 100644
 --- a/arch/unix/unix.c
 +++ b/arch/unix/unix.c
 @@ -17,6 +17,7 @@
@@ -3193,7 +3193,15 @@ index cb9757e..e5dedb8 100644
  #include <stdarg.h>
  
  #ifdef __GLIBC__
-@@ -40,7 +41,15 @@
+@@ -32,6 +33,7 @@
+ #include "kernel/stack.h"
+ #include "arch/unix/plugins.h"
+ #include "libopenbios/bindings.h"
++#include "libopenbios/elf_load.h"
+ #include "libopenbios/console.h"
+ #include "libopenbios/openbios.h"
+ #include "openbios-version.h"
+@@ -40,7 +42,15 @@
  #include "libopenbios/ofmem.h"
  
  #define MEMORY_SIZE	(4*1024*1024)	/* 4M ram for hosted system */
@@ -3210,7 +3218,7 @@ index cb9757e..e5dedb8 100644
  
  #if defined(_FILE_OFFSET_BITS) && (_FILE_OFFSET_BITS==64)
  #define lseek lseek64
-@@ -62,6 +71,7 @@ static ucell *memory;
+@@ -62,6 +72,7 @@ static ucell *memory;
  static int diskemu;
  
  static int segfault = 0;
@@ -3218,7 +3226,7 @@ index cb9757e..e5dedb8 100644
  static int verbose = 0;
  
  #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
-@@ -177,11 +187,109 @@ static ucell read_dictionary(char *fil)
+@@ -177,11 +188,109 @@ static ucell read_dictionary(char *fil)
  	return ret;
  }
  
@@ -3328,7 +3336,7 @@ index cb9757e..e5dedb8 100644
  static int unix_availchar(void)
  {
  	int tmp = getc(stdin);
-@@ -189,6 +297,8 @@ static int unix_availchar(void)
+@@ -189,6 +298,8 @@ static int unix_availchar(void)
  		ungetc(tmp, stdin);
  		return -1;
  	}
@@ -3337,7 +3345,7 @@ index cb9757e..e5dedb8 100644
  	return 0;
  }
  
-@@ -200,7 +310,59 @@ static int unix_putchar(int c)
+@@ -200,7 +311,59 @@ static int unix_putchar(int c)
  
  static int unix_getchar(void)
  {
@@ -3398,7 +3406,7 @@ index cb9757e..e5dedb8 100644
  }
  
  static struct _console_ops unix_console_ops = {
-@@ -363,13 +525,72 @@ int_handler(int signo __attribute__ ((unused)),
+@@ -363,13 +526,72 @@ int_handler(int signo __attribute__ ((unused)),
      exit(1);
  }
  
@@ -3472,17 +3480,24 @@ index cb9757e..e5dedb8 100644
  	if (!memory) {
  		printk("panic: not enough memory on host system.\n");
  		exit_terminal();
-@@ -404,6 +625,9 @@ arch_init( void )
+@@ -404,6 +626,16 @@ arch_init( void )
  
  	device_end();
          bind_func("platform-boot", boot);
 +        /* mklab: hosted-only. Author a binary in the arena, persist it to a
 +         * real host file. See forth_write_file() above and TODO §20. */
 +        bind_func("write-file", forth_write_file);
++        /* mklab, patch 68: this target's start_elf() is a stub, so a client
++         * program can never be entered here -- and copying its segments to
++         * their p_vaddr writes into a host process with nothing mapped there
++         * (measured: "panic: segmentation violation" inside `load`). The ELF
++         * gate in libopenbios/elf_load.c refuses the copy by name and leaves
++         * the image at load-base, where the toolkit can still read it. */
++        elf_segments_placeable = 0;
  }
  
  int
-@@ -521,7 +745,9 @@ int main(int argc, char *argv[])
+@@ -521,7 +753,9 @@ int main(int argc, char *argv[])
  	/* Initialise console */
  	init_console(unix_console_ops);
  
@@ -3493,7 +3508,7 @@ index cb9757e..e5dedb8 100644
  		printk("panic: not enough memory.\n");
  		return 1;
  	}
-@@ -556,7 +782,17 @@ int main(int argc, char *argv[])
+@@ -556,7 +790,17 @@ int main(int argc, char *argv[])
          if (verbose)
              printk("done.\n");
  
@@ -3512,7 +3527,7 @@ index cb9757e..e5dedb8 100644
  	forth_init();
  
  	PUSH_xt( bind_noname_func(arch_init) );
-@@ -580,12 +816,50 @@ int main(int argc, char *argv[])
+@@ -580,12 +824,50 @@ int main(int argc, char *argv[])
  		}
  
  		enterforth((xt_t)PC);
@@ -3564,7 +3579,7 @@ index cb9757e..e5dedb8 100644
  
  	} else {		/* input file is not a dictionary */
  		printk("not supported.\n");
-@@ -595,8 +869,8 @@ int main(int argc, char *argv[])
+@@ -595,8 +877,8 @@ int main(int argc, char *argv[])
  	if (diskemu!=-1)
  		close(diskemu);
  
@@ -6367,6 +6382,30 @@ index acd2a64..3e580e3 100644
  	{ "load",	grubfs_files_load	},
  	{ "dir",	grubfs_files_dir	},
  
+diff --git a/include/arch/amd64/elf.h b/include/arch/amd64/elf.h
+index e391c62..afa0705 100644
+--- a/include/arch/amd64/elf.h
++++ b/include/arch/amd64/elf.h
+@@ -1,6 +1,14 @@
+-/* for now we're a 32bit architecture */
+-#define ARCH_ELF_CLASS ELFCLASS32
++/* LOCAL DIVERGENCE (mklab, patch 68). This header was copied from arch/x86
++ * when the port began ("for now we're a 32bit architecture") and never
++ * revisited, so the 64-bit firmware's ELF loader recognised ONLY ELF32/EM_386
++ * images -- the one class this CPU cannot run in long mode -- and passed every
++ * ELF64 by in silence. Measured 2026-09-05 on the amd64 door: `load` of a
++ * 32-bit i386 client set state-valid to -1 and `go` took a general protection
++ * fault at its first instruction; `load` of the firmware's own ELF64 left
++ * state-valid at whatever the previous load had set. The firmware now loads
++ * its own class, and libopenbios/elf_load.c's gate names the other by field. */
++#define ARCH_ELF_CLASS ELFCLASS64
+ #define ARCH_ELF_DATA ELFDATA2LSB
+-#define ARCH_ELF_MACHINE_OK(x) ((x)==EM_386 || (x)==EM_486)
+-typedef Elf32_Ehdr Elf_ehdr;
+-typedef Elf32_Phdr Elf_phdr;
++#define ARCH_ELF_MACHINE_OK(x) ((x)==EM_X86_64)
++typedef Elf64_Ehdr Elf_ehdr;
++typedef Elf64_Phdr Elf_phdr;
 diff --git a/include/arch/amd64/io.h b/include/arch/amd64/io.h
 index 9be1cb8..a7a2bc1 100644
 --- a/include/arch/amd64/io.h
@@ -6392,6 +6431,20 @@ index 9be1cb8..a7a2bc1 100644
  extern char _start, _end;
  extern unsigned long virt_offset;
  
+diff --git a/include/arch/amd64/types.h b/include/arch/amd64/types.h
+index e9df2a3..2336e10 100644
+--- a/include/arch/amd64/types.h
++++ b/include/arch/amd64/types.h
+@@ -43,7 +43,8 @@ typedef uint64_t        prom_uarg_t;
+ #define FMT_prom_uarg   "%" PRIuPROMARG
+ #define FMT_prom_uargx  "%016" PRIxPROMARG
+ 
+-#define FMT_elf     "%#x"
++/* mklab, patch 68: Elf64_Addr/Off are unsigned long here (see arch/amd64/elf.h) */
++#define FMT_elf     "%#lx"
+ 
+ #define bitspercell	(sizeof(cell)<<3)
+ #define bitsperdcell	(sizeof(dcell)<<3)
 diff --git a/include/drivers/drivers.h b/include/drivers/drivers.h
 index 3d6fa12..b540c4d 100644
 --- a/include/drivers/drivers.h
@@ -6466,6 +6519,24 @@ index 6b0302d..369318b 100644
  extern int		_selfword( const char *method, xt_t *cache_xt );
  extern int		_parword( const char *method, xt_t *cache_xt );
  
+diff --git a/include/libopenbios/elf_load.h b/include/libopenbios/elf_load.h
+index d387624..4843adb 100644
+--- a/include/libopenbios/elf_load.h
++++ b/include/libopenbios/elf_load.h
+@@ -28,4 +28,13 @@ extern int		find_elf(Elf_ehdr *ehdr);
+ 
+ extern Elf_phdr *	elf_readhdrs(int offset, Elf_ehdr *ehdr);
+ 
++/* LOCAL DIVERGENCE (mklab, patch 68): the ELF gate in elf_init_program().
++ * elf_segments_placeable is 1 everywhere a client program can be entered and
++ * 0 on the hosted target (arch/unix sets it: its start_elf() is a stub), where
++ * copying segments to their p_vaddr would write into a host process that has
++ * nothing mapped there. elf_explain_not_ours() is what init_program() calls
++ * when the bytes carry the ELF magic but is_elf() said no: it names the field. */
++extern int		elf_segments_placeable;
++extern int		elf_explain_not_ours(const unsigned char *base);
++
+ #endif   /* _H_ELFLOAD */
 diff --git a/include/libopenbios/sys_info.h b/include/libopenbios/sys_info.h
 index a8b3cce..4c00966 100644
 --- a/include/libopenbios/sys_info.h
@@ -7076,10 +7147,209 @@ index 9b4308b..109b89b 100644
  }
  
 diff --git a/libopenbios/elf_load.c b/libopenbios/elf_load.c
-index f09ccf6..1f291c0 100644
+index f09ccf6..bedf583 100644
 --- a/libopenbios/elf_load.c
 +++ b/libopenbios/elf_load.c
-@@ -505,7 +505,9 @@ elf_init_program(void)
+@@ -469,6 +469,185 @@ out:
+     return retval;
+ }
+ 
++/* ------------------------------------------------------------------ *
++ * LOCAL DIVERGENCE (mklab, patch 68): THE ELF GATE.
++ *
++ * Upstream's elf_init_program() copies every PT_LOAD to its p_vaddr and only
++ * then sets up the program state, so the irreversible step of a `load` is the
++ * memcpy below -- not `go`. Nothing stood in front of it: no bounds check on
++ * the segment against the file, no check of the destination against the
++ * firmware that is doing the copying. Measured 2026-09-05, before this gate,
++ * on all four of this lab's doors:
++ *
++ *   x86    `load` of the firmware's own coreboot-payload ELF (PT_LOAD at
++ *          0x100000, where the firmware's code lives in its own address
++ *          space) never returned -- the copy went over the running firmware
++ *   ppc    `load` of openbios-qemu.elf (PT_LOAD at 0xfff00000, the ROM the
++ *          firmware runs from) printed "Ignoring failed claim" and hung
++ *   amd64  `load` of a 32-bit i386 client was ACCEPTED (state-valid -1) and
++ *          `go` took a general protection fault at its first instruction;
++ *          `load` of an unrecognised file left state-valid at -1 from the
++ *          load before it, so `go` would have re-entered a stale image
++ *   unix   `load` of that client copied to 0x20000 in a host process with
++ *          nothing mapped there: "panic: segmentation violation"
++ *
++ * The gate runs BEFORE the copy, refuses BY NAME (one line, the clause and
++ * both values), leaves the bytes at load-base for inspection, and leaves
++ * state-valid 0 so `go` says so. The gABI's ordering rule is the same sentence
++ * dsl/elf.fth's ?ph-order prints, on purpose: the Forth reader is this gate's
++ * agreement oracle on the little-endian doors.
++ * ------------------------------------------------------------------ */
++
++extern unsigned char *dict;
++extern cell dictlimit;
++
++int elf_segments_placeable = 1;
++
++#define ELF_GATE_MAX_PHNUM	0x20	/* elf_load()'s MAX_HEADERS, same limit */
++
++static int overlaps(unsigned long a0, unsigned long a1,
++                    unsigned long b0, unsigned long b1)
++{
++    /* half-open [a0,a1) against [b0,b1) */
++    return a0 < b1 && b0 < a1;
++}
++
++#define REFUSE(fmt, args...) do { \
++        printk("elf-gate: REFUSED -- " fmt "\n", ##args); return 0; } while (0)
++
++/* Returns 1 when every PT_LOAD may be copied; 0 after printing why not. */
++static int elf_gate(const Elf_ehdr *ehdr, unsigned long base,
++                    unsigned long load_size)
++{
++    const Elf_phdr *phdr;
++    unsigned long tabsz, fw0, fw1, d0, d1, lb0, lb1, s0, s1;
++    unsigned long entry = ehdr->e_entry;
++    int i, n = ehdr->e_phnum, seen_load = 0, n_phdr = 0, n_interp = 0;
++    int entry_in_load = 0;
++
++    if (n > ELF_GATE_MAX_PHNUM)
++        REFUSE("too many program headers (e_phnum=%d, limit %d)",
++               n, ELF_GATE_MAX_PHNUM);
++    tabsz = (unsigned long)n * sizeof(Elf_phdr);
++    if (ehdr->e_phoff > load_size || tabsz > load_size - ehdr->e_phoff)
++        REFUSE("the program-header table runs past the loaded bytes "
++               "(e_phoff=%lx + %d*%d > load-size=%lx)",
++               (unsigned long)ehdr->e_phoff, n, (int)sizeof(Elf_phdr),
++               load_size);
++    phdr = (const Elf_phdr *)(base + ehdr->e_phoff);
++
++    fw0 = (unsigned long)&_start;  fw1 = (unsigned long)&_end;
++    /* arch/ppc/qemu/ldscript puts _end AFTER the reset vector at 0xfffffffc
++     * and ALIGN(4096)s it, so the symbol wraps to 0 and [_start,_end) would be
++     * empty -- the payload that overlapped the whole ROM was caught only by
++     * the dictionary clause below, measured 2026-09-05. A firmware whose end
++     * wrapped occupies the top of the address space: say so. */
++    if (fw1 <= fw0)
++        fw1 = (unsigned long)-1;
++    d0  = (unsigned long)dict;     d1  = d0 + (unsigned long)dictlimit;
++    lb0 = base;                    lb1 = base + load_size;
++
++    for (i = 0; i < n; i++) {
++        switch (phdr[i].p_type) {
++        case PT_PHDR:
++            if (++n_phdr > 1)
++                REFUSE("more than one PT_PHDR (gABI: at most once)");
++            if (seen_load)
++                REFUSE("PT_PHDR after a PT_LOAD (gABI: it must precede "
++                       "every loadable segment)");
++            continue;
++        case PT_INTERP:
++            if (++n_interp > 1)
++                REFUSE("more than one PT_INTERP (gABI: at most once)");
++            if (seen_load)
++                REFUSE("PT_INTERP after a PT_LOAD (gABI: it must precede "
++                       "every loadable segment)");
++            continue;
++        case PT_LOAD:
++            break;
++        default:
++            continue;
++        }
++        seen_load = 1;
++        if (phdr[i].p_offset > load_size
++            || phdr[i].p_filesz > load_size - phdr[i].p_offset)
++            REFUSE("PT_LOAD %d runs past the end of the file "
++                   "(p_offset=%lx + p_filesz=%lx > load-size=%lx)", i,
++                   (unsigned long)phdr[i].p_offset,
++                   (unsigned long)phdr[i].p_filesz, load_size);
++        if (phdr[i].p_filesz > phdr[i].p_memsz)
++            REFUSE("PT_LOAD %d has p_filesz > p_memsz (%lx > %lx; gABI: "
++                   "p_memsz is at least p_filesz)", i,
++                   (unsigned long)phdr[i].p_filesz,
++                   (unsigned long)phdr[i].p_memsz);
++        s0 = phdr[i].p_vaddr;
++        if (phdr[i].p_memsz > (unsigned long)-1 - s0)
++            REFUSE("PT_LOAD %d wraps the address space (p_vaddr=%lx "
++                   "p_memsz=%lx)", i, s0, (unsigned long)phdr[i].p_memsz);
++        s1 = s0 + phdr[i].p_memsz;
++        if (!phdr[i].p_memsz)
++            continue;
++        if (overlaps(s0, s1, fw0, fw1))
++            REFUSE("PT_LOAD %d [%lx..%lx) overlaps the firmware image "
++                   "[%lx..%lx) -- the copy would go over the code doing it",
++                   i, s0, s1, fw0, fw1);
++        if (dictlimit && overlaps(s0, s1, d0, d1))
++            REFUSE("PT_LOAD %d [%lx..%lx) overlaps the dictionary "
++                   "[%lx..%lx)", i, s0, s1, d0, d1);
++        if (overlaps(s0, s1, lb0, lb1))
++            REFUSE("PT_LOAD %d [%lx..%lx) overlaps the load buffer "
++                   "[%lx..%lx) it would be copied from", i, s0, s1, lb0, lb1);
++        if (entry >= s0 && entry < s1)
++            entry_in_load = 1;
++    }
++    if (!seen_load)
++        REFUSE("no PT_LOAD at all -- nothing to enter");
++    if (!entry_in_load)
++        REFUSE("e_entry=%lx lies inside no PT_LOAD", entry);
++    if (!elf_segments_placeable)
++        REFUSE("this hosted firmware cannot place segments (its start_elf "
++               "is a stub) -- the image stays at load-base, LOADED and "
++               "unrun");
++    return 1;
++}
++
++#undef REFUSE
++
++/* The bytes carry the ELF magic but is_elf() said no. Say which field, so a
++ * wrong-arch kernel is refused by name instead of falling silently through
++ * every loader. Returns 1 if it printed (it was an ELF), 0 if not an ELF. */
++int
++elf_explain_not_ours(const unsigned char *b)
++{
++    const Elf_ehdr *e = (const Elf_ehdr *)b;
++
++    if (b[EI_MAG0] != ELFMAG0 || b[EI_MAG1] != ELFMAG1
++        || b[EI_MAG2] != ELFMAG2 || b[EI_MAG3] != ELFMAG3)
++        return 0;
++    printk("elf-gate: REFUSED -- an ELF, but not this firmware's:");
++    if (b[EI_CLASS] != ARCH_ELF_CLASS)
++        printk(" e_ident[CLASS]=%d (want %d)", b[EI_CLASS], ARCH_ELF_CLASS);
++    if (b[EI_DATA] != ARCH_ELF_DATA)
++        printk(" e_ident[DATA]=%d (want %d)", b[EI_DATA], ARCH_ELF_DATA);
++    if (b[EI_VERSION] != EV_CURRENT)
++        printk(" e_ident[VERSION]=%d (want %d)", b[EI_VERSION], EV_CURRENT);
++    /* The fields after e_ident are read at the WRONG class's offsets when the
++     * class differs, so name them only when the class agrees. */
++    if (b[EI_CLASS] == ARCH_ELF_CLASS && b[EI_DATA] == ARCH_ELF_DATA) {
++        if (e->e_type != ET_EXEC)
++            printk(" e_type=%d (want ET_EXEC=%d)", (int)e->e_type, ET_EXEC);
++        if (!ARCH_ELF_MACHINE_OK(e->e_machine))
++            printk(" e_machine=%d (not this CPU)", (int)e->e_machine);
++        if (e->e_version != EV_CURRENT)
++            printk(" e_version=%d (want %d)", (int)e->e_version, EV_CURRENT);
++        if (e->e_phentsize != sizeof(Elf_phdr))
++            printk(" e_phentsize=%d (want %d)", (int)e->e_phentsize,
++                   (int)sizeof(Elf_phdr));
++    }
++    printk("\n");
++    return 1;
++}
++
+ void 
+ elf_init_program(void)
+ {
+@@ -491,6 +670,12 @@ elf_init_program(void)
+ 		return;
+ 	}
+ 
++	/* patch 68: the gate stands here, in front of the copy. A refusal has
++	 * already been printed; state-valid was zeroed by init_program(). */
++	feval("load-size");
++	if (!elf_gate(ehdr, (unsigned long)base, (unsigned long)POP()))
++		return;
++
+ 	phdr = (Elf_phdr *)(base + ehdr->e_phoff);
+ 
+ 	for (i = 0; i < ehdr->e_phnum; i++) {
+@@ -505,7 +690,9 @@ elf_init_program(void)
  		size = MIN(phdr[i].p_filesz, phdr[i].p_memsz);
  		if (!size)
  			continue;
@@ -7090,7 +7360,7 @@ index f09ccf6..1f291c0 100644
  		if( ofmem_claim( phdr[i].p_vaddr, phdr[i].p_memsz, 0 ) == -1 ) {
                          printk("Ignoring failed claim for va %lx memsz %lx!\n",
                                 (unsigned long)phdr[i].p_vaddr,
-@@ -525,7 +527,20 @@ elf_init_program(void)
+@@ -525,7 +712,20 @@ elf_init_program(void)
  #endif
  	}
  
@@ -7713,10 +7983,50 @@ index f96b621..c7d045a 100644
 +	free(cells);
 +}
 diff --git a/libopenbios/initprogram.c b/libopenbios/initprogram.c
-index 3213378..345abc4 100644
+index 3213378..88ed941 100644
 --- a/libopenbios/initprogram.c
 +++ b/libopenbios/initprogram.c
-@@ -114,9 +114,97 @@ void init_forth_context(void)
+@@ -42,6 +42,17 @@ void init_program(void)
+ 	feval("load-base");
+ 	addr = POP();
+ 
++	/* LOCAL DIVERGENCE (mklab, patch 68). state-valid is a record about the
++	 * image at load-base, and only the *_init_program() that accepts an image
++	 * ever wrote it -- so a load that no loader recognised left the value the
++	 * PREVIOUS load had set, and `go` would have re-entered that stale image.
++	 * Measured 2026-09-05 on amd64: after a client program (state-valid -1),
++	 * `load` of an unrecognised ELF64 printed ok and state-valid still read
++	 * -1. Every C loader's load path (elf_load, forth_load, fcode_load...)
++	 * zeroes it first; the init-program path now does too, before it decides
++	 * whether anything here is runnable. */
++	feval("0 state-valid !");
++
+ #ifdef CONFIG_LOADER_AOUT
+ 	if (is_aout((struct exec *)cell2pointer(addr))) {
+ 		aout_init_program();
+@@ -98,6 +109,21 @@ void init_program(void)
+ 	}
+ #endif
+ 
++	/* patch 68: nothing claimed the image. Upstream returned in silence here
++	 * and the only symptom was `go` saying "No valid state" some time later.
++	 * An ELF that is not this firmware's is the case worth naming by field
++	 * (a kernel for the wrong CPU is what a person actually boots by
++	 * mistake); anything else is named by its first bytes. */
++	{
++		const unsigned char *b = (const unsigned char *)cell2pointer(addr);
++#ifdef CONFIG_LOADER_ELF
++		if (elf_explain_not_ours(b))
++			return;
++#endif
++		printk("init-program: no loader recognised the image at load-base "
++		       "(first bytes %02x %02x %02x %02x) -- state-valid stays 0\n",
++		       b[0], b[1], b[2], b[3]);
++	}
+ }
+ 
+ void init_fcode_context(void)
+@@ -114,9 +140,97 @@ void init_forth_context(void)
  {
  	/* Execute Forth payload */
  	printk("Evaluating Forth...\n");

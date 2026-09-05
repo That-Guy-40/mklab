@@ -29,8 +29,30 @@ placement: `ld --hash-style=sysv` writes a .hash section, and a symbol name is
 reachable from bucket[elf_hash(name) % nbucket] only if this hash agrees with
 the linker's.  That check is the oracle for the oracle.
 
-Usage: build-elf-gate-fixtures.py <outdir> [--names NAME...]
+Usage: build-elf-gate-fixtures.py <outdir> [--names NAME...] [--ladder ARCH VADDR OVL]...
 Writes <outdir>/{good,badord,baddup,badint}.elf and prints "NAME HASH" lines (hex).
+
+THE LADDER SETS (B.4 Spike 0, 2026-09-05). `--ladder ARCH VADDR OVL` writes
+<outdir>/ladder-ARCH/{good,badord,baddup,badint,badtrunc,badmem,badovl,badentry}.elf
+in the class, byte order and machine the named firmware door actually LOADS --
+x86: ELF32 LSB EM_386; amd64: ELF64 LSB EM_X86_64; ppc: ELF32 MSB EM_PPC -- so
+that `load` of the bare file reaches the C loader's gate instead of being
+inspected as data. good.elf is RUNNABLE: its body is real code at e_entry (x86
+and amd64 write 'R' to COM1 and `ret` onto the return address the firmware
+plants; ppc is a single `blr`), placed at VADDR, which the caller chooses clear
+of the firmware. Every bad file differs from good.elf in ONE clause, and the
+script prints "LADDER ARCH NAME LO HI": the half-open byte range every
+differing byte must fall in, for the track to check with cmp -l:
+
+  badord    LOAD PHDR INTERP LOAD        PHDR after a LOAD          (the table)
+  baddup    PHDR INTERP INTERP LOAD      INTERP twice               (the table)
+  badint    PHDR LOAD INTERP LOAD        INTERP after a LOAD        (the table)
+  badtrunc  LOAD#2's p_filesz/p_memsz reach past the end of the file (its phdr)
+  badmem    LOAD#2's p_memsz < p_filesz                              (its phdr)
+  badovl    LOAD#2 placed on OVL's page -- the firmware's own address (its phdr)
+            (OVL is the firmware's ENTRY POINT; the segment keeps p_offset ==
+            p_vaddr mod p_align, so no hosted tool has anything to say about it)
+  badentry  e_entry outside every PT_LOAD                            (e_entry)
 """
 import struct, sys, os, subprocess, tempfile, shutil
 
@@ -113,8 +135,94 @@ def linker_check(names):
     finally:
         shutil.rmtree(d)
 
+
+# ── the ladder sets: the class each firmware door loads, with a runnable body ──
+LADDER = {
+    #        e_class e_data e_machine  code at e_entry
+    'x86':   (1, 1, 3,    bytes.fromhex('66baf803b052eec3')),  # mov dx,0x3f8; mov al,'R'; out dx,al; ret
+    'amd64': (2, 1, 0x3e, bytes.fromhex('66baf803b052eec3')),  # the same bytes mean the same in long mode
+    'ppc':   (1, 2, 20,   bytes.fromhex('4e800020')),          # blr -- lr is the return address the firmware planted
+}
+CODE_OFF = 0x10   # the body starts with the 8-byte INTERP string; code follows at +0x10
+
+def ladder_image(arch, vaddr, ovl, variant):
+    """One ELF of the door's own class. variant selects the single clause it breaks."""
+    cls, data, machine, code = LADDER[arch]
+    en = '<' if data == 1 else '>'
+    ehsz, phsz = (52, 32) if cls == 1 else (64, 56)
+    types = {'badord': [1, 6, 3, 1], 'baddup': [6, 3, 3, 1], 'badint': [6, 1, 3, 1]}.get(variant, [6, 3, 1, 1])
+    phoff = ehsz
+    body = phoff + phsz * len(types)
+    filesz = body + 0x100
+    entry = vaddr + body + CODE_OFF
+    if variant == 'badentry':
+        entry = vaddr + 0x100000          # inside no PT_LOAD
+    e = bytearray(b'\x7fELF' + bytes([cls, data, 1, 0]) + b'\0' * 8)
+    if cls == 1:
+        e += struct.pack(en + 'HHIIIIIHHHHHH', 2, machine, 1, entry, phoff, 0, 0, ehsz, phsz, len(types), 40, 0, 0)
+    else:
+        e += struct.pack(en + 'HHIQQQIHHHHHH', 2, machine, 1, entry, phoff, 0, 0, ehsz, phsz, len(types), 64, 0, 0)
+    assert len(e) == ehsz
+    nload = 0
+    for t in types:
+        if t == 1:
+            nload += 1
+            off, fsz, msz, va = 0, filesz, filesz, vaddr
+            if nload == 2:                # every one-clause segment defect lives in LOAD#2
+                if variant == 'badtrunc':
+                    fsz += 0x100; msz += 0x100
+                elif variant == 'badmem':
+                    msz = fsz - 0x10
+                elif variant == 'badovl':
+                    # ONE clause only: keep p_offset == p_vaddr (mod p_align), or elflint
+                    # flags the alignment congruence and the fixture violates two rules
+                    # (measured 2026-09-05: "file offset and virtual address not module
+                    # of alignment"). The page of OVL, plus the body's offset in the
+                    # file, still lands inside the firmware for any OVL past its first
+                    # page -- and the caller hands us its ENTRY POINT.
+                    off, fsz, msz, va = body, 8, 8, (ovl & ~0xfff) + (body & 0xfff)
+        elif t == 6:
+            off, fsz, msz, va = phoff, phsz * len(types), phsz * len(types), vaddr + phoff
+        else:
+            off, fsz, msz, va = body, 8, 8, vaddr + body
+        if cls == 1:
+            e += struct.pack(en + 'IIIIIIII', t, off, va, va, fsz, msz, 7, 0x1000)
+        else:
+            e += struct.pack(en + 'IIQQQQQQ', t, 7, off, va, va, fsz, msz, 0x1000)
+    b = bytearray(b'/bin/sh\0' + b'\0' * (0x100 - 8))
+    b[CODE_OFF:CODE_OFF + len(code)] = code
+    e += b
+    assert len(e) == filesz
+    # the byte range the variant is allowed to differ from good.elf in
+    if variant == 'badentry':
+        lo, hi = 24, 24 + (4 if cls == 1 else 8)
+    elif variant in ('badtrunc', 'badmem', 'badovl'):
+        lo, hi = phoff + 3 * phsz, phoff + 4 * phsz
+    else:
+        lo, hi = phoff, body
+    return bytes(e), lo, hi
+
+LADDER_VARIANTS = ('good', 'badord', 'baddup', 'badint', 'badtrunc', 'badmem', 'badovl', 'badentry')
+
+def write_ladder(out, arch, vaddr, ovl):
+    d = os.path.join(out, 'ladder-' + arch)
+    os.makedirs(d, exist_ok=True)
+    for v in LADDER_VARIANTS:
+        img, lo, hi = ladder_image(arch, vaddr, ovl, v)
+        open(os.path.join(d, v + '.elf'), 'wb').write(img)
+        print('LADDER %s %s %d %d' % (arch, v, lo, hi))
+
 if __name__ == '__main__':
     out = sys.argv[1]
+    argv = sys.argv[2:]
+    while '--ladder' in argv:
+        i = argv.index('--ladder')
+        arch, vaddr, ovl = argv[i + 1], int(argv[i + 2], 0), int(argv[i + 3], 0)
+        if arch not in LADDER:
+            sys.exit('--ladder: unknown door %r (one of %s)' % (arch, ' '.join(LADDER)))
+        write_ladder(out, arch, vaddr, ovl)
+        del argv[i:i + 4]
+    sys.argv[2:] = argv
     names = sys.argv[sys.argv.index('--names') + 1:] if '--names' in sys.argv else \
         ['a', 'abc', 'hello_world', 'supercalifragilistic', 'Z3foov']
     os.makedirs(out, exist_ok=True)

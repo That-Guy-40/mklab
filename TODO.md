@@ -515,7 +515,19 @@ requires of any other cached fact.
       one fixture per gABI clause as a conformance map of the hosted tools (3), symbol lookup and
       a poke before boot (4), identity against the provenance record (5), the big-endian ELF32
       axis (6). Written the day the fourth `elf-gate` fixture measured that no hosted tool
-      enforces the INTERP-order clause. Sequence 0 → 1 → 5 → 2 → 3 → 6 → 4; nothing started.
+      enforces the INTERP-order clause. Sequence 0 → 1 → 5 → 2 → 3 → 6 → 4. **Spike 0 DECIDED and
+      built 2026-09-05** (patch 68, track `elf-ladder`): the gate is **C**, in front of the segment
+      copy `load` performs (the irreversible step was never `go`); fixtures per door in the class it
+      loads; amd64 now loads ELF64; a stale `state-valid` and ppc's wrapped `_end` fixed on the way;
+      four of seven clauses checked by neither readelf nor elflint. Next: Spike 1 (measure at the
+      gate), then 5. **Two loader findings parked here for patches of their own** (both measured while
+      building Spike 0, both bug-class #1 — a record outliving its subject): (a) `load` never frees
+      the interposed partition package, so ~1.3 MiB of distinct-path data in one boot exhausts the
+      heap and the **next `load` silently no-ops**, keeping the previous file's `load-base`/`load-size`
+      (and `state-valid`, if that load was valid) — a stale image `go` would re-enter; the `elf-ladder`
+      track works around it (big subject last, refusals asserted to fire exactly once). (b) the hosted
+      door's default `load-base` (`4000000`) is unmapped, so every `load` on unix segfaults unless a
+      track `$setenv`s it first.
 - [x] **B.3 — build [`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)** —
       **✅ COMPLETE 2026-09-03**: every §9 clause met (Spikes −1, 0, 1a/1b/1c, 2, 3 and the
       §12(2) bench), audited (#390: patches 59/60), and the plan's named follow-on taken as

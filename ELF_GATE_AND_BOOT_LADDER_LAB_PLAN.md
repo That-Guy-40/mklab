@@ -129,6 +129,32 @@ the day a tool does.
 
 ### Spike 0 — THE GATE, in the load path (DECISION)
 
+> **DECIDED AND BUILT 2026-09-05 — (A), the gate is C, with the Forth reader as its agreement
+> oracle.** Patch 68 + the `elf-ladder` track. Three things the measurement changed in the text
+> below, kept as written so the correction is visible:
+>
+> - **The irreversible step is not `go`.** `$load` calls `init-program` itself, and
+>   `elf_init_program()` copies every `PT_LOAD` to its `p_vaddr` right there. The gate therefore
+>   stands in front of *that copy*, and "refused before `go`" was a weaker sentence than the one
+>   needed. Before the gate, `load` of each door's own firmware ELF hung x86 and ppc.
+> - **The C loader only ever sees its own class**, so the ELF64 fixtures were never on the boot
+>   path of x86 or ppc, and amd64's `elf.h` still declared ELF32/EM_386 — it accepted an i386
+>   client and faulted at `go`. The fixtures are now authored per door in the class it loads
+>   (`fixtures/elf-gate/` ladder sets), which pulls Spike 6's big-endian axis into Spike 0 for the
+>   ppc row; amd64 loads ELF64/EM_X86_64.
+> - **(B) cannot gate ppc.** `dsl/elf.fth` declares byte order per field and refuses a big-endian
+>   ELF by name (REVIEW E2) — so on the door whose real boot path is the C loader the Forth reader
+>   is not a candidate for the gate, only for Spike 6. The track asserts that refusal as the named
+>   limit it is. And the success signature's "u-root's prompt (amd64)" was wrong: Linux on amd64
+>   is a bzImage through `linux_load.c`, not an ELF, so **BOOTED is not reached through this
+>   gate** by anything on disk, and the verdict says so rather than passing it.
+>
+> Also found on the way, all fixed in patch 68: an unrecognised `load` left `state-valid` at the
+> previous load's -1 (a stale record `go` would have re-entered); ppc's ldscript wraps `_end` to 0
+> so `[_start,_end)` was empty; and of the seven one-clause fixtures **four are checked by neither
+> `readelf` nor `eu-elflint`** (INTERP order, a segment past EOF, entry in no LOAD, the overlap) —
+> Spike 3's first rows, measured per run.
+
 **Question.** Where does the gate live, so that *every* `load` of an ELF passes through it
 without the user first loading `dsl/elf.fth`?
 
@@ -250,7 +276,7 @@ its controls watched to bite.
 
 | spike | the line that must print | the control that must bite |
 |---|---|---|
-| 0 | `CONSTRAINT: …` on `go` after `load BADINT.BIN`; u-root's prompt after `load GOOD` → `go` (amd64); the exit code after the authored ELF (unix) | a gate-stripped build runs into the bad file |
+| 0 | **met 2026-09-05 (`elf-ladder`):** `elf-gate: REFUSED -- <clause>` on `load` of each one-clause fixture, in each door's own class, before any byte moves; `go` says *No valid state*; `good.elf` LOADED (`state-valid` -1) then RUN AND RETURNED (`R` on COM1, the prompt back) on x86/amd64/ppc; the door's own firmware ELF refused as an overlap with the prompt intact. BOOTED not through this gate — said so | **held:** the pre-patch tree *is* the gate-stripped build — `load` of the firmware's own ELF hung x86 and ppc, amd64 accepted i386 code and GPF'd at `go`, an unrecognised load kept a stale `state-valid`; recorded in `MANUAL_TESTING.md` with the logs |
 | 1 | the gate's digest equals `sha256sum` of the payload file; the replayed PCR equals python's | one byte changed → both move |
 | 2 | one row per shipped ELF, three columns, every disagreement named | `badint.elf` in the sweep is refused by the firmware alone |
 | 3 | one fixture per clause, each labelled both / one / neither | every fixture differs from `good.elf` inside the phdr table only |

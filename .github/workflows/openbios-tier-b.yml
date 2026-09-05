@@ -61,7 +61,7 @@ env:
   # (three boots and a screendump) and is here anyway, because it carries the
   # regression guard for patch 49 — the six 1275 device-register words that
   # shipped EMPTY, whose failure mode is a silent stack shift in an FCode driver.
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt fdt-import elf-gate dict-budget marker
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt fdt-import elf-gate dict-budget marker elf-ladder
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.
