@@ -5846,5 +5846,10 @@ take the toolkit out of the firmware and **into the kernel**:
 
 **Both are gated on one patch (its §1):** the x86/amd64 `boot` word loads and jumps
 in one call, so there is no window to edit in. A `load`/`go` split for bzImages, the
-shape `init-program`/`go` already gives ELF, is patch 69 and step S0. Open questions
-for discussion are its §6.
+shape `init-program`/`go` already gives ELF, is patch 69 and step S0 — and it ships
+three named `defer`s, since OpenBIOS declares none on its boot path. Its §1a is the
+protocol's declaration half (what the loader honours, what it ignores, and
+`setup_type_max` as the refusal Idea B needs); §1b why `boot-file`/`nvramrc` are the
+front end; §2.5 a **fourth seam**, the NVRAM boot counter — the only event loop the
+firmware has once `go` runs. **The seams are the build list**: §5 tabulates file,
+words, track and oracle per seam. Open questions for discussion are its §6.

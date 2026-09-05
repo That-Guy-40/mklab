@@ -37,6 +37,11 @@ on ppc, carrying evidence the kernel cannot otherwise see (Act III's renamed car
 the `cfg-id` a card computed about itself, `/memory available`).
 
 Both ideas share **one prerequisite**, and it is the first thing to build (§1).
+**The seams are the build list**: each of §2's four and §3 ends in a *Build:* line
+naming its file, its words and its track, and §5 collects them in one table. §1a says
+what the boot protocol can and cannot tell the firmware, §1b why the standard's own
+configuration variables are the front end, and §1c why the fourth seam — NVRAM,
+across boots — is the only event loop there is.
 
 ## 1. The prerequisite: a window between "authored" and "jumped"
 
@@ -66,7 +71,95 @@ it is the gate on everything below. **Negative control:** with the split in plac
 `load` of a bzImage then `go` boots to u-root exactly as `boot` does today
 (`showcase-rival-boots-linux.sh` is the regression test, unchanged).
 
-## 2. Idea A — three seams, ordered by how much they can change
+**And the split ships with its hooks.** OFW had `load-started`, `load-done` and
+`linux-hook` — `defer`s on the boot path a user re-points from the prompt, which is
+how the sister lab repaired its zero page. **OpenBIOS declares no `defer` anywhere on
+its boot path** — measured by the habitats lab, which had to implement the standard's
+empty `patch` word to get a tracer in
+([`PATCH.md`](examples/open-firmware-native-habitats/PATCH.md)). So patch 69 declares
+three, named for the step they follow, each a no-op until pointed at a word:
+
+| defer | runs after | what a word pointed at it can see |
+|---|---|---|
+| `linux-header-hook` | the setup header is parsed, before placement | the kernel's **declaration** (§1a) — refuse or re-plan on it |
+| `linux-params-hook` | the zero page, command line, e820 and initrd are complete | every structure of §2, in memory, before anything is copied down |
+| `linux-go-hook` | the prompt says `go`, before the copy-down and the jump | the last look — the measured digest, the NVRAM counter (§2.5) |
+
+**Build:** the three defers, in the same patch as the split; `' fix-cmdline to
+linux-params-hook` at the prompt is the whole user interface. A hook that throws
+aborts the load with the throw's name, which is how a policy word refuses.
+
+### 1a. What the boot protocol is, and is not — the declaration half
+
+The x86 boot protocol is **not a negotiation.** It is one-directional in each half:
+the **kernel declares** what it is and needs, in the setup header inside the *file*,
+and the **loader fills** the zero page according to that declaration. Nothing flows
+back. "Capabilities" therefore means: read the declaration, honour it, fill the fields
+the declared version has, zero the rest.
+
+**What the loader honours today** (measured in
+[patch 12](examples/openbios-the-rival-that-shipped/patches/12-amd64-spike3-boots-linux.patch)
+and patch 01): `HdrS` and `protocol_version` (gating the 2.00 / 2.02 / 2.03 code
+paths); `loadflags` bit 0, loaded-high; `kernel_alignment` and `init_size` for
+placement and the decompressor's work area; `initrd_addr_max` for where the initrd
+may go; and `xloadflags` bit 0 on amd64 — **the one real capability refusal already in
+the tree**: a kernel that does not declare itself 64-bit capable is refused with the
+protocol version and flags printed. The whole header is then copied into the zero
+page verbatim (bug #7).
+
+**What it ignores, and what a capability word would read:**
+
+| field | what it declares | why it matters here |
+|---|---|---|
+| `kernel_info` (`0x268`, protocol 2.15 — this kernel's) → `setup_type_max` | the highest `setup_data` type the kernel understands | **decisive for Idea B**: read it, and a `SETUP_DTB` the kernel would skip silently becomes a refusal *by name, before `go`* (§3) |
+| `relocatable_kernel`, `min_alignment`, `pref_address` | where the kernel would rather be | the loader places its own way and never asks — a placement it chose could disagree with one the kernel preferred, and today nothing says so |
+| `xloadflags` bits 1–4 | loadable above 4 GiB, EFI handover, five-level paging | the amd64 door has 5 GB machines (patch 41) and honours only bit 0 |
+| `type_of_loader` (`0x210`), `ext_loader_ver` | the loader identifies **itself** | the protocol's own "who are you"; what this loader writes is unmeasured (§6) |
+| the **sentinel** (`0x1ef`) | a loader that did not zero the boot params | nonzero, and the kernel sanitises a set of fields itself — a silent fallback. The header copy starts at `0x1f1`, so it *should* be clear; nobody has looked (§6) |
+
+**Build: `.kernel-caps`** — a `bootparams.fth` word that decodes the declaration of
+the loaded image (version, `xloadflags` by name, `kernel_info` and `setup_type_max`,
+alignment, `init_size`, relocatable) beside what the loader *did* with it. Today the
+loader consumes some of these and discards the rest; the toolkit is the only thing
+that can show the whole declaration. Ground truth: the same fields read from the file
+on the host with the type layer's own `struct-layer` shape, and the kernel's
+`dmesg` line for what it believed.
+
+### 1b. The standard already designed the front end
+
+This is not a boot loader to be built; OpenBIOS **is** the boot loader here, and IEEE
+1275 already specifies its persistent user interface as configuration variables:
+`boot-device`, `boot-file`, `boot-command`, `auto-boot?` and `nvramrc` (7.4.3.5), and
+this lab already has **NVRAM backings on x86** (patches 04–07). So:
+
+- the persistent command line is **`boot-file`**;
+- the script that runs at power-on **before probing** is **`nvramrc`** — the habitats
+  lab loaded a whole vocabulary off the chip that way, above the banner;
+- the verb auto-boot evaluates is **`boot-command`**, which is where `load` + a hook +
+  `go` goes once the split exists.
+
+**Build: nothing new.** Use them; a lab-specific surface beside them would be
+re-deriving the standard. The runbook form of every seam below is *"set `boot-file`,
+put the hook word in `nvramrc`, `reset-all`"*, and that is the version that survives
+a power cycle.
+
+### 1c. There are no events after `go`
+
+This is the constraint the whole idea sits inside. On x86 the firmware has **no
+runtime presence** once the kernel starts — no client interface that persists, no
+callback. "React to events in the environment" can mean only three things, and two of
+them happen before the jump:
+
+1. **React to what the kernel declares** — §1a's fields, in `linux-header-hook`.
+   Refuse, re-place, or attach records accordingly.
+2. **React to what the machine is** — the e820 map, the device tree, the option ROMs
+   that ran, a digest of the image — in `linux-params-hook`. Policy at the gate, in
+   Forth; B.4's Spikes 1 and 5 are exactly this shape.
+3. **React across boots.** The running kernel cannot talk to the firmware, but it can
+   write the NVRAM chip the firmware reads at the next power-on. That is the only
+   genuine event loop available, and it is **seam 4** (§2.5).
+
+## 2. Idea A — four seams, ordered by how much they can change
 
 The zero page is a `struct boot_params`; the setup header inside it starts at
 `0x1f1`. Patch 01 already extended the loader's copy of that header through protocol
@@ -92,6 +185,12 @@ the **third row is the one the command line cannot do as honestly**: `memmap=` a
 the kernel to *ignore* memory the map says is there; editing e820 makes the map
 *say* something else, and the kernel's view and the firmware's record agree — the
 record-outlives-its-subject rule, applied to a memory map.
+
+**Build: `bootparams.fth`** — the layout (every row above as a `le-field:`), a
+`.zero-page` that prints it beside the kernel's `dmesg` reading, `cmdline!` (refuses
+past `cmdline_size`), `e820-reserve` (refuses an overlap with the kernel's staging),
+and a `setup-data+` that links a record into the chain. One track, `zero-page`,
+graded by `/sys/kernel/boot_params/data` (§4).
 
 ### 2.2 Seam 2 — the initrd in memory: a file inside the image the kernel unpacks
 
@@ -158,6 +257,12 @@ initrd" always means one of: add a path, or wholly replace one. Anything that ne
 a *diff* against the original member has to read the original first (edit 1's
 walk) and write the whole result (edit 2's append).
 
+**Build: `cpio.fth`** — the `newc` header as a cursor record with one new type (eight
+hex digits as a number), `cpio-walk` (counts what `cpio -itv` counts), `cpio-find`
+(edit 1), and `initrd-append` — copy, compose, `TRAILER!!!`, repoint (edit 2),
+asserting `nlink = 1` and fresh inodes on every member it writes. One track,
+`initrd-append`, graded by u-root's `ls`/`cat` and `cpio -itv` from `pmemsave`.
+
 ### 2.3 Seam 3 — the image on the medium, before `load`
 
 "The command line that resides in the image" needs a distinction:
@@ -178,6 +283,10 @@ boot it) or through the **pmem seam** (`pmem-writer`: the firmware writes bytes 
 host finds in the NVDIMM image after QEMU exits — so the firmware can *author* a
 modified initrd that the *next* boot loads). The memory-side edits of §2.1–2.2 need
 neither, which is why they come first.
+
+**Build: nothing in-firmware.** A host-side fixture builder in the `elf-gate` shape —
+one bzImage whose setup header differs from the good one in one field — is what this
+seam needs, and only when a §1a refusal wants a subject.
 
 ### 2.4 Kernel tunables specifically — three routes, ranked
 
@@ -209,6 +318,42 @@ userspace that has no `CONFIG_OF`; carry the authored TCG event log
 `tpm2_eventlog` — the log's structure handed across the boundary in a *file*, since
 the boot protocol has no `setup_data` type for it.
 
+### 2.5 Seam 4 — NVRAM, across boots: the only event loop there is
+
+§1c's third reaction. The kernel cannot reach the firmware while it runs, but the
+NVRAM chip outlives the boot, the OS can write it (`/dev/nvram`, or the same words
+at the next prompt), and the firmware reads it at power-on **before it decides what to
+boot**. That is the **boot counter** every embedded loader has (U-Boot's `bootcount`,
+the A/B slot of every phone), and this lab has every piece of it:
+
+1. `nvramrc` runs at power-on (§1b) and reads a counter the firmware keeps in its own
+   NVRAM (patches 04–07 back it on x86; the ppc chip is real).
+2. `linux-go-hook` **increments** the counter before the jump — "a boot was
+   attempted."
+3. The booted OS **clears** it once it is up — u-root's `init`, or one `dd` into
+   `/dev/nvram` at the offset the firmware published on the command line.
+4. At the next power-on `nvramrc` finds the counter: **zero** means the last boot
+   reached userspace, so boot `boot-file`; **nonzero** means it did not, so boot the
+   *previous* kernel (`boot-file` and a `boot-file-prev`, swapped by the hook), and
+   say so on the console.
+
+**Ground truth:** two power cycles. First with a kernel whose `init=` points at
+nothing — the counter stays set, the machine reboots into the fallback, and the
+console names the reason. Then the good kernel — the counter clears, and the third
+boot takes the primary. **Controls:** the counter is not cleared by a boot that
+*panicked* (`panic=5` on the command line so it reboots itself); the fallback is not
+taken when the OS cleared the counter; and the fallback is refused *by name* when
+`boot-file-prev` is empty rather than looping. This is the seam that makes the lab
+look like a boot loader instead of a demo, and it is the natural home of the
+RAM-resident infra labs' "reboot = newest build" rule
+([TODO §4](TODO.md#4-net-booted-ram-resident-infrastructure-images-immutable-infra-reboot--newest-build)):
+newest build, **unless the newest build did not come up**.
+
+**Build: `bootcount.fth`** — `bootcount@`/`bootcount!` over the NVRAM words, the
+`nvramrc` script, and the `linux-go-hook` word; on the OS side one line in the
+u-root `init` this lab already builds. One track, `boot-counter`, three power cycles,
+driven the way the persist tracks already drive NVRAM across a restart.
+
 ## 3. Idea B — the tree, handed over
 
 Mechanism: one `setup_data` record — `next=0, type=SETUP_DTB (2), len=<dtb size>,
@@ -222,6 +367,19 @@ is not needed; `cat` it out over serial and `dtc` it on the host, or compare its
 sha256 in u-root against the firmware's `sha256` of what it wrote) and
 `/proc/device-tree/pci8086,1237@0/fcode-card@3/` — Act III's rename, visible to a
 kernel that never ran FCode.
+
+**The refusal that comes before any of it:** `setup_type_max` from the image's
+`kernel_info` (§1a). If `SETUP_DTB` is above what the kernel declares it understands,
+the record is refused *by name at the prompt*, and Idea B's worst outcome — a blob the
+kernel skips silently, indistinguishable from a broken one — cannot happen. That is
+the capability half of the protocol doing work.
+
+**The oracle that needs no device-tree support at all:** the kernel exposes the zero
+page it received at `/sys/kernel/boot_params/data`, and every `setup_data` record it
+walked under `/sys/kernel/boot_params/setup_data/<n>/`. The record is visible there
+**whether or not the kernel understood it** — so "did the bytes arrive" and "did the
+kernel read them" are two separate assertions, and only the second depends on
+`CONFIG_OF`.
 
 **The measurement that comes first:** whether the cached 6.3 kernel has `CONFIG_OF`.
 `extract-ikconfig` on the host, or `/proc/config.gz` in u-root if enabled. If it does
@@ -255,6 +413,11 @@ them. On ppc all of that flows through `prom_init`; on x86 it evaporates at the 
   `cmd_line_ptr` changed". A poke that changed the bytes and did not reach the
   kernel — the wrong address on x86, the copy-down overwriting it, the kernel
   copying the line before the edit — passes the mechanism check and fails the boot.
+- **The kernel shows the zero page it received.** `/sys/kernel/boot_params/data` is
+  the struct byte for byte, `…/setup_data/<n>/{type,data}` the chain. Every edit in
+  §2.1 is graded there *and* by its effect (`/proc/cmdline`, `/proc/iomem`): the
+  first proves the bytes arrived, the second that the kernel acted on them, and a
+  row where the first holds and the second does not is a finding, not a pass.
 - **The unedited boot is the no-fault row.** Every seam's first assertion is that the
   split (§1) reproduces today's `showcase-rival-boots-linux.sh` verdict byte for byte.
 - **Refuse before the irreversible step.** `go` is the `dd`. A command line longer than
@@ -271,12 +434,27 @@ them. On ppc all of that flows through `prom_init`; on x86 it evaporates at the 
 
 | step | the line that must print | needs |
 |---|---|---|
-| S0 | `load …\vmlinuz …` → `LOADED`, `go` → u-root; `boot` unchanged | patch 69 (§1), on x86 and amd64 |
+| S0 | `load …\vmlinuz …` → `LOADED`, `go` → u-root; `boot` unchanged; the three hooks declared and no-ops | patch 69 (§1), on x86 and amd64 |
+| S0a | `.kernel-caps` prints the loaded image's declaration; `setup_type_max` and `type_of_loader` named | `bootparams.fth` (§1a); S0 |
 | S1 | `/proc/cmdline` shows a string typed at the prompt after `load` | `bootparams.fth`; S0 |
 | S2 | `cat /proc/sys/kernel/<name>` shows the value from a `sysctl.` parameter S1 added | S1 |
 | S3 | `/proc/iomem` lacks a range the firmware reserved; the kernel booted anyway | e820 layout; S1 |
 | S4 | `ls /etc/sysctl.d` shows a member the firmware appended; `cpio -itv` on the host reads two archives | `cpio.fth`; S1 |
-| S5 | `/proc/device-tree/…/fcode-card@3` exists, or the mailbox blob `dtc`-decompiles identically | `CONFIG_OF` measured; S3 for the mailbox |
+| S5 | `/proc/device-tree/…/fcode-card@3` exists, or the mailbox blob `dtc`-decompiles identically; the record is under `/sys/kernel/boot_params/setup_data/` either way | `CONFIG_OF` measured; S3 for the mailbox |
+| S6 | a kernel that never reaches `init` is followed, at the next power-on, by the console naming the fallback and booting the previous kernel | `bootcount.fth` (§2.5); S0, the NVRAM tracks |
+
+**What to build, by seam** — the deliverables, so the seams read as work and not as
+description:
+
+| seam | file / patch | words | track | graded by |
+|---|---|---|---|---|
+| the window (§1) | patch 69 | `load`/`go` for bzImages; `linux-header-hook`, `linux-params-hook`, `linux-go-hook` | `linux-ladder` | today's showcase verdict, unchanged; a hook that throws aborts by name |
+| the declaration (§1a) | `dsl/bootparams.fth` | `.kernel-caps` | `kernel-caps` | the same header read on the host; the kernel's `dmesg` |
+| 1 — the zero page (§2.1) | `dsl/bootparams.fth` | `.zero-page`, `cmdline!`, `e820-reserve`, `setup-data+` | `zero-page` | `/sys/kernel/boot_params/data`; `/proc/cmdline`; `/proc/iomem` |
+| 2 — the initrd (§2.2) | `dsl/cpio.fth` | `cpio-walk`, `cpio-find`, `initrd-append` | `initrd-append` | u-root's `ls`/`cat`; `cpio -itv` from `pmemsave` |
+| 3 — the medium (§2.3) | a fixture builder | — | (a subject for §1a's refusals) | `readelf`-style host reading of the same header |
+| 4 — NVRAM (§2.5) | `dsl/bootcount.fth`, an `nvramrc` script, one line in u-root's `init` | `bootcount@`, `bootcount!`, the hook word | `boot-counter` | three power cycles; the console naming the fallback |
+| the tree (§3) | `dsl/fdt.fth` (exists) + `setup-data+` | — | `dtb-handoff` | `/sys/kernel/boot_params/setup_data/`; `/proc/device-tree`; `dtc` |
 
 S1 is the showcase's natural Act X (Act IX being the ELF gate, per B.4 §8): the last
 act is the one where the firmware, having dissected everything that arrived, **edits
@@ -297,3 +475,13 @@ what leaves**.
    `elf-ladder` track's vocabulary (LOADED / REFUSED / RUN) describes both formats,
    and a bzImage with a bad `HdrS` magic is a REFUSED row — the bzImage gate beside
    the ELF gate, which the first survey listed separately.
+6. **What does the loader write as `type_of_loader`?** The protocol's "who are you"
+   field; `0xFF` is *undefined*, and the registered values are a short list. Whether
+   OpenBIOS should identify itself, and as what, is a decision — the measurement of
+   what it writes today comes first.
+7. **Is the sentinel clear?** One boot, one `/sys/kernel/boot_params/data` read, byte
+   `0x1ef`. If it is not, the kernel has been sanitising fields behind every boot this
+   lab has ever graded, and some assertion above is weaker than it reads.
+8. **Which of the ignored declarations (§1a) should become refusals?** `setup_type_max`
+   clearly; `relocatable_kernel`/`pref_address` only if a placement the loader chose
+   is ever shown to disagree with one the kernel preferred.
