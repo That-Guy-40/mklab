@@ -1,0 +1,122 @@
+Subject: [PATCH 66/66] kernel: here! refuses a dictionary overflow -- the pointer stays and -8 is thrown -- instead of printing a line and continuing into the neighbour
+
+Arch-tested: x86 amd64 ppc unix
+
+kernel/forth.c herewrite() set dicthead to the new value FIRST and compared it
+with dictlimit second, so the "Dictionary space overflow" line was the whole of
+the protection: here was left past the end of the array and the word that moved
+it returned as if it had succeeded. The next `,` -- or the next `.`, whose
+pictured-number pad lives at here -- wrote into whatever follows the dictionary.
+Patch 63's dict-budget track showed it on every arch (its OVER control allots 10
+bytes past the room: the line printed, OVER-END printed, nothing refused), and
+the 2026-09-04 measurement says what the neighbour is and what one write did:
+
+  unix   an unmapped page (the dictionary is one mmap at 0x30000000): the `.`
+         that printed catch's result died -- "panic: segmentation violation at
+         30100110" -- one word after the overflow line
+  ppc    debug_xt_list, then console_ops (nm obj-ppc/openbios-qemu.elf.nostrip:
+         forth_dictionary fff480b4 + 0x60000 = fffa80b4): `room a + allot
+         12345678 ,` rewrote bytes +a..+d -- the tail of one console function
+         pointer and the head of the next, ff f0 a9 e4 ff f0 -> ff f0 12 34 56
+         78 -- and the prompt answered ok
+  x86    x86_nvram_backend, then x86_nvram (intdict 0011cbe0 + 0x100000)
+  amd64  last_key, key_caps (intdict 223020 + 0x100000); the coreboot door's
+         forth_dictionary is followed by ofmem's claim_next
+
+Now herewrite() computes the new head and, if dictlimit is set and the head is
+at or past it, prints the line (" -- refused" appended), leaves dicthead where
+it was, pushes -8 -- ANS Forth's THROW code for "dictionary overflow" -- and
+runs `throw` through enterforth(), the way arch/ppc/*/methods.c has thrown -13
+from C all along. The nested interpreter loop exits the moment `rdepth!` cuts
+the return stack below its entry depth; PC is global, so the OUTER loop finishes
+throw's body (catchframe, depth and my-self restored, the exit to the catch's
+caller) -- which is why the C side must return immediately after, and does.
+FCOMPILER never sets dictlimit, so the host-side dictionary compiler cannot
+reach the branch; if it ever does, it exit(1)s rather than compile past its
+buffer. print-status gains the -8 text, so an uncaught overflow at the prompt
+reads "dictionary overflow." instead of "Exception #-8".
+
+MEASURED after, same probes: unix and ppc answer OVER-RC=-8 under catch,
+dict-used is unchanged across the refused allot (DUB = DUA), the 32 bytes after
+ppc's dictionary are identical before and after, OVER-END never prints, an
+uncaught overflow leaves the prompt at depth 0 saying "dictionary overflow.",
+and a word defined afterwards compiles and runs. The dict-budget track's OVER
+control asserts exactly that on all four arches and fails by name if the old
+behaviour returns.
+
+One consequence, recorded: forth/lib/preprocessor.fs's [DEFINE] points here! at
+an alloc-mem buffer OUTSIDE the dictionary. Upstream's check already flagged
+that as an overflow (the head wraps: dicthead=fffffffff0004c08 on unix) and then
+carried on into the buffer; it is refused now. Every [DEFINE] in the tree runs
+at dictionary-build time (config.fs), where dictlimit is 0 and the check is off,
+so nothing shipped changes -- only [DEFINE] typed at a running prompt does, and
+the fix for that belongs to the preprocessor (carve its buffer from the
+dictionary), not to here!.
+
+diff --git a/forth/bootstrap/interpreter.fs b/forth/bootstrap/interpreter.fs
+--- a/forth/bootstrap/interpreter.fs
++++ b/forth/bootstrap/interpreter.fs
+@@ -88,6 +88,7 @@
+        -4 of s" Stack Underflow." type 0 depth! endof
+        -5 of s" Return Stack Overflow." type endof
+        -6 of s" Return Stack Underflow." type endof
++      -8 of s" dictionary overflow." type endof
+       -13 of s" undefined word." type endof
+       -15 of s" out of memory." type endof
+       -21 of s" undefined method." type endof
+diff --git a/kernel/forth.c b/kernel/forth.c
+--- a/kernel/forth.c
++++ b/kernel/forth.c
+@@ -1699,18 +1699,48 @@ static void dictused_word(void)
+ static void herewrite(void)
+ {
+ 	ucell tmp = POP(); /* converted pointer */
+-	dicthead = tmp - pointer2cell(dict);
++	ucell newhead = tmp - pointer2cell(dict);
+ #ifdef CONFIG_DEBUG_INTERNAL
+ 	printk("here!: new value: %x\n", tmp);
+ #endif
+ 
+-	if (dictlimit && dicthead >= dictlimit) {
++	if (dictlimit && newhead >= dictlimit) {
++	    /* mklab (patch 66): REFUSE, do not print-and-continue. Upstream set
++	     * dicthead first and only then printed this line, so `here` was left
++	     * past the end of the array: the next `,` -- or the next `.`, whose
++	     * pictured-number pad lives at here -- wrote into the dictionary's
++	     * neighbour. Measured 2026-09-04: on the hosted target the neighbour
++	     * is an unmapped page ("panic: segmentation violation at 30100110",
++	     * one `.` after the line); on ppc it is console_ops, and one `,` past
++	     * the end rewrote two of the console's function pointers while the
++	     * prompt still answered ok; on x86 it is x86_nvram_backend, on amd64
++	     * last_key. The pointer stays where it was and -8 is thrown -- ANS
++	     * Forth's "dictionary overflow" -- so an allot/,/create that does
++	     * not fit unwinds to the nearest catch (the prompt's) and the words
++	     * before it stay intact. FCOMPILER never sets dictlimit, so the
++	     * host-side dictionary compiler cannot reach this; if it ever does,
++	     * a build that overflowed its dictionary must fail, not continue. */
+ 	    printk("Dictionary space overflow:"
+ 	            " dicthead=" FMT_ucellx
+ 	            " dictlimit=" FMT_ucellx
+-	            "\n",
+-	            dicthead, dictlimit);
++	            " -- refused\n",
++	            newhead, dictlimit);
++#ifdef FCOMPILER
++	    exit(1);
++#else
++	    {
++		static xt_t throw_xt = 0;
++		if (!throw_xt)
++		    throw_xt = findword("throw");
++		if (throw_xt) {
++		    PUSH((ucell)-8);
++		    enterforth(throw_xt);
++		}
++	    }
++	    return;
++#endif
+ 	}
++	dicthead = newhead;
+ }
+ 
+ 

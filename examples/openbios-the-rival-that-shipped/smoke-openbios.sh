@@ -5567,12 +5567,18 @@ FTH
     # kernel primitives, dict-limit and dict-used — dictlimit and dicthead, the
     # two cells here! already compares — because the only way to learn the limit
     # from Forth before that was to allot PAST it and read the "Dictionary space
-    # overflow" line. That line is also the whole of the kernel's protection: it
-    # prints and CONTINUES (kernel/forth.c herewrite), and the dictionary is a
-    # static array, so the next `,` past the end lands in whatever .bss follows.
-    # Hence the guard this track types before every evaluate: a file is compiled
-    # only if 1.5 × its source size fits in the room left, and a file that would
-    # not fit prints NO-ROOM instead of corrupting the firmware — after which
+    # overflow" line. That line WAS also the whole of the kernel's protection until
+    # patch 66 (2026-09-04): herewrite printed and CONTINUED with here past the end,
+    # and the byte after the dictionary is somebody else's — an unmapped page on
+    # the hosted target (the next `.` segfaulted the firmware: its pictured-number
+    # pad lives at here), console_ops on ppc (one `,` rewrote two of the console's
+    # function pointers and the prompt still said ok), x86_nvram_backend on x86,
+    # last_key on amd64 (nm, each binary). Patch 66 makes here! REFUSE: the pointer
+    # stays where it was and -8 (ANS: dictionary overflow) is thrown. The guard this
+    # track types before every evaluate stays for the REPORT's sake: a file is
+    # compiled only if 1.5 × its source size fits in the room left, so a file that
+    # would not fit is named NO-ROOM whole instead of being refused by the kernel
+    # halfway through one of its definitions — after which
     # every later file is SKIPPED by name rather than evaluated, because a
     # dependent of a refused file aborts INSIDE a colon definition and leaves the
     # interpreter in compile state, where every later line (bye included) is
@@ -5588,7 +5594,10 @@ FTH
     # TWO CONTROLS, on every arch, both about the SAME property — that dict-limit
     # is the number the kernel checks against: allot to 10 bytes PAST (limit -
     # used) must print the overflow line, and its dictlimit= must equal what
-    # dict-limit said; allot to 10 bytes SHORT of it must print nothing. And one
+    # dict-limit said — and, since patch 66, must be REFUSED: -8 to the catch
+    # around it, not a byte taken (DUB = DUA), the words after the allot never
+    # reached (no OVER-END), and a definition typed after it runs; allot to 10
+    # bytes SHORT of it must print nothing and complete. And one
     # from outside: dict-used at boot must be AT LEAST the .dict file's own header
     # length field — the number kernel/dict.c copies into dicthead when it loads —
     # and the excess is what init compiled before the prompt (the device tree, the
@@ -5647,9 +5656,13 @@ PY
             ': ?fit load-size 3 * 2 / room < ;'
             ': nofit ." NO-ROOM" cr -1 dbstop ! ;'
             ': ?ev dbstop @ if ." SKIP" cr exit then ?fit if ev else nofit then ;'
-            '." DL=" dict-limit u. ." DU0=" dict-used u. cr'
-            'room a + dup allot negate allot ." OVER-END" cr'
-            'room a - dup allot negate allot ." UNDER-END" cr')
+            ': ovp room a + allot ." OVER-END" cr ;'
+            '." DL=" dict-limit u. ." DUA=" dict-used u. cr'
+            "' ovp catch .\" OVER-RC=\" . cr"
+            '." DUB=" dict-used u. cr'
+            ': ov7 7 ; ov7 ." AFTER-OVER=" . cr'
+            'room a - dup allot negate allot ." UNDER-END" cr'
+            '." DU0=" dict-used u. cr')
     db_skip() {  # db_skip <file> <arch>: true when the file is not loadable on that arch
       [[ "$1" == lbregion && "$2" != x86 && "$2" != amd64 ]] && return 0
       [[ "$1" == optrom && "$2" == unix ]] && return 0
@@ -5685,7 +5698,7 @@ print('NO-ROOM' if 'NO-ROOM' in win else 'SKIP' if 'SKIP' in win else 'OK')
 PYMARK
     }
     db_grade() {  # db_grade <arch> <log> <dict-file>
-      local a="$1" g dl du0 du1 room hdr init over n prev f cur cost total=0 fitted=0 refused="" rows="" src ratio mark
+      local a="$1" g dl du0 du1 room hdr init over n prev f cur cost total=0 fitted=0 refused="" rows="" src ratio mark dua dub
       g="$(tr -d '\r' < "$2")"
       dl="$(grep -aoE 'DL=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"; du0="$(grep -aoE 'DU0=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
       du1="$(grep -aoE 'DU1=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"; room="$(grep -aoE 'ROOM=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
@@ -5701,10 +5714,23 @@ PYMARK
       [[ "$n" -eq 1 ]] || fail "dict-budget ($a): $n 'Dictionary space overflow' lines where exactly 1 is expected (the OVER control) — either the control did not fire or a file's evaluate ran the dictionary past its end — see $2"
       over="$(grep -aoE 'dictlimit=0*[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2 | sed 's/^0*//')"
       [[ "$over" == "$dl" ]] || fail "dict-budget ($a): the kernel's overflow line says dictlimit=$over, dict-limit answered $dl — the word is not reading the cell here! checks — see $2"
-      grep -qF 'OVER-END' <<<"$g" || fail "dict-budget ($a): the OVER control did not complete — see $2"
+      # patch 66: the overflow is REFUSED. The probe's allot throws -8 to the catch
+      # around it, so the words after the allot never run (OVER-END must NOT print —
+      # and the echoed definition contains the same text, hence the quote filter),
+      # the pointer stays where it was (DUB = DUA), and the prompt is intact: a word
+      # defined after the refusal runs. Before patch 66 this probe printed OVER-END
+      # with here 10 bytes past the end, and the next `.` killed the hosted target.
+      grep -qE 'OVER-RC=-8' <<<"$g" || fail "dict-budget ($a): REGRESSION: the allot past the end was not refused with -8 (no 'OVER-RC=-8' after the overflow line) — here! is printing and continuing again (patch 66) — see $2"
+      if grep -aF 'OVER-END' <<<"$g" | grep -avF 'OVER-END"' | grep -q .; then
+        fail "dict-budget ($a): REGRESSION: OVER-END printed — the allot past the end RETURNED instead of throwing, so here sat past the dictionary (patch 66) — see $2"
+      fi
+      dua="$(grep -aoE 'DUA=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"; dub="$(grep -aoE 'DUB=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ -n "$dua" && -n "$dub" ]] || fail "dict-budget ($a): DUA/DUB not both printed (dua=${dua:-?} dub=${dub:-?}) — the OVER control did not run to its second reading — see $2"
+      [[ "$dua" == "$dub" ]] || fail "dict-budget ($a): REGRESSION: dict-used moved from $dua to $dub across the refused allot — the refusal took bytes; patch 66 leaves dicthead where it was — see $2"
+      grep -qE 'AFTER-OVER=7' <<<"$g" || fail "dict-budget ($a): a word defined after the refused allot did not run (no 'AFTER-OVER=7') — the throw left the interpreter or the dictionary unusable — see $2"
       grep -qF 'UNDER-END' <<<"$g" || fail "dict-budget ($a): the UNDER control did not complete — see $2"
-      # the overflow line must sit between the OVER probe and its marker, not anywhere else
-      sed -n '\|room a + dup allot|,\|OVER-END|p' <<<"$g" | grep -q 'Dictionary space overflow' \
+      # the overflow line must sit between the OVER probe and its result, not anywhere else
+      sed -n '\|ovp catch|,\|OVER-RC=|p' <<<"$g" | grep -q 'Dictionary space overflow' \
         || fail "dict-budget ($a): the one overflow line is not inside the OVER control — it came from somewhere else — see $2"
       # per-file costs
       prev="$du0"
@@ -5731,7 +5757,7 @@ PYMARK
       echo "$a $((16#$dl)) $((16#$du0)) $total $((16#$room)) $fitted $(tr ' ' ',' <<<"${refused% }")" >> "$DWD/summary.txt"
       note "$a: dictionary $((16#$dl)) bytes, $((16#$du0)) used at boot (the .dict header's $((16#$hdr)) + $init compiled at init); toolkit +$total bytes, $fitted files compiled; $((16#$room)) bytes left ($(( (16#$room) * 100 / (16#$dl) ))%) — $( [[ -z "$refused" ]] && echo "the toolkit FITS" || echo "the toolkit DOES NOT FIT: refused/skipped for room: $refused")"
       note "$a per file: $rows"
-      note "$a controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=$dl' (the same number dict-limit answers), 10 short → silent"
+      note "$a controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=$dl -- refused' (the same number dict-limit answers), -8 to its catch, dict-used unchanged at $dub, a word defined after it runs; 10 short → silent and complete"
     }
     rm -f "$DWD/summary.txt"
 
@@ -5766,7 +5792,7 @@ PYMARK
     db_grade ppc "$DPLOG" "$DPDI"
 
     DBSUM="$(awk '{printf "%s: %d KiB limit, %d KiB at boot, +%d KiB compiled, %d KiB left — %s; ", $1, $2/1024, $3/1024, $4/1024, $5/1024, ($7==""?"FITS ("$6" files)":"DOES NOT FIT ("$6" files compiled; refused/skipped: "$7")")}' "$DWD/summary.txt")"
-    pass "B.3 plan §6's unmeasured dictionary budget, MEASURED on all four arches with the running firmware's own numbers (patch 63: dict-limit/dict-used are the two cells here! compares). $DBSUM Every cost is a per-file delta of dict-used, the boot figure is the .dict file's header length (read on the host) plus what init compiled, and the controls fire on every arch: allotting 10 bytes past the room prints the kernel's 'Dictionary space overflow' line naming the SAME limit dict-limit answers, allotting 10 bytes short prints nothing, and there is exactly one such line per run. A file is compiled only when 1.5× its source size fits the room left; one that does not is refused as NO-ROOM and named, and everything after it is SKIPped rather than half-compiled — because the kernel's own check prints and continues, and the byte after a full dictionary is somebody else's"
+    pass "B.3 plan §6's unmeasured dictionary budget, MEASURED on all four arches with the running firmware's own numbers (patch 63: dict-limit/dict-used are the two cells here! compares). $DBSUM Every cost is a per-file delta of dict-used, the boot figure is the .dict file's header length (read on the host) plus what init compiled, and the controls fire on every arch: allotting 10 bytes past the room prints the kernel's 'Dictionary space overflow' line naming the SAME limit dict-limit answers AND IS REFUSED (patch 66: -8 to the catch around it, not a byte taken, a word defined afterwards runs — where before the same allot returned with here past the end, the next '.' segfaulted the hosted target and one ',' on ppc rewrote two of console_ops' function pointers behind an ok), allotting 10 bytes short prints nothing and completes, and there is exactly one such line per run. A file is compiled only when 1.5× its source size fits the room left; one that does not is named NO-ROOM whole rather than refused by the kernel halfway through a definition, and everything after it is SKIPped by name"
     ;;
   struct-array)
     # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's

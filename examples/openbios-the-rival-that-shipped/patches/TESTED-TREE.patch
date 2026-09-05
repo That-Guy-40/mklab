@@ -5797,6 +5797,18 @@ index 3fbd935..c4ce58f 100644
  [THEN]
  
  [IFDEF] CONFIG_SPARC32
+diff --git a/forth/bootstrap/interpreter.fs b/forth/bootstrap/interpreter.fs
+index f02000f..e62261e 100644
+--- a/forth/bootstrap/interpreter.fs
++++ b/forth/bootstrap/interpreter.fs
+@@ -88,6 +88,7 @@
+        -4 of s" Stack Underflow." type 0 depth! endof
+        -5 of s" Return Stack Overflow." type endof
+        -6 of s" Return Stack Underflow." type endof
++      -8 of s" dictionary overflow." type endof
+       -13 of s" undefined word." type endof
+       -15 of s" out of memory." type endof
+       -21 of s" undefined method." type endof
 diff --git a/forth/bootstrap/start.fs b/forth/bootstrap/start.fs
 index 9aabfa2..615887c 100644
 --- a/forth/bootstrap/start.fs
@@ -6533,7 +6545,7 @@ index 8ad3efe..9b94fa9 100644
      }
  
 diff --git a/kernel/forth.c b/kernel/forth.c
-index 61dd70d..42d8803 100644
+index 61dd70d..e19d3f9 100644
 --- a/kernel/forth.c
 +++ b/kernel/forth.c
 @@ -1668,6 +1668,30 @@ static void here(void)
@@ -6567,7 +6579,60 @@ index 61dd70d..42d8803 100644
  /*
   *  here!       ( new-dict-pointer -- )
   */
-@@ -1721,7 +1745,22 @@ static void iskey(void)
+@@ -1675,18 +1699,48 @@ static void here(void)
+ static void herewrite(void)
+ {
+ 	ucell tmp = POP(); /* converted pointer */
+-	dicthead = tmp - pointer2cell(dict);
++	ucell newhead = tmp - pointer2cell(dict);
+ #ifdef CONFIG_DEBUG_INTERNAL
+ 	printk("here!: new value: %x\n", tmp);
+ #endif
+ 
+-	if (dictlimit && dicthead >= dictlimit) {
++	if (dictlimit && newhead >= dictlimit) {
++	    /* mklab (patch 66): REFUSE, do not print-and-continue. Upstream set
++	     * dicthead first and only then printed this line, so `here` was left
++	     * past the end of the array: the next `,` -- or the next `.`, whose
++	     * pictured-number pad lives at here -- wrote into the dictionary's
++	     * neighbour. Measured 2026-09-04: on the hosted target the neighbour
++	     * is an unmapped page ("panic: segmentation violation at 30100110",
++	     * one `.` after the line); on ppc it is console_ops, and one `,` past
++	     * the end rewrote two of the console's function pointers while the
++	     * prompt still answered ok; on x86 it is x86_nvram_backend, on amd64
++	     * last_key. The pointer stays where it was and -8 is thrown -- ANS
++	     * Forth's "dictionary overflow" -- so an allot/,/create that does
++	     * not fit unwinds to the nearest catch (the prompt's) and the words
++	     * before it stay intact. FCOMPILER never sets dictlimit, so the
++	     * host-side dictionary compiler cannot reach this; if it ever does,
++	     * a build that overflowed its dictionary must fail, not continue. */
+ 	    printk("Dictionary space overflow:"
+ 	            " dicthead=" FMT_ucellx
+ 	            " dictlimit=" FMT_ucellx
+-	            "\n",
+-	            dicthead, dictlimit);
++	            " -- refused\n",
++	            newhead, dictlimit);
++#ifdef FCOMPILER
++	    exit(1);
++#else
++	    {
++		static xt_t throw_xt = 0;
++		if (!throw_xt)
++		    throw_xt = findword("throw");
++		if (throw_xt) {
++		    PUSH((ucell)-8);
++		    enterforth(throw_xt);
++		}
++	    }
++	    return;
++#endif
+ 	}
++	dicthead = newhead;
+ }
+ 
+ 
+@@ -1721,7 +1775,22 @@ static void iskey(void)
  
  static void key(void)
  {
@@ -6591,7 +6656,7 @@ index 61dd70d..42d8803 100644
  #ifdef FCOMPILER
  	PUSH(get_inputbyte());
  #else
-@@ -1963,4 +2002,6 @@ static forth_word * const words[] = {
+@@ -1963,4 +2032,6 @@ static forth_word * const words[] = {
      do_encode_file,         /* $encode-file */
      do_debug_xt,            /* (debug  */
      do_debug_off,           /* (debug-off) */

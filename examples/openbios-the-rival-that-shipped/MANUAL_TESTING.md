@@ -526,6 +526,44 @@ Two PRs, read line by line and then measured. Four defects, none visible in a gr
 
 Smaller: the ppc leg matched `"> "` and threw away the stack-depth assertion (`0 > ` now — the depth was 0 on all nine prompts, so it costs nothing); the region-diff monitor dump was 32 bytes while `LAST` can land anywhere in `STEP` (256 now — a real disagreement past byte 31 would have been a bash arithmetic error with no verdict); `region-snapv` leaked the old buffer on growth; `forth_lb_table` searched twice per call; the PASS text had unescaped inner quotes that bash word-split silently.
 
+### `here!` refuses a dictionary overflow — patch 66, run 2026-09-04
+
+The `dict-budget` track's OVER control had shown, on every arch, that the kernel's only protection
+against a full dictionary was a printed line: `herewrite()` set the pointer first and compared it
+second, so the word that moved `here` past the end returned as if it had succeeded, and the next
+write went into the dictionary's neighbour. What that neighbour is (`nm` on each binary), what the
+first write there did before the patch, and what the same probe does after:
+
+| arch | the neighbour | before patch 66 | after |
+|---|---|---|---|
+| unix | an unmapped page (the dictionary is one mmap at `0x30000000`) | the `.` printing `catch`'s result died: `panic: segmentation violation at 30100110` | `OVER-RC=-8`, `DUB = DUA`, `AO=7`; uncaught: `dictionary overflow.` at a depth-0 prompt |
+| ppc | `debug_xt_list`, then `console_ops` at `fffa80b4` | `room a + allot 12345678 ,` rewrote bytes `+a..+d` — `ff f0 a9 e4 ff f0` → `ff f0 12 34 56 78`, two console function pointers — and the prompt said `ok` | the same 32 bytes identical before and after; `OVER-RC=-8`, `DUB = DUA`, `AO=7` |
+| x86 | `x86_nvram_backend`, then `x86_nvram` | `OVER-END` printed with `here` 10 bytes past the end (#398's run) | the OVER control: refused, no bytes taken, a word defined after it runs |
+| amd64 | `last_key`, `key_caps` (multiboot door); ofmem's `claim_next` (coreboot door) | same | same |
+
+The throw is from C: `PUSH(-8); enterforth(findword("throw"))`, the shape ppc's `methods.c` has used
+for -13 all along. The nested interpreter loop exits when `rdepth!` cuts the return stack below its
+entry depth, and the *outer* loop finishes `throw`'s body because `PC` is global — so the C side
+returns immediately after, and must. One consequence: `[DEFINE]` typed at a running prompt points
+`here!` at a buffer outside the dictionary; upstream's check already flagged that (the head wraps)
+and carried on, and it is refused now. Every shipped `[DEFINE]` runs at dictionary-build time,
+where `dictlimit` is 0 and the check is off.
+
+**The new graders were watched to bite** before the PR: the shipped `db_grade` (extracted from
+`smoke-openbios.sh`, not re-implemented) run on the real unix log passes, and on four mutations of
+it fails by name — `OVER-RC=-8` → `OVER-END` + `OVER-RC=0` (the old behaviour): *"the allot past the
+end was not refused with -8"*; an `OVER-END` line added beside the -8: *"OVER-END printed"*; `DUB`
+moved by `0x10a`: *"dict-used moved from 2dc40 to 2dd4a across the refused allot"*; `AFTER-OVER=7`
+blanked: *"a word defined after the refused allot did not run"*.
+
+```
+  - unix controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=100000 -- refused' (the same number dict-limit answers), -8 to its catch, dict-used unchanged at 2dc40, a word defined after it runs; 10 short → silent and complete
+  - x86 controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=100000 -- refused' (the same number dict-limit answers), -8 to its catch, dict-used unchanged at 1c9c0, a word defined after it runs; 10 short → silent and complete
+  - amd64 controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=100000 -- refused' (the same number dict-limit answers), -8 to its catch, dict-used unchanged at 335a8, a word defined after it runs; 10 short → silent and complete
+  - ppc controls: allot 10 past the room → 'Dictionary space overflow … dictlimit=60000 -- refused' (the same number dict-limit answers), -8 to its catch, dict-used unchanged at 21160, a word defined after it runs; 10 short → silent and complete
+PASS: B.3 plan §6's unmeasured dictionary budget, MEASURED on all four arches with the running firmware's own numbers (patch 63: dict-limit/dict-used are the two cells here! compares). unix: 1024 KiB limit, 183 KiB at boot, +59 KiB compiled, 780 KiB left — FITS (12 files); x86: 1024 KiB limit, 114 KiB at boot, +37 KiB compiled, 871 KiB left — FITS (13 files); amd64: 1024 KiB limit, 205 KiB at boot, +67 KiB compiled, 750 KiB left — FITS (13 files); ppc: 384 KiB limit, 132 KiB at boot, +37 KiB compiled, 214 KiB left — FITS (12 files);  Every cost is a per-file delta of dict-used, the boot figure is the .dict file's header length (read on the host) plus what init compiled, and the controls fire on every arch: allotting 10 bytes past the room prints the kernel's 'Dictionary space overflow' line naming the SAME limit dict-limit answers AND IS REFUSED (patch 66: -8 to the catch around it, not a byte taken, a word defined afterwards runs — where before the same allot returned with here past the end, the next '.' segfaulted the hosted target and one ',' on ppc rewrote two of console_ops' function pointers behind an ok), allotting 10 bytes short prints nothing and completes, and there is exactly one such line per run. A file is compiled only when 1.5× its source size fits the room left; one that does not is named NO-ROOM whole rather than refused by the kernel halfway through a definition, and everything after it is SKIPped by name
+```
+
 ### The `fdt` track — the live device tree, flattened, graded by `dtc` (B.3 Spike 4)
 
 Needs `device-tree-compiler` (`dtc`, `fdtdump`, `fdtget`) and all three firmwares
