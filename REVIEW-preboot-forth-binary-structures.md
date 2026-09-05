@@ -32,6 +32,14 @@ a poke analogue written from scratch.*
 It grades the same idea after F2 was closed, and finds the remaining gap is a
 *type* layer rather than more primitives.
 
+**STATUS 2026-09-05: every row below is closed, and the one that read "nothing has been
+built" is built.** The lab this review seeded is complete as
+[`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md) (B.3, 67
+patches, 47 boot tracks); the one new direction since is
+[`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md) (B.4). The
+only remainder is F3's decode-side asymmetry, still unfixed **by choice** and still measured
+on every boot.
+
 **This review became the work plan for patches 25-34, and then for TODO 16.** Both
 structural findings are closed, and so are F4, F5 and F6. The findings are left
 as written — struck through and annotated in place rather than edited away,
@@ -49,8 +57,14 @@ because what was true on 2026-08-24 is the record of why the work was done.
 
 **What is still open**, and it is the honest remainder:
 
-- **§8's measured-boot / attestation row.** Nothing has been built. Its grade
-  should improve now that the arena problem is fixed, but that is a prediction.
+- ~~**§8's measured-boot / attestation row.** Nothing has been built. Its grade
+  should improve now that the arena problem is fixed, but that is a prediction.~~ —
+  **BUILT, 2026-09-02/03** (B.3 Spike 1): `dsl/sha256.fth` + `dsl/eventlog.fth` author and
+  replay a TCG crypto-agile event log (`event-log`, `event-replay`), `event-real` grades
+  the reader against a real edk2/swtpm log and the guest's own PCRs, and `event-bench`
+  boots one Linux through three firmware substrates and compares their measurements. The
+  **quote stays UNKNOWN** — three software TPMs — and every verdict says so. The
+  prediction held; it is a result now.
 - **F3's decode-side asymmetry is unfixed BY CHOICE.** `l@-be` still
   zero-extends. It is carried as TODO §13.2(a), characterized rather than fixed,
   and the premise it is tolerated on is now **derived on every boot** — every
@@ -448,7 +462,7 @@ loop ran twice".
 | **Exploratory RE of undocumented blobs** | **strong, and available now** — it needs only the decode half, which is already general. `ofscope.fth` is a working precedent |
 | **Boot-handoff structures** | ~~**blocked on F2**~~ → **UNBLOCKED, demonstrated** — `smoke-openbios.sh pmem-writer` writes three 1275-encoded ints with `int!+` at `0x100400000`, above 4 GiB, and reads them back |
 | **Firmware image assembly (CBFS, flash layout)** | ~~**blocked on F2**, harder — the destination is not even RAM~~ → **PARTLY, and the scope was corrected by measurement**: `flash-writer` shows the writer can be *aimed* at a CFI part at `0xffbe0000`, and that a CFI part is **not** a store-to seam — a write is unlock/erase/program/poll, not a store. `mmio-writer` does store, at both of its addresses |
-| **Measured-boot / attestation** | ~~**worst fit for the arena problem**~~ — **the arena problem is fixed, and nothing has been built.** Still the open row: no TPM or event-log work exists in this lab. The grade should improve; that is a prediction, not a result |
+| **Measured-boot / attestation** | ~~**worst fit for the arena problem**~~ — ~~**the arena problem is fixed, and nothing has been built.** Still the open row: no TPM or event-log work exists in this lab. The grade should improve; that is a prediction, not a result~~ → **BUILT 2026-09-02/03**: event log authored and replayed in Forth, graded against `tpm2_eventlog`, python and a real edk2/swtpm log; PCR0 replayed in the showcase's Act IV; the quote UNKNOWN and said so |
 
 One thing the notes undersell: the poke-like **reader** is much closer to done than §4
 implies. [`examples/open-firmware-debugs-itself/`](examples/open-firmware-debugs-itself/README.md)

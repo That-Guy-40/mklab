@@ -85,6 +85,15 @@ aimed anywhere.
 So the question this pass has to answer is no longer *can it write elsewhere*. It
 is *what is still missing between that and poke*.
 
+> **STATUS 2026-09-05.** The dependency list in *What would make it real* is done through
+> step 6; step 7 is declined by decision. Of the "not proven" items, §E3 is built (`table:`,
+> 2026-09-04), FCode authoring was done twice over (the option-ROM cards of the `optrom`
+> track and the showcase's Act III, 2026-09-03), the firmware authors structures it then acts
+> on (`elf-methods`, `fdt-import`, CBFS write), and the dictionary budget was measured
+> (`dict-budget`, 2026-09-04 — amd64 did not fit and was given 1 MiB). What is still true is
+> annotated below in place. The direction that grew out of this review's constraints section
+> is now its own plan: [`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md).
+
 ---
 
 ## P — What reading GNU poke 5.0 changed
@@ -896,7 +905,7 @@ Re-grading the first review's table, plus what this proposal adds:
 | **Firmware image assembly (CBFS, flash)** | **needs a backend, not an address** — G1 |
 | **ELF / PE inspection at the prompt** | ~~blocked on G7 then G2~~ — **closed, tables included.** `struct-layer` parses the header; `struct-array` walks the **program-header table** of a real image and is graded by a sum the firmware derives, so a single mis-stepped element fails it. PE is a `pe.pk`-shaped declaration away and untried |
 | **FCode authoring** | **the most OF-native of the list, nobody proposed it, and the execution half already exists.** `byte-load ( addr xt -- )` is a plain Forth word (`forth/device/feval.fs:63`), so *tokens built in a buffer at a chosen address can be executed by the firmware today* — `bytes!+` in, `byte-load` out. No FCode **assembler** exists anywhere (only the host-side `toke` and this repo's detokenizer), so the emitting half is new work; the loop it closes is not hypothetical |
-| **Measured-boot / attestation** | **still nothing built** — the arena problem that made it a poor fit is fixed, so the objection is gone and the work has not started |
+| **Measured-boot / attestation** | ~~**still nothing built** — the arena problem that made it a poor fit is fixed, so the objection is gone and the work has not started~~ → **BUILT 2026-09-02/03** (B.3 Spike 1): `event-log`, `event-replay`, `event-real` (a real edk2/swtpm log), `event-bench` (one Linux, three substrates); quote UNKNOWN, said so |
 
 ---
 
@@ -923,13 +932,23 @@ Re-grading the first review's table, plus what this proposal adds:
    `elf-load-base`, `vaddr>off` and `sh-name` with the string reader, all against
    host ground truth. The format moved to `dsl/elf.fth` on top of the engine,
    which is §E6's structural lesson applied rather than skipped.
-5. **Bit-fields as a library (G4).** Skip unit-typed offsets, deliberately and in
-   writing — §E7 now says what that costs.
-6. **Pick ONE application and drive it end to end** before generalising. On the
+5. ~~**Bit-fields as a library (G4).** Skip unit-typed offsets, deliberately and in
+   writing — §E7 now says what that costs.~~ — **DONE** (`rmw-fields` track, by 2026-09-01):
+   mask-and-shift field accessors with read-modify-write, graded on all four arches.
+   Unit-typed offsets skipped in writing, as §E7 recommends.
+6. ~~**Pick ONE application and drive it end to end** before generalising. On the
    evidence above the strongest candidates are the forensics angle (G6, already
    half-built) and FCode authoring (most OF-native, and it would make the
-   "generalises what OF already does" argument true rather than rhetorical).
-7. **Split `sstrip` out (G5)** into the image-build pipeline where it belongs.
+   "generalises what OF already does" argument true rather than rhetorical).~~ —
+   **DONE, both candidates, 2026-09-03.** Forensics: `dsl/region.fth` + `dsl/lbregion.fth`
+   snapshot memory, let the firmware re-run its own coreboot-table parser, and show what
+   moved (`region-diff`, the showcase's Act II, three re-injected controls). FCode
+   authoring: two option-ROM cards built from `fixtures/optrom/*.fth` by `toke`, read at
+   their live BAR and `byte-load`ed from there — the card renames its own node and reads
+   its own config space (`optrom`, Act III). B.3's plan then generalised, in that order.
+7. **Split `sstrip` out (G5)** into the image-build pipeline where it belongs. —
+   **NOT DONE, by decision (2026-09-05):** it belongs to the RAM-boot labs and nothing there
+   has asked for it; recorded so it stays a decision rather than a gap.
 
 ---
 
@@ -948,8 +967,15 @@ Re-grading the first review's table, plus what this proposal adds:
     unreachable.** This firmware binds no port-I/O words on x86 or amd64 and no
     config-space accessors, so MMIO is the only device seam Forth can reach and
     its reads are idempotent. An UNKNOWN with a reason, not a gap.
-  - **Nothing writes a structure the firmware then acts on** — the difference
-    between parsing and authoring, and still the honest edge of this work.
+  - ~~**Nothing writes a structure the firmware then acts on** — the difference
+    between parsing and authoring, and still the honest edge of this work.~~ —
+    **CLOSED, three ways.** `elf-methods` (2026-08-31): the hosted firmware authors an
+    ELF with `write-file` and the kernel runs it, exit code = the authored code.
+    `fdt-import` (2026-09-03): a DTB is materialized into the firmware's *own* live tree
+    and re-flattened identically. `cbfs-write` (2026-09-02): the firmware rewrites a
+    CBFS image `cbfstool` then reads back. The edge moved to
+    [`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md): a
+    gate in the load path, before `go`.
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
@@ -972,21 +998,37 @@ Re-grading the first review's table, plus what this proposal adds:
   Still measured and still true: **a bare ELF32 cannot be `load`ed** — the
   firmware's own loader recognises it and never returns. The subject is embedded
   at offset `0x200` of a padded file, which is poke's `Elf32_File @ 512#B`.
-- **§E1 and §E4 are built; §E2, §E3, §E5, §E6 and §E7 are not.** What shipped is
-  the two the analysis rated highest, plus the structural split (§E6's lesson,
+- **§E1 and §E4 are built; ~~§E2, §E3, §E5, §E6 and §E7 are not~~ §E3 too, since 2026-09-04.**
+  What shipped is the two the analysis rated highest, plus the structural split (§E6's lesson,
   not its registry), bit-fields (§G4), and both ELF classes. §E2 — byte order taken from `ei_data`
   at map time — is **refused by name** rather than implemented, so a big-endian
-  ELF64 halts instead of being misread. §E3's declarative `file:` definer and
-  §E5's unions remain sketches.
+  ELF64 halts instead of being misread (*still true 2026-09-05; the big-endian SUBJECT now
+  exists — the ppc firmware is itself a BE ELF32 — and B.4's Spike 6 is where the axis
+  is taken*). ~~§E3's declarative `file:` definer and §E5's unions remain sketches.~~ —
+  **§E3 is `table:`** in `dsl/struct.fth` (offset-mode: base and count read from earlier
+  fields, bound-checked `tbl@`), and `dsl/elf.fth`'s program- and section-header tables
+  use it; the B.3 plan's "vfield: IS file:" line was struck and corrected the same day.
+  §E5's unions remain a sketch, by the review's own low priority.
 - **`poke-elf` was read, not run.** Same standard as §P: every §E finding is
   from its source at `ae45538`. No pickle was loaded into a poke, so the
   behaviour of a constraint on a real file is quoted from the code, not watched.
   It is also **unreleased** — an unreleased HEAD is a moving subject, and §E is
   pinned to that commit for exactly that reason.
-- **Nothing was measured about performance or size.** A type layer compiled into
+- ~~**Nothing was measured about performance or size.** A type layer compiled into
   the dictionary costs image space in a firmware whose builtin dictionary is
-  1 MiB, and no budget was taken.
-- **The FCode-authoring suggestion is untested.** `byte-load ( addr xt -- )` was
+  1 MiB, and no budget was taken.~~ — **MEASURED, 2026-09-04** (`dict-budget`, patch 63's
+  `dict-limit`/`dict-used`): per file, per arch, from the running kernel. It found that the
+  amd64 multiboot door's dictionary was **256 KiB, not 1 MiB**, and did not hold the
+  toolkit (patch 64 → 1 MiB), that the workbench was at 95% (patch 65 → 1 MiB), and that
+  the kernel's overflow check printed and *continued* (patch 66 → it refuses). Performance
+  is still unmeasured, and nothing has needed it.
+- ~~**The FCode-authoring suggestion is untested.**~~ — **TESTED, 2026-09-03**, and it
+  became the lab's most vivid row: `fixtures/optrom/fcode-card.fth` and `fcode-card-cfg.fth`,
+  tokenised by `toke` into real PCI option ROMs, are read at their **live BAR** and
+  `byte-load`ed from there; the card's own program renames its node and reads its own
+  config space through the bus (`optrom` on x86/amd64/ppc; the showcase's Act III). It cost
+  six firmware patches (55–57, 59–62) the untested suggestion could not have predicted.
+  Original text kept: `byte-load ( addr xt -- )` was
   confirmed to be a plain Forth word at `forth/device/feval.fs:63`, so the
   execution half exists — but **no hand-built token was ever fed to it**, and
   whether it accepts a buffer that did not come from a PCI option ROM is
