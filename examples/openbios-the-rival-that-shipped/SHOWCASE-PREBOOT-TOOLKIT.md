@@ -1,9 +1,9 @@
 # Showcase — the preboot structure toolkit, in one boot
 
-`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~60 s on KVM (measured, not guessed: 60.3 s wall with six acts).
+`./showcase-preboot-toolkit.sh` — **PASS / FAIL / SKIP**, ~90 s on KVM (measured, not guessed: 89 s wall with eight acts; 60.3 s with the first six).
 
 Every B.3 smoke track proves one reader against one foreign oracle. This is the
-other view: **one machine, one boot, six acts**, in the order a real preboot
+other view: **one machine, one boot, eight acts**, in the order a real preboot
 investigation would take them. It is a demo *and* a test — every act is graded,
 and the run fails if any of them does not happen.
 
@@ -25,6 +25,8 @@ against a **foreign oracle** — never our own reader.
 | `dsl/sha256.fth` + `dsl/eventlog.fth` | SHA-256 as a pure function; a TCG event log authored and replayed | NIST vectors, python `hashlib`, `tpm2_eventlog`, a real edk2/swtpm log | IV |
 | `dsl/fdt.fth` | the **live device tree flattened** to a v17 DTB, every field big-endian | `dtc`, `fdtdump`, `fdtget` on all four arches | V |
 | `dsl/fdt-read.fth` | the **reader half**: a DTB parsed and **materialized** into the live tree | `dtc` decompiles the round trip identically on all four arches | VI |
+| the firmware's own **dictionary**: `here!` refuses an overflow ([patch 66](patches/66-here-refuses-a-dictionary-overflow.patch)), `marker` with the refusals this dictionary needs ([patch 67](patches/67-marker-with-the-two-refusals-this-dictionary-needs.patch)) | not a reader — the allocator every reader lives in | `dict-limit`/`dict-used` from the running kernel, on all four arches; a marker's refusal graded against a tree the showcase itself grew | VII |
+| `dsl/elf.fth` | the ELF gate: `?elf`, `?phdrs` with the gABI's ordering rule | `readelf`, `eu-elflint`, the linker's own `.hash` — and, for one clause, **no tool at all**, said so per run | VIII |
 
 ## What it needs
 
@@ -52,9 +54,10 @@ qemu-system-x86_64 -M pc -m 512 -bios coreboot.rom -nic none \
 
 - the **firmware** is the amd64 OpenBIOS payload *inside* that coreboot ROM;
 - the **readers** (`struct.fth cbfs.fth region.fth lbregion.fth optrom.fth
-  sha256.fth eventlog.fth fdt.fth fdt-read.fth`) arrive over a **CD** — with
-  `IMPORT.DTB`, a tree `dtc` authors from `fixtures/fdt/import.dts` at run time — nothing is compiled into the
-  firmware for the occasion;
+  sha256.fth eventlog.fth fdt.fth fdt-read.fth elf.fth`) arrive over a **CD** — with
+  `IMPORT.DTB`, a tree `dtc` authors from `fixtures/fdt/import.dts` at run time, and
+  `GOOD.BIN`/`BADINT.BIN`, two ELF64s [`fixtures/elf-gate/`](fixtures/elf-gate/README.md)'s builder
+  authors at run time — nothing is compiled into the firmware for the occasion;
 - the two **cards** carry real PCI expansion ROMs built by `toke` from
   [`fixtures/optrom/`](fixtures/optrom/README.md);
 - QEMU's **monitor** is the observer from outside, used by the graded tracks —
@@ -259,6 +262,89 @@ model string reads back verbatim.
 
 ---
 
+## ACT VII — the firmware keeps its own house
+
+Everything the earlier acts loaded, defined and grew lives in **one bump allocator**: the
+dictionary. Every reader, every word typed, every device node Act VI materialized, every
+property — the same array, one `here`. Two things happened to that allocator this week.
+
+```
+0 > device-end marker world              (typed BEFORE Act VI)
+   …Act VI…
+0 > ' world catch ." WORLD=" . cr
+marker: the device tree grew after the mark -- forget refused WORLD=-2
+```
+
+OpenBIOS never had `marker`/`forget`, and a plain ANS one would be unsafe here: Act VI's
+`/imported` subtree — its nodes, their two wordlist heads, every property struct, name and
+value — was `allot`ed from the dictionary *above* the mark. Forgetting past it would leave the
+tree pointing into space the next definition reuses. So patch 67's `marker` walks the tree
+first and **refuses by name**. (The `device-end` is not decoration: Act III left a node active,
+and a marker, like any word, is created *into* the active package — the first run defined
+`world` in the host bridge's wordlist and Act VI's `device-end` made it invisible.)
+
+```
+0 > marker scratch  : w2 2 ;  create buf 100 allot
+0 > scratch ." DUC=" dict-used u. cr
+dict-used 42e48 → 42fd0 → 42e48     +392 bytes taken, every one given back; w2: $find → 0
+0 > : ovp room a + allot ." OVER-END" cr ;
+0 > ' ovp catch ." OVER-RC=" . cr
+Dictionary space overflow: dicthead=000000000010000a dictlimit=0000000000100000 -- refused
+OVER-RC=-8                            dict-used unchanged; room left 774584 of 1048576
+```
+
+A scratch marker with nothing but words above it reclaims **byte-exactly**. And an allot 10
+bytes past the end is **refused**: -8 (ANS *dictionary overflow*) to the `catch`, not a byte
+taken. Before patch 66 the kernel printed that same line and *continued* with `here` past the
+end — on the hosted target the next `.` segfaulted the firmware (its pictured-number pad lives
+at `here`); on ppc one `,` rewrote two of `console_ops`' function pointers and the prompt still
+said `ok`. A refusal that takes nothing is what a firmware's allocator owes its caller.
+
+**Graded:** `WORLD=-2` with the tree reason named; `DUC = DUA` and `DUB > DUA`; `w2` no longer
+findable; `OVER-RC=-8`; exactly one overflow line; no `OVER-END`; `dict-used` unchanged across
+the refused allot.
+
+---
+
+## ACT VIII — the ELF gate: refused on the gABI's word alone
+
+Two ELF64s the fixture builder authors as the showcase starts, identical outside their
+program-header table: `GOOD.BIN` (`PHDR INTERP LOAD LOAD`) and `BADINT.BIN`
+(`PHDR LOAD INTERP LOAD`).
+
+```
+0 > : gate load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;
+0 > load /ide@1/cdrom@0:\GOOD.BIN   eg-good
+EG-GOOD-END
+0 > load /ide@1/cdrom@0:\BADINT.BIN  eg-int
+CONSTRAINT: PT_INTERP after a PT_LOAD (gABI: it must precede every loadable segment)
+```
+
+The gABI says `PT_INTERP` "must precede any loadable segment entry". Then the act asks the
+host's tools about the same file, **inside the act, every run**:
+
+```
+$ readelf -lW badint.elf      → silent, rc 0        (its order check names PHDR only)
+$ eu-elflint badint.elf       → No errors           (it checks INTERP multiplicity, not order)
+  fs/binfmt_elf.c (v6.12)     → reads PT_INTERP wherever it sits, breaks at the first
+```
+
+**No tool on this host enforces that sentence.** The firmware refuses the file on the gABI's
+word alone — and the act *says so from the measurement*: the sentence it prints is chosen by
+what readelf and elflint answered, so if either ever starts flagging the file, the line changes
+to say the description is out of date. (Its first draft did exactly that for the wrong reason:
+`tr` had left a trailing space on `No errors ` and the string compare announced a foreign
+flag. The wording-from-measurement branch was itself the liar for one run.)
+
+This fixture exists because of a question — *what can we decide about `badord.elf`?* — whose
+answer was that `badord.elf` violates two clauses and the firmware only ever refused it on the
+first one checked. One fixture per clause.
+
+**Graded:** `EG-GOOD-END` printed; `PT_INTERP after a PT_LOAD` exactly once; no `EG-INT-END`;
+exactly one constraint failure; the oracle sentence chosen from the run's own measurements.
+
+---
+
 ## Where each act is proven properly
 
 The showcase is one boot and grades what one boot can. The tracks that grade each
@@ -272,6 +358,8 @@ piece against its full oracle set, with the negative controls:
 | IV | `event-replay`, `event-real`, `event-bench` | `tpm2_eventlog`, python `hashlib`, a real edk2/swtpm log and the guest's own PCRs |
 | V | `fdt` | `dtc`/`fdtdump`/`fdtget` on **all four arches**; an LE-magic control and an overflow control |
 | VI | `fdt-import` | the round trip decompiles identically on **all four arches**; `BAD-MAGIC` and `BAD-TOKEN` refused by name |
+| VII | `dict-budget`, `marker` | the running kernel's `dict-limit`/`dict-used` on **all four arches**; the OVER control refused with -8 taking nothing; node/method/property/active-package refusals each isolated; LIFO |
+| VIII | `elf-gate` | `readelf` (order), `eu-elflint` (multiplicity), the linker's `.hash`; one fixture per gABI clause, the INTERP-order one measured to have **no foreign oracle** |
 
 ```
 ./smoke-openbios.sh region-diff      # one verdict line

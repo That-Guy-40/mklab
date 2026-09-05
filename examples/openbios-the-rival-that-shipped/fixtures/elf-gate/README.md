@@ -26,6 +26,9 @@ checks *that* transliteration against the **linker**: it builds a shared object 
 `bucket[elf_hash(name) % nbucket]` of the `.hash` section ld wrote. The first line of its output
 is `LINKER OK …` or `LINKER UNKNOWN …`; the track carries it into its note verbatim.
 
+elflint's missing ordering check is written up for upstream in
+[`UPSTREAM-elflint-no-phdr-order-check.md`](UPSTREAM-elflint-no-phdr-order-check.md) (drafted, not filed).
+
 The fifth subject is not here: the host's own `/bin/true`, when `file` says it is an ELF64 LE,
 padded and put through the same gate — a real binary whose PHDR and INTERP really do precede its
 LOADs.
