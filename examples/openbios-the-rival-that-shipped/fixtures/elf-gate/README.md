@@ -29,6 +29,56 @@ is `LINKER OK …` or `LINKER UNKNOWN …`; the track carries it into its note v
 elflint's missing ordering check is written up for upstream in
 [`UPSTREAM-elflint-no-phdr-order-check.md`](UPSTREAM-elflint-no-phdr-order-check.md) (drafted, not filed).
 
+## The ladder sets — one per firmware door, in the class it actually loads (B.4 Spike 0, 2026-09-05)
+
+`--ladder ARCH VADDR OVL` writes `ladder-ARCH/` with eight files **in the class, byte order and
+machine the named door's C loader recognises** — x86: ELF32 LSB EM_386; amd64: ELF64 LSB
+EM_X86_64; ppc: ELF32 MSB EM_PPC — so `load` of the bare file reaches `elf_init_program()`'s gate
+([patch 68](../../patches/68-an-elf-gate-in-front-of-the-copy.patch)) instead of being inspected as
+data. That is the measurement that moved this lab's fixtures off ELF64: `is_elf()` accepts only the
+door's own class, so B.3's four ELF64 files were never on the boot path of x86 or ppc at all.
+
+`good.elf` is **runnable**. Its body is real code at `e_entry`: on x86 and amd64
+`mov dx,0x3f8; mov al,'R'; out dx,al; ret` (the same eight bytes mean the same in long mode), so
+the image writes `R` to COM1 and returns onto the return address the firmware planted; on ppc a
+single `blr`. `VADDR` is where the caller wants it placed (the track uses `0x20000`, the client
+window below the x86 firmware, and `0x1000000` on ppc); `OVL` is the door's **entry point**, read
+by the track from `readelf -h` of the firmware image on every run rather than written down.
+
+| file | the one clause it breaks | where it differs from `good.elf` |
+|---|---|---|
+| `badord.elf` | `PT_PHDR` after a `PT_LOAD` | the phdr table |
+| `baddup.elf` | `PT_INTERP` twice | the phdr table |
+| `badint.elf` | `PT_INTERP` after a `PT_LOAD` | the phdr table |
+| `badtrunc.elf` | LOAD#2's `p_filesz`/`p_memsz` reach past the end of the file | LOAD#2's phdr |
+| `badmem.elf` | LOAD#2's `p_memsz < p_filesz` | LOAD#2's phdr |
+| `badovl.elf` | LOAD#2 lands on the page of the firmware's entry point | LOAD#2's phdr |
+| `badentry.elf` | `e_entry` inside no `PT_LOAD` | `e_entry` |
+
+The script prints `LADDER ARCH NAME LO HI` for each: the half-open byte range every differing
+byte must fall in, and the track checks it with `cmp -l`. The first `badovl` broke **two** rules —
+its `p_offset` and `p_vaddr` were not congruent modulo `p_align`, and `eu-elflint` said so — which
+is exactly the badint lesson again, so it now keeps the congruence and no hosted tool has anything
+to say about it: only the firmware knows where the firmware is.
+
+**What the hosted tools see, measured 2026-09-05 (readelf 2.42, eu-elflint 0.190), identical on
+all three classes:**
+
+| clause | `readelf -lW` | `eu-elflint` |
+|---|---|---|
+| PHDR after LOAD | *the PHDR segment must occur before any LOAD segment* | silent |
+| INTERP twice | silent | *more than one INTERP entry in program header* |
+| INTERP after LOAD | silent | silent |
+| a PT_LOAD past the end of the file | silent | silent (also with `--strict`) |
+| `p_filesz > p_memsz` | *the segment's file size is larger than its memory size* | *file size greater than memory size* |
+| segment on the firmware | silent | silent (nothing to know) |
+| entry in no PT_LOAD | silent | silent |
+
+Four of seven are checked by **neither** tool. Two of those are the dangerous ones — a segment
+past the end of the file has the loader copy whatever lies beyond the buffer — and are candidates
+for upstream reports beside the one already drafted. The `elf-ladder` track re-measures every cell
+on every run and words its verdict from what it measured.
+
 The fifth subject is not here: the host's own `/bin/true`, when `file` says it is an ELF64 LE,
 padded and put through the same gate — a real binary whose PHDR and INTERP really do precede its
 LOADs.

@@ -627,6 +627,58 @@ says *not refused BY NAME*, with an `EG-INT-END` added *the word after the gate 
 doubled *fired 2 times where exactly 1 is expected*.
 
 
+### The `elf-ladder` track — the ELF gate in the load path (B.4 Spike 0), run 2026-09-05
+
+`smoke-openbios.sh elf-ladder`. The `elf-gate` track above types `?phdrs` at the prompt on a
+*padded* ELF64; this track moves the check into the **C loader every `load` passes through**
+([patch 68](patches/68-an-elf-gate-in-front-of-the-copy.patch)) and grades a **boot ladder** on
+each door's *own* ELF class. What the measurement changed, before a line of the track was written:
+
+| door | before patch 68, `load` of… | after |
+|---|---|---|
+| x86 | its own coreboot payload (`PT_LOAD` at `0x100000`) — **never returned**, the copy went over the running firmware | `elf-gate: REFUSED -- PT_LOAD 0 […] overlaps the firmware image`, prompt intact |
+| ppc | `openbios-qemu.elf` (`PT_LOAD` at `0xfff00000`) — **hung**, "Ignoring failed claim" | refused as an overlap |
+| amd64 | a 32-bit i386 client — **accepted** (`state-valid -1`), `go` **GPF'd** at its first instruction | refused by field: `e_ident[CLASS]=1 (want 2)`; and amd64 now loads its own ELF64 class |
+| all | an unrecognised file — **kept the previous load's `state-valid`** | `init-program` zeroes it and names the image |
+
+The gate is **(A) in C** — the decision the plan locked. `dsl/elf.fth`'s reader is its
+**agreement oracle** on the little-endian doors, and that agreement is the `elf-gate` track's job
+(the Forth reader at the prompt, same clause names, all four arches); this track exercises the C
+gate alone and is kept lean, because loading the reader source in the same boot trips the loader
+leak described below. The ladder, observed per door:
+
+- **REFUSED** — nine times by name in one boot: the gABI's three ordering clauses (`badord`,
+  `baddup`, `badint`), a `PT_LOAD` past the file (`badtrunc`), `p_filesz > p_memsz` (`badmem`),
+  an entry in no `PT_LOAD` (`badentry`), a segment on the firmware's own entry page (`badovl`),
+  the other class's good ELF **by field** (`WRONG`), and the door's own firmware ELF as an overlap.
+  `state-valid` is 0 after every one; `go` says *No valid state*.
+- **LOADED** — `good.elf`, authored in the door's class, sets `state-valid -1`.
+- **RAN, RETURNED** — `go` enters `good.elf`; on x86/amd64 it writes `R` to COM1 and `ret`s onto the
+  return address the firmware planted, on ppc it `blr`s, and the prompt comes back. The sibling
+  lab's `hello` client runs and exits the same way on x86 and ppc.
+- **BOOTED** — not reachable through this gate by anything on disk (amd64 Linux is a bzImage through
+  `linux_load.c`; ppc's kernel path is `fw_cfg`, which bypasses `init-program`). Said so, UNKNOWN,
+  not passed.
+
+**The negative control is the pre-patch tree itself**, and it is real, not hypothetical: reverse
+`patches/68-*.patch`, rebuild, and `load` of the firmware's own ELF hangs x86 and ppc, `load` of an
+i386 client GPFs amd64 at `go`, and an unrecognised load keeps a stale `state-valid`. The four logs
+are the control.
+
+**A pre-existing leak this track had to work around, and it is a finding in its own right.**
+`load` never frees the interposed partition package it opens, so a per-distinct-path buffer sized
+to the file leaks; ~1.3 MiB of distinct-path data in one boot exhausts the heap and the **next
+distinct `load` becomes a silent no-op** — `open-dev` fails, `$load` exits before `init-program`,
+and `load-base`/`load-size` keep the previous file's values. Measured 2026-09-05: in a 17-file
+sequence, load #18 (right after the 1.16 MiB `PAYLOAD.ELF`) kept `PAYLOAD`'s size; but 30 distinct
+7-byte files, and `PAYLOAD` loaded twice, both survived — so it is bytes-of-distinct-paths, not a
+count. This is exactly this lab's bug class #1 (a record — `load-size`, and `state-valid` if the
+prior load was valid — outliving its subject, with `go` ready to act on it). The track loads the
+1.16 MiB overlap subject **last**, runs the client rungs **first**, and asserts each refusal message
+fired *exactly once* so a no-op late load drops a message and fails loudly rather than passing. The
+loader leak itself is parked in `TODO.md` for a patch of its own.
+
+
 ### The `fdt` track — the live device tree, flattened, graded by `dtc` (B.3 Spike 4)
 
 Needs `device-tree-compiler` (`dtc`, `fdtdump`, `fdtget`) and all three firmwares
