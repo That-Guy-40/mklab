@@ -1796,7 +1796,7 @@ FTH
         --expect "0 > " \
         --send 'load /ide@1/cdrom@0:\\memav.fth\r' --expect "0 > " \
         --send 'load-base load-size evaluate\r' --expect "MA-END"
-      MKRC=$?
+      MRC=$?
       kill "$MQ" 2>/dev/null   # by PID, never by pattern
       ML="$(tr -d "\r" < "$MLOG")"
 
