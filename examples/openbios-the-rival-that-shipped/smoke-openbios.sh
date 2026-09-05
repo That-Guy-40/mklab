@@ -3251,8 +3251,25 @@ PY
     done
 
     # ── ppc: -cdrom (plain iso9660), driven over the pty with echo-gating ────
+    # WHY --echo-timeout 8 ON EVERY ppc DRIVE (2026-09-05). The echo-gate resends a
+    # byte it has not seen echoed within --echo-timeout, on the theory that a
+    # non-echo means the no-flow-control console dropped it. But it CANNOT tell a
+    # drop from a SLOW echo, and ppc under TCG echoes the first byte of a command
+    # typed right after a heavy `evaluate` (compiling struct.fth) only after the
+    # console finishes flushing that evaluate's output -- past the 2 s default. The
+    # resend then DUPLICATES a byte the console did accept: measured here, `load
+    # cd:\S0CHK.FTH;1` arrived as `lload` ("lload: undefined word."), load-base still
+    # held struct.fth, the next `evaluate` re-ran the WHOLE file, and the drive
+    # spiralled to the 600 s timeout (80 `isn't unique`, rc 124) -- both on CI and,
+    # reproduced, locally at 624 s. 8 s comfortably exceeds the post-evaluate echo
+    # lag, so the real echo arrives before a resend fires; the same drive then runs
+    # in ~5 s with the gate (and its genuine drop protection) intact. The tool
+    # default stays 2 s so tools/tests/test-echo-gate.sh's dropped-byte timing is
+    # unchanged. A larger grace only slows detection of a REAL drop, bounded by each
+    # drive's own --timeout. All ppc echo-gate drives here share the evaluate-then-
+    # type shape, so all get the same grace.
     TPLOG="$WORKDIR/tlv-ppc.log"; rm -f "$TPLOG"
-    python3 "$REPO/tools/drive-pty-repl.py" "$TPLOG" --timeout 600 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$TPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " \
       --send 'load-base load-size evaluate\r' --expect "> " \
@@ -3440,7 +3457,7 @@ PY
 
     # ── ppc: -cdrom (plain iso9660), pty, echo-gate; the BIG-ENDIAN truth-teller ─
     CPLOG="$WORKDIR/cbfs-ppc.log"; rm -f "$CPLOG"
-    python3 "$REPO/tools/drive-pty-repl.py" "$CPLOG" --timeout 600 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$CPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " \
       --send 'load-base load-size evaluate\r' --expect "> " \
@@ -3830,7 +3847,7 @@ PY
     done
     # ppc — the big-endian arch, plain iso9660, pty + echo-gate
     PPLOG="$PWD_/seg-ppc.log"; rm -f "$PPLOG"
-    python3 "$REPO/tools/drive-pty-repl.py" "$PPLOG" --timeout 600 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$PPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
       --send 'load cd:\\CBFS.FTH;1\r'   --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
@@ -4280,7 +4297,7 @@ PY
       note "$A: SHA-256 == NIST vectors"
     done
     RPLOG="$RWD/sha-ppc.log"; rm -f "$RPLOG"
-    python3 "$REPO/tools/drive-pty-repl.py" "$RPLOG" --timeout 600 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$RPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
       --send 'load cd:\\SHA.FTH;1\r'    --expect "> " --send 'load-base load-size evaluate\r' --expect "> " \
@@ -4836,7 +4853,7 @@ PY
     # instance scaffold (`my-space`/`$call-parent` need a current instance), not a
     # mapping. `optrom-map` is kept and exercised here for what it does say.
     OPSER="$OWD/ppc.log"; rm -f "$OPSER"
-    python3 "$REPO/tools/drive-pty-repl.py" "$OPSER" --timeout 400 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$OPSER" --timeout 400 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
       --send 'load cd:\\OPTROM.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
@@ -5210,7 +5227,7 @@ PY
 
     # ── ppc: the BIG-endian row, its bytes read back through the console ─────
     FPLOG="$FWD/ppc.log"; rm -f "$FPLOG"
-    python3 "$REPO/tools/drive-pty-repl.py" "$FPLOG" --timeout 400 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$FPLOG" --timeout 400 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
       --send 'load cd:\\FDT.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
@@ -5354,7 +5371,7 @@ PY
     # ── ppc: the big-endian row, its blob read back through the console ──────
     IPLOG="$IWD/ppc.log"; rm -f "$IPLOG"
     IPSENDS=(); for l in "${ILINES[@]}"; do IPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
-    python3 "$REPO/tools/drive-pty-repl.py" "$IPLOG" --timeout 500 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$IPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
       --send 'load cd:\\FDT.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
@@ -5592,7 +5609,7 @@ FTH
     # ── ppc: the 32-bit BIG-endian row, pty console ─────────────────────────
     GPLOG="$GWD/ppc.log"; rm -f "$GPLOG"
     GREAL_PSENDS=(); [[ $GREAL == 1 ]] && GREAL_PSENDS=(--send 'load cd:\\TRUE.BIN;1\r' --expect "0 > " --send 'eg-real\r' --expect "> ")
-    python3 "$REPO/tools/drive-pty-repl.py" "$GPLOG" --timeout 500 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$GPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " \
       --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
       --send 'load cd:\\ELF.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
@@ -5841,7 +5858,7 @@ PYMARK
     # ── ppc ──────────────────────────────────────────────────────────────────
     DPLOG="$DWD/ppc.log"; rm -f "$DPLOG"
     DPSENDS=(); while IFS= read -r l; do DPSENDS+=(--send "$l"$'\r' --expect "0 > "); done < <(printf '%s\n' "${DB_PRE[@]}"; db_lines ppc 'load cd:\\%s.FTH;1')
-    python3 "$REPO/tools/drive-pty-repl.py" "$DPLOG" --timeout 900 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$DPLOG" --timeout 900 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " "${DPSENDS[@]}" \
       -- qemu-system-ppc -bios "$DPELF" -nographic -vga none -cdrom "$DWD/db.iso" >/dev/null 2>&1
     DPRC=$?
@@ -5964,7 +5981,7 @@ PYMARK
     # ── ppc ──────────────────────────────────────────────────────────────────
     MPLOG="$MKWD/ppc.log"; rm -f "$MPLOG"
     MPSENDS=(); for mkl in "${MK_LINES[@]}"; do MPSENDS+=(--send "$mkl"$'\r' --expect "0 > "); done
-    python3 "$REPO/tools/drive-pty-repl.py" "$MPLOG" --timeout 600 --echo-gate \
+    python3 "$REPO/tools/drive-pty-repl.py" "$MPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
       --expect "Welcome to OpenBIOS" --expect "0 > " "${MPSENDS[@]}" \
       -- qemu-system-ppc -bios "$MKPELF" -nographic -vga none >/dev/null 2>&1
     MPRC=$?
