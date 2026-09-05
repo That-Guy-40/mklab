@@ -41,7 +41,9 @@ Both ideas share **one prerequisite**, and it is the first thing to build (§1).
 naming its file, its words and its track, and §5 collects them in one table. §1a says
 what the boot protocol can and cannot tell the firmware, §1b why the standard's own
 configuration variables are the front end, and §1c why the fourth seam — NVRAM,
-across boots — is the only event loop there is.
+across boots — is the only event loop there is. §2.6 is the gate — every value
+validated before `go`, or UNKNOWN by name — and §2.7 the inventory of everything
+else at the prompt that can be read, validated or changed.
 
 ## 1. The prerequisite: a window between "authored" and "jumped"
 
@@ -117,13 +119,22 @@ page verbatim (bug #7).
 | `type_of_loader` (`0x210`), `ext_loader_ver` | the loader identifies **itself** | the protocol's own "who are you"; what this loader writes is unmeasured (§6) |
 | the **sentinel** (`0x1ef`) | a loader that did not zero the boot params | nonzero, and the kernel sanitises a set of fields itself — a silent fallback. The header copy starts at `0x1f1`, so it *should* be clear; nobody has looked (§6) |
 
-**Build: `.kernel-caps`** — a `bootparams.fth` word that decodes the declaration of
-the loaded image (version, `xloadflags` by name, `kernel_info` and `setup_type_max`,
-alignment, `init_size`, relocatable) beside what the loader *did* with it. Today the
-loader consumes some of these and discards the rest; the toolkit is the only thing
-that can show the whole declaration. Ground truth: the same fields read from the file
-on the host with the type layer's own `struct-layer` shape, and the kernel's
-`dmesg` line for what it believed.
+**Build: `bootparams.fth`, three verbs per field — read, write, validate.** Not a
+display word with editing "alluded to"; each field is a typed `le-field:` (so a store
+through it *is* the write, the type layer's rule), and the fields fall into three
+classes that decide what *write* and *validate* mean:
+
+| class | fields | read | write | validate |
+|---|---|---|---|---|
+| **declared by the kernel** | `protocol_version`, `xloadflags`, `kernel_alignment`, `init_size`, `relocatable_kernel`, `min_alignment`, `pref_address`, `initrd_addr_max`, `cmdline_size`, `kernel_info` → `setup_type_max`, `syssize`, `payload_offset`/`payload_length` | from the **file** and from the **zero page**, separately | **a lie** — the zero-page copy can be edited, and the kernel's decompressor reads some of it (`kernel_alignment`, `init_size`), so a write here is a *negative control*, never a feature: declare a wrong alignment and watch the boot fail *by name* | the two copies are **equal**, field for field — the loader's `memcpy` is the mechanism, equality is the outcome; and each value is self-consistent (§2.6) |
+| **written by the loader** | `type_of_loader`, `loadflags` (heap/quiet bits), `heap_end_ptr`, `cmd_line_ptr`, `ramdisk_image`/`ramdisk_size`, `setup_data`, `e820_entries`/table, `vid_mode`, `acpi_rsdp_addr`, the sentinel | from the zero page | **the edits of §2.1** — each through a word that refuses out-of-range by name | every constraint the declared class imposes on it: length ≤ `cmdline_size`, initrd ≤ `initrd_addr_max`, records ≤ `setup_type_max`, placement aligned to `kernel_alignment`, everything below 4 GiB unless `xloadflags` says otherwise |
+| **consumed by the kernel** | all of the above, as received | `/sys/kernel/boot_params/data` after boot | — | equals the zero page at `go`, byte for byte, **except** the fields the kernel is documented to rewrite (a `SETUP_RNG_SEED` it wipes, §2.7) — so a difference is either a documented rewrite or a finding |
+
+`.kernel-caps` is the *read* verb over the first class, printing the declaration by
+name beside what the loader did with it. `?bootparams` (§2.6) is the *validate* verb
+over all three. Ground truth: the same header read from the file on the host with the
+type layer's own `struct-layer` shape; the kernel's `dmesg` for what it believed; and
+the sysfs copy for what it received.
 
 ### 1b. The standard already designed the front end
 
@@ -354,6 +365,90 @@ newest build, **unless the newest build did not come up**.
 u-root `init` this lab already builds. One track, `boot-counter`, three power cycles,
 driven the way the persist tracks already drive NVRAM across a restart.
 
+### 2.6 Validate before `go` — `?bootparams`, the gate for the whole handoff
+
+`?elf`/`?phdrs` refuse a malformed ELF on the gABI's word; the same `chk`/`chk<`/`chk?`
+vocabulary from `dsl/elf.fth` (REVIEW E1's *constraints that refuse*) over
+`bootparams.fth` gives the bzImage handoff its gate. It runs in `linux-go-hook` by
+default, and the rule is the ELF gate's: **refuse by name, before the copy-down, or
+say UNKNOWN by name.** Grouped by what the constraint is *about*:
+
+- **The image is what it says it is.** `HdrS` at `0x202`; `boot_sector_magic`;
+  file size = `(setup_sects+1)·512 + syssize·16` (rounded); `payload_offset`/
+  `payload_length` inside the file, and the bytes at `payload_offset` beginning with
+  a compression magic the kernel can unpack (gzip `1f 8b`, xz `fd 37 7a 58 5a`,
+  zstd `28 b5 2f fd`, lz4, bzip2, lzma) — *which* compression, said by name, before
+  any decompressor runs; and the **image's own CRC32**, which the kernel's build tool
+  appends as the last four bytes and which no loader here has ever checked (the
+  exact convention is measured against the file on the host first, then the check
+  is written).
+- **The zero page agrees with the file** — the declared class, field for field (§1a).
+- **Every loader-written value is inside the declared limits** — the second row of
+  §1a's table, one refusal per constraint, each named after its field.
+- **The memory map is coherent.** e820 entries sorted, non-overlapping, `e820_entries`
+  ≤ 128 (else `SETUP_E820_EXT` is required and the check says so); the kernel's
+  placement `[load, load+init_size)`, the initrd, the command line and every
+  `setup_data` record each lie **inside one RAM range** and **do not overlap each
+  other**; and — the record-versus-record check this repo keeps finding — the map
+  agrees with the firmware's **own** `/memory` `reg`/`available` (patches 40, 45):
+  two descriptions of one machine, authored by the same firmware, that must not
+  disagree.
+- **The chain terminates.** `setup_data` walks to `next = 0` in bounded steps; each
+  `len` is inside its range; each `type` ≤ `setup_type_max`.
+- **The initrd is a well-formed archive** — `cpio-walk` reaches `TRAILER!!!` with
+  every member's header magic present and every size landing on the next member
+  (§2.2), and its digest matches a recorded one if one was recorded (Spike 5's shape).
+- **The command line, structurally.** Length; `initrd=` names the initrd that was
+  loaded; `console=` names a device the device tree has (`ttyS0` ↔ a serial node);
+  no parameter given twice. **And what it cannot check, by name:** whether a
+  `sysctl.` name exists, whether `root=` resolves, whether the kernel knows a
+  parameter at all — those are the kernel's to answer, and the gate prints them as
+  `UNKNOWN: <param> (the kernel decides)` rather than passing them quietly.
+- **The machine can run it.** `xloadflags` bit 0 on the amd64 door (the existing
+  refusal); five-level paging only if bit 4 allows; ACPI present when the door
+  provides it (the multiboot door has none, the coreboot door has coreboot's —
+  a row that differs *per door*, which is a control in itself). **UNKNOWN by name:**
+  the x86-64 feature level a distro kernel requires — the header does not declare
+  it, the kernel checks it itself at entry.
+
+**Build: `?bootparams`** over `bootparams.fth` + `cpio.fth`; one track, `boot-gate`,
+with **one fixture per constraint** authored by a builder in the `elf-gate` shape (a
+bzImage that differs from the good one in exactly one field), each refused by name,
+and the good image passing. The negative control for the "UNKNOWN" rows is a run
+with a nonsense `sysctl.` name: the gate must say UNKNOWN, and the kernel's log must
+then be the one that names it.
+
+### 2.7 The pre-boot state space — everything that can be read, validated or changed before `go`
+
+The four seams are the ones with a clear edit and a clear grade. This is the wider
+inventory — what is *in* the machine at the prompt, and which of the three verbs
+applies to each. It is the answer to "what else", and it is the list §5's build
+table will grow from:
+
+| object | read | validate | change | oracle after boot |
+|---|---|---|---|---|
+| the kernel's **declaration** (§1a) | `.kernel-caps` | equals the file; self-consistent | lie only (negative control) | `dmesg`'s protocol line |
+| the kernel **payload** | compression by magic; size from `syssize` | the image CRC32; `payload_length` inside the file | on the medium only (§2.3) | `/proc/version` names the build |
+| the **command line** | `cmdline@` | §2.6 | `cmdline!` — `sysctl.`, `init=`, `loglevel=`, `panic=` | `/proc/cmdline`, `/proc/sys/…` |
+| the **memory map** | `.e820`, `/memory` | coherent; agrees with `/memory` | `e820-reserve` (hide); *adding* memory is a LIED-rung control, never a feature | `/proc/iomem`, `/sys/firmware/memmap/` |
+| **`setup_data`: the tree** (§3) | `.setup-data` | ≤ `setup_type_max` | `setup-data+ SETUP_DTB` | `/sys/kernel/boot_params/setup_data/`, `/proc/device-tree` |
+| **`setup_data`: PCI option ROMs** — `SETUP_PCI` (3) hands a card's ROM image to the kernel as `struct pci_setup_rom`, which attaches it as the device's `rom` | the ROM Act III already read at the card's live BAR | the `0x55AA`/`PCIR` header `optrom.fth` already parses | `setup-data+ SETUP_PCI` with the bytes from the BAR | `/sys/bus/pci/devices/…/rom` serves the firmware's copy — **Act III's card, handed to Linux** |
+| **`setup_data`: entropy** — `SETUP_RNG_SEED` (9): the loader seeds the kernel's RNG, and the kernel **wipes the record after consuming it** | — | `len` sane | `setup-data+ SETUP_RNG_SEED` with bytes from the firmware's own sources | the sysfs record's `len` reads **0** — the kernel's documented rewrite, and the one case where "the copy differs" is the pass |
+| the **initrd** (§2.2) | `cpio-walk` | well-formed; digest | `initrd-append`, replace | `ls`, `cat`, `cpio -itv` |
+| **`/chosen`** — 1275's own place for `bootargs`, `bootpath`, `stdin`/`stdout` | `.properties` | **agrees with the zero page**: the standard's record of the boot and the protocol's record of the boot are two records of one boot | `setprop` | on ppc the kernel reads it; on x86 it is the firmware's own ledger |
+| the **device tree** | the tree | — | `new-device`/`property` (Act VI), which the DTB then carries | via §3 |
+| the **NVRAM variables** (§1b, §2.5) | `printenv` | — | `setenv boot-file`, `nvramrc`, the boot counter | the next power-on |
+| the **tables the door handed on** — coreboot's `LB_TAG` table (Act II), ACPI (RSDP → RSDT/XSDT, each with a checksum byte), SMBIOS | `lb-walk`; an ACPI walk is one more TLV | every checksum sums to zero; the RSDP the kernel will find is the one coreboot wrote | patching them (an SSDT, an SMBIOS string) is **a fifth seam, not opened here** — the kernel scans for RSDP itself, so it is reachable, and `/sys/class/dmi` and `/sys/firmware/acpi/tables` are its oracles | `acpidump`, `dmidecode` in userspace |
+| the **measured-boot record** | `evlog-replay` | the digest of kernel + initrd + command line matches a recorded policy | authored at the gate (B.4 Spike 1) | `tpm2_eventlog`; the quote stays UNKNOWN |
+| the **firmware's own state** | `dict-used`, the active package | room left; `device-end` before any typed probe (the showcase's marker lesson) | `marker`, `forget` | — |
+
+Three of these are new enough to name as seams-in-waiting: **`SETUP_PCI`** is the
+one that closes a loop the showcase opened (a ROM read at a live BAR in Act III,
+served by Linux from the bytes the firmware handed over); **`SETUP_RNG_SEED`** is
+the smallest possible handoff and the only one whose oracle is the kernel *erasing*
+the evidence; and the **ACPI/SMBIOS tables** are a fifth seam with a real oracle and
+a real cost, listed so the omission is a decision.
+
 ## 3. Idea B — the tree, handed over
 
 Mechanism: one `setup_data` record — `next=0, type=SETUP_DTB (2), len=<dtb size>,
@@ -441,6 +536,8 @@ them. On ppc all of that flows through `prom_init`; on x86 it evaporates at the 
 | S3 | `/proc/iomem` lacks a range the firmware reserved; the kernel booted anyway | e820 layout; S1 |
 | S4 | `ls /etc/sysctl.d` shows a member the firmware appended; `cpio -itv` on the host reads two archives | `cpio.fth`; S1 |
 | S5 | `/proc/device-tree/…/fcode-card@3` exists, or the mailbox blob `dtc`-decompiles identically; the record is under `/sys/kernel/boot_params/setup_data/` either way | `CONFIG_OF` measured; S3 for the mailbox |
+| S5a | `?bootparams` refuses each one-field fixture by name and passes the good image; a nonsense `sysctl.` name is UNKNOWN at the gate and named by the kernel's log | `boot-gate` (§2.6); S1, S4 |
+| S5b | `/sys/bus/pci/devices/…/rom` serves the bytes Act III read at the BAR; the `SETUP_RNG_SEED` record reads `len 0` | S1; `optrom.fth` |
 | S6 | a kernel that never reaches `init` is followed, at the next power-on, by the console naming the fallback and booting the previous kernel | `bootcount.fth` (§2.5); S0, the NVRAM tracks |
 
 **What to build, by seam** — the deliverables, so the seams read as work and not as
@@ -455,6 +552,9 @@ description:
 | 3 — the medium (§2.3) | a fixture builder | — | (a subject for §1a's refusals) | `readelf`-style host reading of the same header |
 | 4 — NVRAM (§2.5) | `dsl/bootcount.fth`, an `nvramrc` script, one line in u-root's `init` | `bootcount@`, `bootcount!`, the hook word | `boot-counter` | three power cycles; the console naming the fallback |
 | the tree (§3) | `dsl/fdt.fth` (exists) + `setup-data+` | — | `dtb-handoff` | `/sys/kernel/boot_params/setup_data/`; `/proc/device-tree`; `dtc` |
+| the gate (§2.6) | `dsl/bootparams.fth` + `dsl/cpio.fth`, a one-field-per-fixture builder | `?bootparams` | `boot-gate` | one refusal per fixture, by name; UNKNOWN rows named; the good image passes |
+| PCI ROM handoff (§2.7) | `dsl/optrom.fth` (exists) + `setup-data+` | — | `pci-rom-handoff` | `/sys/bus/pci/devices/…/rom` equals the bytes read at the BAR |
+| entropy (§2.7) | `setup-data+` | — | `rng-seed` | the sysfs record's `len` is 0 after boot; unwiped is a finding |
 
 S1 is the showcase's natural Act X (Act IX being the ELF gate, per B.4 §8): the last
 act is the one where the firmware, having dissected everything that arrived, **edits
@@ -482,6 +582,9 @@ what leaves**.
 7. **Is the sentinel clear?** One boot, one `/sys/kernel/boot_params/data` read, byte
    `0x1ef`. If it is not, the kernel has been sanitising fields behind every boot this
    lab has ever graded, and some assertion above is weaker than it reads.
-8. **Which of the ignored declarations (§1a) should become refusals?** `setup_type_max`
+8. **Is the ACPI/SMBIOS seam (§2.7) worth opening?** It has the cleanest oracle of
+   all (`acpidump`, `dmidecode`) and the highest cost (checksum discipline, and the
+   multiboot door has no tables at all, so it is a coreboot-door-only seam).
+9. **Which of the ignored declarations (§1a) should become refusals?** `setup_type_max`
    clearly; `relocatable_kernel`/`pref_address` only if a placement the loader chose
    is ever shown to disagree with one the kernel preferred.

@@ -5851,5 +5851,11 @@ three named `defer`s, since OpenBIOS declares none on its boot path. Its §1a is
 protocol's declaration half (what the loader honours, what it ignores, and
 `setup_type_max` as the refusal Idea B needs); §1b why `boot-file`/`nvramrc` are the
 front end; §2.5 a **fourth seam**, the NVRAM boot counter — the only event loop the
-firmware has once `go` runs. **The seams are the build list**: §5 tabulates file,
-words, track and oracle per seam. Open questions for discussion are its §6.
+firmware has once `go` runs. §1a's fields get **three verbs each — read, write,
+validate** — with the declared class writable only as a negative control; §2.6 is
+`?bootparams`, the gate that refuses every out-of-range value by name before `go` or
+says UNKNOWN by name; §2.7 inventories everything else at the prompt that can be
+read, validated or changed (`SETUP_PCI` handing Act III's card ROM to Linux,
+`SETUP_RNG_SEED`, `/chosen` versus the zero page, the ACPI/SMBIOS tables as a fifth
+seam left closed). **The seams are the build list**: §5 tabulates file, words, track
+and oracle per seam. Open questions for discussion are its §6.
