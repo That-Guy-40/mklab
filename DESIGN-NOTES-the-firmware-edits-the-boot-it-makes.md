@@ -124,6 +124,40 @@ Ground truth for all three is **what `ls` and `cat` show in u-root**, and for th
 append the `TRAILER!!!`-after-`TRAILER!!!` structure `cpio -itv` reads on the host
 from a `pmemsave` of the same range — the foreign oracle, the way `dtc` is Act V's.
 
+**Two sharp edges, before any of it is built:**
+
+- **The memory after the initrd is not free.** The loader places the initrd near the
+  top of RAM (`RAMDISK: [mem 0x1f027000-0x1fb25fff]` on the 512 MiB machine in
+  [POC-4](examples/openbios-the-rival-that-shipped/POC-4-BOOT-LINUX.md)), so an append
+  *in place* runs past `initrd_addr_max` or into memory the kernel will not accept.
+  The safe shape is **copy, append, repoint**: `alloc-mem` a range below the limit,
+  copy the initrd there, compose the new archive after it, and point `ramdisk_image`
+  and `ramdisk_size` at the copy — three primitives the toolkit already has. The
+  in-place form is the negative control: the kernel must refuse or ignore it
+  legibly, never unpack half an archive.
+- **The unpacker resolves hard links by inode number.** A member with `nlink ≥ 2`
+  is matched against earlier members by `(ino, devmajor, devminor)`. An appended
+  member that reuses a number from the original archive can be taken for a link to
+  a file it never meant to name. Every member the firmware composes carries
+  `nlink = 1` and inode numbers the original archive does not use — and the
+  layout asserts it, so the slip is refused by name rather than found in `ls -i`.
+
+**The mental model, stated once:** the initrd is **a queue of archives the kernel
+replays, in order, into one fresh filesystem** — not a stack of layers. It is
+*not* an overlay:
+
+| | an overlay | the initramfs unpacker |
+|---|---|---|
+| a same-path regular file | shadows the lower one | **truncated and rewritten** — the earlier contents are gone entirely, no merge |
+| a same-path directory | union of both | reused, so the contents of both archives end up together — the one union-like behaviour |
+| a type change (file where a directory was) | opaque marker | the earlier one is removed first, then the new one created |
+| deleting a lower file | a whiteout | **impossible.** There is no whiteout; an archive can only add or replace. To neutralise a file, replace it with an empty one |
+
+So *the last writer of any path wins*, and "make a filesystem-level change to the
+initrd" always means one of: add a path, or wholly replace one. Anything that needs
+a *diff* against the original member has to read the original first (edit 1's
+walk) and write the whole result (edit 2's append).
+
 ### 2.3 Seam 3 — the image on the medium, before `load`
 
 "The command line that resides in the image" needs a distinction:
