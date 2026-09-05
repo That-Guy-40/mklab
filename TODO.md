@@ -5862,3 +5862,40 @@ read, validated or changed (`SETUP_PCI` handing Act III's card ROM to Linux,
 `SETUP_RNG_SEED`, `/chosen` versus the zero page, the ACPI/SMBIOS tables as a fifth
 seam left closed). **The seams are the build list**: §5 tabulates file, words, track
 and oracle per seam. Open questions for discussion are its §6.
+
+## 23. Modern filesystems for a frozen firmware — lift, transliterate, or bring your own (2026-09-05)
+
+*Discussion draft, not scheduled.* Written up in
+[`DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md`](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md);
+this entry is the pointer. Start at its §0a.
+
+The question was whether GRUB 2's filesystem drivers could be lifted into OpenBIOS,
+OFW, or both. **The premise corrected first:** only OpenBIOS carries GRUB code —
+`fs/grubfs/` is GRUB **0.97**, the driver that revival bug 5 (no `tell`) and the clib
+lab's POC-7 (a modern `mke2fs` image mounts and then cannot be read; FAT-not-compiled
+fails silently) already paid for. OFW's filesystems are Forth packages with no C
+anywhere to link into.
+
+- **OpenBIOS — feasible, with precedent** (`grub-fstest`, `grub-mount`, efifs all
+  build the drivers outside GRUB). The work is a **shim** beside the existing 0.97
+  glue, exposing the same `/packages` methods; tier 1 (ext2/ext4, FAT/exFAT, ISO with
+  Rock Ridge, XFS, HFS+, UFS) needs only the core shim, and GRUB 2's **CBFS** and
+  **cpio** drivers are a second foreign oracle for the toolkit's own readers. GPT
+  partition maps come for the same price. **Two measurements come first**: the
+  per-file license wording (`COPYING` is GPLv2; GRUB 2 is GPLv3+; *"or later"* in
+  the headers decides whether a combined ROM may ever be distributed — a lab ROM is
+  not distribution) and the ppc image against QEMU's fixed firmware region.
+- **OFW — no lift; two routes.** Bring the filesystems in a **client program**
+  (FreeBSD's loader has run on Open Firmware this way for twenty years, on its
+  BSD-licensed `libsa`), which works on OpenBIOS too with no firmware change but
+  serves files to the client, not to the firmware's `load`; or **transliterate**
+  GRUB 2's ext4 extent walk into a Forth package with GRUB as the specification.
+- **U-Boot's `fs/`** is the license-compatible alternative for an in-firmware lift
+  (its §2.1a: GPLv2+, ext4 with extents, FAT, btrfs, squashfs, erofs, its own CBFS
+  reader; the sandbox build's `ext4load` as the shim's oracle) — at the price of
+  **no ISO 9660**, the door every track here uses, a path-based file API the shim
+  must cache around, and per-mount globals of the bug-5 family.
+- **Grading:** the shim is the only new code, so `grub-fstest` reading the same
+  image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
+  old package stays as the negative control that must fail *by name* on the modern
+  image the new one reads.
