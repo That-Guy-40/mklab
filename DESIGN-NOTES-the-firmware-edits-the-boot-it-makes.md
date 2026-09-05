@@ -45,6 +45,58 @@ across boots — is the only event loop there is. §2.6 is the gate — every va
 validated before `go`, or UNKNOWN by name — and §2.7 the inventory of everything
 else at the prompt that can be read, validated or changed.
 
+## 0a. In brief — what gets built, and what read, write and validate mean here
+
+*The digest of the discussion that produced §1a, §2.6 and §2.7, kept up front so
+[`TODO.md` §22](TODO.md#22-the-firmware-edits-the-boot-it-makes--two-compositions-of-the-toolkit-2026-09-05)
+can point at one place. The sections named carry the detail and the controls.*
+
+**Read, write and validate are explicit build items, not a display word with editing
+alluded to.** Every field of the boot protocol's setup header is a typed field, so a
+store through it *is* the write, and the fields fall into three classes that decide
+what the other two verbs mean (§1a):
+
+- **Declared by the kernel** — version, alignment, `init_size`, `setup_type_max` and
+  their kin. *Read* from the file and from the zero page separately. *Write* is a lie,
+  permitted only as a negative control, because the kernel's decompressor reads some of
+  these back. *Validate* means the two copies are equal, field for field.
+- **Written by the loader** — the command-line pointer, the initrd fields, e820,
+  `setup_data`, `type_of_loader`. These are the edits, each through a word that refuses
+  an out-of-range value by name. *Validate* means every constraint the declared class
+  imposes on them.
+- **Consumed by the kernel** — read back from `/sys/kernel/boot_params/` after boot.
+  *Validate* means equal to the zero page at `go`, except the rewrites the kernel
+  documents, so any other difference is a finding.
+
+**The gate is `?bootparams`** (§2.6), the ELF gate's constraint vocabulary over the
+whole handoff, run at `go` by default. It checks, in groups: that the image is what it
+says it is (the magics, the size arithmetic, the compression named by its magic before
+any decompressor runs, and the bzImage's own trailing CRC32, which no loader here has
+ever checked); that the zero page agrees with the file; that every loader value sits
+inside the declared limits; that the memory map is coherent **and agrees with the
+firmware's own `/memory`** — two descriptions of one machine by one author must not
+disagree; that the `setup_data` chain terminates with every type one the kernel
+declared it understands; that the initrd is a well-formed archive; and the command
+line structurally — with the questions only the kernel can answer, such as whether a
+`sysctl.` name exists, said as **UNKNOWN by name** rather than passed quietly.
+
+**"What else" is an inventory** (§2.7): everything at the prompt, with the verbs that
+apply to each. Three items there are new enough to be seams-in-waiting:
+
+- **PCI option ROM handoff.** The protocol has a record type that hands a card's ROM
+  image to the kernel, which then serves it as the device's `rom` attribute in sysfs.
+  Act III already read that ROM at the card's live BAR; handing it over closes the loop
+  the showcase opened.
+- **Entropy.** The loader can seed the kernel's random number generator through a
+  record the kernel wipes after consuming. The smallest possible handoff, and the only
+  one whose pass condition is the kernel *erasing* the evidence.
+- **The tables the door handed on**, ACPI and SMBIOS. Patching them is a fifth seam
+  with the cleanest oracles and the highest cost, listed as closed so the omission is
+  a decision rather than a gap.
+
+The build table in §5 has a row for the gate, the ROM handoff and the seed; §6 asks
+whether the fifth seam is worth opening.
+
 ## 1. The prerequisite: a window between "authored" and "jumped"
 
 **Measured, not assumed:** on x86 and amd64 the `boot` word calls

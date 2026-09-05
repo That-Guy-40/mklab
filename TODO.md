@@ -5826,7 +5826,10 @@ structures* — with poke-elf pointing at exactly which structures pay.
 
 *Discussion draft, not scheduled.* Written up in
 [`DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md`](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md);
-this entry is the pointer, so the queue can find it.
+this entry is the pointer, so the queue can find it. **Start at its
+[§0a](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md#0a-in-brief--what-gets-built-and-what-read-write-and-validate-mean-here)**,
+the one-page digest of what gets built and what read, write and validate mean per
+field class.
 
 Two ideas that use only what `examples/openbios-the-rival-that-shipped/` already has —
 the type layer, the cursor, `fdt.fth`, `region.fth`, the revived Linux loader — and
