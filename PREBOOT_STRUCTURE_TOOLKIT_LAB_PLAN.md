@@ -1127,6 +1127,10 @@ the cell this section originally declared missing — in bold — is present.**
 
 ### What to build from this (in order — but NOT YET its own lab plan)
 
+*Both items below landed 2026-09-03. The successor plan is
+[`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md) (2026-09-05): the
+ELF reader as a gate in the load path, graded as a boot ladder.*
+
 1. **The "firmware reads its own ROM" demo** — OpenBIOS-as-coreboot-payload
    walking its own CBFS at the `0 >` prompt. It is Spike 2 + Spike 3 made vivid,
    and it needs **nothing not already on disk**: a `coreboot.rom`, the Spike-2

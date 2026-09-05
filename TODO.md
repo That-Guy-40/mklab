@@ -507,6 +507,15 @@ requires of any other cached fact.
       **BUILD-READY** as of 2026-08-08, all four §9 decisions resolved including the
       charter boundary and the directory name (`examples/security-range/`). First
       increment: the spine + S2.
+- [ ] **B.4 — build [`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md)** —
+      v1 (2026-09-05), B.3's successor: the ELF reader moves from a word typed at the prompt to a
+      **gate in the load path** (Spike 0, a DECISION: C loader vs compiled-in Forth vs both), and
+      the grading becomes a **boot ladder** (REFUSED / LOADED-NOT-RUN / RAN-RETURNED / BOOTED)
+      whose rungs must be occupied. Then: measure-before-run (Spike 1), the real-ELF sweep (2),
+      one fixture per gABI clause as a conformance map of the hosted tools (3), symbol lookup and
+      a poke before boot (4), identity against the provenance record (5), the big-endian ELF32
+      axis (6). Written the day the fourth `elf-gate` fixture measured that no hosted tool
+      enforces the INTERP-order clause. Sequence 0 → 1 → 5 → 2 → 3 → 6 → 4; nothing started.
 - [x] **B.3 — build [`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)** —
       **✅ COMPLETE 2026-09-03**: every §9 clause met (Spikes −1, 0, 1a/1b/1c, 2, 3 and the
       §12(2) bench), audited (#390: patches 59/60), and the plan's named follow-on taken as
