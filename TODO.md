@@ -5895,6 +5895,13 @@ anywhere to link into.
   reader; the sandbox build's `ext4load` as the shim's oracle) — at the price of
   **no ISO 9660**, the door every track here uses, a path-based file API the shim
   must cache around, and per-mount globals of the bug-5 family.
+- **FreeBSD's `libsa` also links INTO OpenBIOS** (its §2.1b), not only into a
+  client: BSD-licensed, the closest interface fit of the three (a `devread` twin,
+  handle-based), the weakest coverage (ext2 without extents, FAT, UFS, ISO 9660 with
+  Rock Ridge). **And the sources combine** (its §2.1c, a decision table keyed to the
+  license measurement): in the expected "v2 only" outcome the ROM that may leave the
+  lab is **U-Boot for ext4 + `libsa` for ISO and FAT**, with GRUB 2 kept lab-only
+  as the widest reader and the CBFS/cpio oracles, its catalog row saying why.
 - **Grading:** the shim is the only new code, so `grub-fstest` reading the same
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern

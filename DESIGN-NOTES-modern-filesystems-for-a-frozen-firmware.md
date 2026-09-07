@@ -71,10 +71,15 @@ collects them. §0a is the digest.
     ISO 9660** at all, which is the door most of this repo's labs use. A path-based
     file API and per-mount globals make its shim a slightly worse fit than GRUB 2's,
     not a smaller one. Also the survey's "U-Boot has zero coverage".
-  - **A client program with FreeBSD's `libsa`** — BSD-licensed, bootloader-shaped
-    (its `devread` is nearly the 0.97 interface grubfs already wraps), runs on **OFW
-    and OpenBIOS unchanged**, needs no firmware patch; ext2 without extents, FAT,
-    ISO 9660, UFS, ZFS. The only route that reaches the frozen firmware.
+  - **FreeBSD's `libsa`, two ways.** As a **client program** (§2.3) — runs on **OFW
+    and OpenBIOS**, needs no firmware patch, the only route that reaches the frozen
+    firmware. And **linked into OpenBIOS** as a package (§2.1b) — the best license of
+    the three (BSD), the best fit (handle-based, a `devread` twin), the weakest
+    coverage: ext2 *without* extents, FAT, UFS, and ISO 9660 with Rock Ridge.
+  - **The combination** (§2.1c): the sources are not rivals. In the expected
+    license outcome the ROM that may leave the lab is **U-Boot for ext4 + `libsa`
+    for ISO and FAT**, and GRUB 2 stays as a lab-only patch for the widest coverage
+    and the CBFS/cpio oracles. §2.1c is the decision table, keyed to §1(1).
 - **The testing story is unusually clean:** the drivers are upstream's; **the only
   new code is the shim.** So the shim's oracle is `grub-fstest` reading the same
   image through GRUB's *own* shim, byte for byte; the driver's oracle is the kernel
@@ -222,6 +227,85 @@ onto the image — as the shim's byte-for-byte oracle, the way `grub-fstest` is 
 §2.1). **The decision between §2.1 and §2.1a is §6 question 1**, and it is a
 license-and-ISO decision, not a code one: both shims are the same size.
 
+### 2.1b Seam 1, the third source — FreeBSD's `libsa` **in** OpenBIOS, not only beside it
+
+§2.3 uses FreeBSD's filesystem library in a **client program**, because that is the
+only way it reaches OFW. But OpenBIOS is C, so the same library can be **linked into
+the firmware** behind the same `/packages` seam as §2.1 and §2.1a — a third source
+for seam 1, and on two of the three axes the best of them:
+
+- **License: BSD-2-Clause.** No distribution question at all — the only source of
+  the three for which §1(1)'s measurement is irrelevant.
+- **Fit: the closest of the three.** Its device interface is
+  `strategy (devdata, rw, dblk, size, buf, &rsize)` — GRUB 0.97's `devread()` with
+  the arguments reordered, so the shim is a near-copy of the glue that already
+  exists. Its file API is **handle-based** (`struct open_file` with `f_fsdata` per
+  open file, `fs_ops { open, close, read, write, seek, stat, readdir }`), which
+  avoids both of §2.1a's divergences: no path walk per `read`, no per-mount globals.
+- **Coverage: the weakest.** `ext2fs.c` is **ext2 without extents** — it reads the
+  classic layout the 0.97 driver reads. Whether it reads a modern `mke2fs -t ext2`
+  image (256-byte inodes, `dir_index`, `resize_inode`, `ext_attr` — compatibility
+  flags a linear-scan reader can ignore, plus a dynamic-revision inode size it must
+  honour) is a **measurement**, not a known; a modern **ext4** image it does not
+  read. It has `dosfs` (FAT12/16/32), `ufs`, and **`cd9660` with Rock Ridge** — the
+  ISO door, which U-Boot lacks; no XFS, no btrfs, and its `zfs` reader is CDDL and
+  large. `nfs`/`tftp` are left to the netboot labs (§5).
+
+| the drivers call | what it is | the shim provides |
+|---|---|---|
+| `(*devsw->dv_strategy) (devdata, F_READ, dblk, size, buf, &rsize)` | block I/O; `dblk` in 512-byte units | the parent node's `seek` + `read` — the 0.97 `devread()` glue, arguments reordered |
+| `struct open_file { f_flags, f_dev, f_devdata, f_ops, f_fsdata, f_offset }` | the handle | one per package instance; `f_fsdata` is where the driver keeps its state, so two filesystems open at once (the CD and the disk in one boot) simply work |
+| `fs_ops` table, `file_system[]` list | probe order | a static list of the drivers linked; `open()` tries each `fo_open` — the mount step |
+| `open`/`read`/`lseek`/`close`/`stat`/`readdir` (`stand.h`) | the file API | `open` → package `open`; `read`/`lseek` → `read`/`seek`/`tell` (**`lseek` with `SEEK_END` gives bug 5's `tell` for free**); `readdir` → `dir` |
+| `alloc`/`free`, `bcopy`/`bzero`/`strcmp`…, `printf`, `twiddle` | libsa's libc | OpenBIOS's `libc/`; `twiddle` (the spinning cursor) stubbed |
+| `errno`, `EIO`/`ENOENT`/`EINVAL` | the error channel | mapped to refusal by name in the package's `open` |
+| `le32toh`/`be32toh` (`sys/endian.h`), `__packed` | byte order | header-only — the ppc row's control again |
+
+**Build:** the same patch shape, `fs/libsafs/{glue.c, shim.h}` + `ext2fs.c` +
+`dosfs.c` + `cd9660.c` (+ `ufs.c`), vendored byte-exact from a pinned FreeBSD
+commit under a provenance README; `/packages/libsafs`; behind `CONFIG_FSYS_LIBSA`.
+The oracle is FreeBSD's own `loader` in its **userboot** form reading the same
+image, or simply the kernel's mount — there is no `grub-fstest` equivalent, so
+the shim's oracle is one step weaker and the track says so. The measurement that
+decides whether this source is worth its own patch: **S1's modern `mke2fs -t ext2`
+image through `libsafs`**, before anything else.
+
+### 2.1c The combination — which driver from which source, decided by §1(1)
+
+The three sources are not rivals; they are three answers to *"what does the license
+measurement allow, and what does the ISO door need"*, and the honest plan is a
+**combination keyed to that measurement**. One shim shape per source is a cost
+worth paying only for the drivers that source alone provides. So, per outcome of
+§1(1):
+
+| §1(1) finds | what may ship in a ROM that leaves the lab | ext4 with extents from | ISO 9660 + Rock Ridge from | FAT from | GPT from | what stays lab-only |
+|---|---|---|---|---|---|---|
+| OpenBIOS is **"v2 or later"** throughout | everything: GPLv3+ combines | **GRUB 2** (§2.1) — one shim covers ext4, ISO, FAT, XFS, HFS+, CBFS, cpio and GPT | GRUB 2 | GRUB 2 | GRUB 2 | nothing; U-Boot and `libsa` are not needed |
+| OpenBIOS is **"v2 only"** (the expected case) | GPLv2+ and BSD only | **U-Boot** (§2.1a) | **`libsa`** (§2.1b) — U-Boot has none, GRUB 2's cannot ship | `libsa` (handle-based, the better fit) or U-Boot — pick one, `libsa` | U-Boot's `disk/part_efi.c` | **GRUB 2 as a whole**, kept for the lab as the widest reader and the CBFS/cpio oracles, with its catalog row saying why it cannot leave |
+| headers are **mixed** (some files v2-only) | depends on *which* files: `fs/` and `packages/` v2-only forecloses linking GPLv3 there regardless of the rest | as the v2-only row | as the v2-only row | as the v2-only row | as the v2-only row | as the v2-only row; the measurement is recorded per file, not per repo |
+
+Two consequences worth stating:
+
+- **In the expected case the shippable ROM is two sources, not one** — U-Boot for
+  ext4, `libsa` for ISO (and FAT). That is two shim files behind two config
+  switches, each the size of the 0.97 glue, and both handle-based enough to coexist
+  (the `libsa` handle carries its state; the U-Boot shim caches its resolved inode
+  and re-mounts on device switch, §2.1a). The **probe order** is then a decision:
+  `libsa` first (cheap, refuses non-ISO/FAT/ext2 quickly), U-Boot second, 0.97
+  last and off by default as the negative control.
+- **The lab does not have to choose at all.** The GRUB 2 shim can exist as a
+  `DIVERGENCE`-kind patch that is never in a distributed ROM, exactly as the catalog
+  already carries deliberate local divergences, and its value in the lab — every
+  format on one shim, the CBFS and cpio readers as foreign oracles for the toolkit's
+  own — is not diminished by the restriction. What the restriction forbids is a
+  *sentence* ("this ROM may be handed to someone"), and writing that sentence into
+  the catalog row is the whole compliance story.
+
+**Build:** nothing beyond §2.1/§2.1a/§2.1b — this section is the *decision table*
+those three patches are selected from. Its own deliverable is one line in the patch
+catalog per source: the §1(1) result, the row of this table it selected, and the
+date.
+
 ### 2.2 Seam 2 — the partition maps, for the same price
 
 GRUB 2's `partmap/gpt.c` and `partmap/msdos.c` use nothing but `grub_disk_read`
@@ -238,7 +322,10 @@ more package (`grub2parts`), and the ZFS-boot and PXE-lab disk images become
 ### 2.3 Seam 3 — bring your own filesystems: the loader as a client program
 
 The route that reaches **OFW**, and the one that needs **no firmware change** on
-either. The clib lab already runs freestanding C programs that the firmware `load`s
+either (on OpenBIOS-ppc the *stock* QEMU blob runs C clients; on OpenBIOS-x86 the
+client interface needs the clib lab's revival patch first — a firmware change that
+already exists, not a new one). For the same library **linked into** OpenBIOS as a
+package, see §2.1b. The clib lab already runs freestanding C programs that the firmware `load`s
 and enters, calling back through the IEEE 1275 client interface (`open`, `read`,
 `seek`, `claim`). A filesystem reader that does its sector I/O through **that**
 interface needs nothing from the firmware but a block device — which is precisely
@@ -339,6 +426,8 @@ honest, wrong is not).
 | the measurements (§1) | a note in the patch catalog | — | — | three numbers, written down |
 | 1 — GRUB 2 shim (§2.1) | patch N, `fs/grub2fs/`, `CONFIG_FSYS_GRUB2` | `/packages/grub2fs`: `open` `read` `seek` `tell` `dir` `load` | `grub2fs` | `grub-fstest cp` byte-equal; the kernel's mount; old package as control |
 | 1a — U-Boot shim (§2.1a) | patch N, `fs/ubootfs/`, `CONFIG_FSYS_UBOOT` | `/packages/ubootfs`, same five methods | `grub2fs` re-aimed | U-Boot sandbox `ext4load` byte-equal; the kernel's mount; old package as control |
+| 1b — `libsa` shim (§2.1b) | patch N, `fs/libsafs/`, `CONFIG_FSYS_LIBSA`, `libsa` vendored with provenance | `/packages/libsafs`, same five methods | `grub2fs` re-aimed; **S1 on a modern `mke2fs -t ext2` image first** | the kernel's mount; old package as control (no `grub-fstest` twin — said so) |
+| 1c — the combination (§2.1c) | one catalog line per source | — | — | the §1(1) result and the table row it selected, dated |
 | 2 — partition maps (§2.2) | same patch, `partmap/` (or U-Boot's `disk/part_efi.c`) | `/packages/grub2parts` | `gpt-parts` | `sgdisk`-made image; MBR control |
 | 3 — bring your own (§2.3) | a client under the clib lab, `libsa` vendored | `strategy` over `cif-read` | `libsa-ofw`, `libsa-openbios` | host sha256; stock firmware, no build |
 | 4 — transliteration (§2.4) | `ext4.fth` in the OFW lab | the extent walk as a package method | `ofw-ext4` | host sha256; stock package refuses by name |
@@ -357,10 +446,10 @@ honest, wrong is not).
 
 ## 6. Open questions — the ones to discuss
 
-1. **Which OpenBIOS route, once §1(1) is measured:** a GRUB 2 lift (§2.1) as a
-   lab-only artifact with the license written into the catalog row, or a U-Boot
-   `fs/` lift (§2.1a) that could leave the lab — at the price of no ISO 9660, a
-   path-based API the shim has to cache around, and per-mount globals.
+1. **Which OpenBIOS sources, once §1(1) is measured** — §2.1c's table answers it
+   per outcome; what is left to discuss is whether the expected two-source ROM
+   (U-Boot ext4 + `libsa` ISO/FAT) is worth two shims, or whether one source and
+   a stated gap (U-Boot alone, no ISO; `libsa` alone, no ext4) is the better lab.
    The recommendation is GRUB 2 for the lab, because ISO is the door every track
    here uses, and to *state* the shipping restriction rather than avoid it.
 2. **Does the client route (§2.3) want FreeBSD's `loader` itself, or a small client
