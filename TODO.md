@@ -5885,6 +5885,14 @@ anywhere to link into.
   per-file license wording (`COPYING` is GPLv2; GRUB 2 is GPLv3+; *"or later"* in
   the headers decides whether a combined ROM may ever be distributed — a lab ROM is
   not distribution) and the ppc image against QEMU's fixed firmware region.
+  **The first is measured, 2026-09-07:** the project's licensing page
+  (<https://www.openfirmware.info/GPLv2.html>) says *"covered by the General Public
+  License V2"* with no "or later", and `packages/disk-label.c` and
+  `libopenbios/load.c` say *"version 2"* explicitly — so **GRUB 2 is lab-only**, and
+  the shippable combination is U-Boot + `libsa` (its §1(1) and §2.1c; the full grep
+  over the pinned clone is still owed, but it can only move the answer toward
+  "mixed"). Bonus finding: `fs/iso9660/` carries no license line at all, only
+  *"copied from EMILE"*.
 - **OFW — no lift; two routes.** Bring the filesystems in a **client program**
   (FreeBSD's loader has run on Open Firmware this way for twenty years, on its
   BSD-licensed `libsa`), which works on OpenBIOS too with no firmware change but
@@ -5895,6 +5903,13 @@ anywhere to link into.
   reader; the sandbox build's `ext4load` as the shim's oracle) — at the price of
   **no ISO 9660**, the door every track here uses, a path-based file API the shim
   must cache around, and per-mount globals of the bug-5 family.
+- **FreeBSD's `libsa` also links INTO OpenBIOS** (its §2.1b), not only into a
+  client: BSD-licensed, the closest interface fit of the three (a `devread` twin,
+  handle-based), the weakest coverage (ext2 without extents, FAT, UFS, ISO 9660 with
+  Rock Ridge). **And the sources combine** (its §2.1c, a decision table keyed to the
+  license measurement): in the expected "v2 only" outcome the ROM that may leave the
+  lab is **U-Boot for ext4 + `libsa` for ISO and FAT**, with GRUB 2 kept lab-only
+  as the widest reader and the CBFS/cpio oracles, its catalog row saying why.
 - **Grading:** the shim is the only new code, so `grub-fstest` reading the same
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern
