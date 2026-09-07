@@ -5885,6 +5885,14 @@ anywhere to link into.
   per-file license wording (`COPYING` is GPLv2; GRUB 2 is GPLv3+; *"or later"* in
   the headers decides whether a combined ROM may ever be distributed — a lab ROM is
   not distribution) and the ppc image against QEMU's fixed firmware region.
+  **The first is measured, 2026-09-07:** the project's licensing page
+  (<https://www.openfirmware.info/GPLv2.html>) says *"covered by the General Public
+  License V2"* with no "or later", and `packages/disk-label.c` and
+  `libopenbios/load.c` say *"version 2"* explicitly — so **GRUB 2 is lab-only**, and
+  the shippable combination is U-Boot + `libsa` (its §1(1) and §2.1c; the full grep
+  over the pinned clone is still owed, but it can only move the answer toward
+  "mixed"). Bonus finding: `fs/iso9660/` carries no license line at all, only
+  *"copied from EMILE"*.
 - **OFW — no lift; two routes.** Bring the filesystems in a **client program**
   (FreeBSD's loader has run on Open Firmware this way for twenty years, on its
   BSD-licensed `libsa`), which works on OpenBIOS too with no firmware change but
