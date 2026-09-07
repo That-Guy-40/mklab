@@ -60,9 +60,12 @@ collects them. §0a is the digest.
   (the clib lab's [`clib/README.md`](examples/openbios-clib-hello-to-emacs/clib/README.md)
   records it), GRUB 2 is GPLv3-or-later, and whether the source headers say *"version
   2"* or *"version 2 or later"* decides whether a combined ROM may ever be
-  **distributed**. A lab ROM that is built and run here is not distribution. (2) the
-  ppc firmware's size ceiling — QEMU maps it into a fixed region. (3) whether the
-  seam is the firmware at all, or a client program.
+  **distributed**. **Measured 2026-09-07 (§1(1)): the project's licensing page says
+  "V2" with no "or later", and `packages/` and `libopenbios/` say "version 2"
+  explicitly — so GRUB 2 is lab-only, and the shippable combination is U-Boot +
+  `libsa` (§2.1c).** A lab ROM that is built and run here is not distribution.
+  (2) the ppc firmware's size ceiling — QEMU maps it into a fixed region. (3) whether
+  the seam is the firmware at all, or a client program.
 - **The three routes, ranked by what they cost and where they can go:**
   - **GRUB 2 shim in OpenBIOS** — most drivers, best-tested code, the cheapest shim;
     lab-only unless the license measurement surprises.
@@ -100,6 +103,37 @@ collects them. §0a is the digest.
    patches and builds ROMs in CI; it publishes no ROM. Whichever way it falls, the
    answer is written into the patch catalog's `kind` column (a `DIVERGENCE`
    carried for a stated reason) rather than left to be rediscovered.
+
+   **MEASURED 2026-09-07 — a sample of seven files, not yet the full grep, and it is
+   the "v2 only / mixed" row of §2.1c.** The project's licensing page
+   (<https://www.openfirmware.info/GPLv2.html>, retrieved 2026-09-07) says *"OpenBIOS is
+   covered by the General Public License V2"* and then reproduces the GPLv2 text —
+   **no "or later"** anywhere outside the GPL's own §9. `COPYING` in the tree is the
+   bare GPLv2 text with no project preamble. Per file, at upstream `master`:
+
+   | file | wording | class |
+   |---|---|---|
+   | `libopenbios/load.c` | *"under the terms of the GNU General Public License version 2"* | **v2 only, explicit** |
+   | `packages/disk-label.c` | *"under the terms of the GNU General Public License version 2"* | **v2 only, explicit** |
+   | `kernel/forth.c` | *"See the file COPYING"* | v2 by reference (COPYING is the v2 text; the wiki says V2) |
+   | `arch/x86/openbios.c` | *"See the file COPYING"* | v2 by reference |
+   | `fs/iso9660/iso9660_open.c` | *"copied from EMILE"*, a copyright line, **no license wording at all** | inherits EMILE's (GPL) — a provenance gap in its own right |
+   | `fs/grubfs/fsys_ext2fs.c` | *"either version 2 of the License, or (at your option) any later version"* | **v2 or later** — it is GRUB's own header, verbatim |
+
+   Two of these decide it: the directories the new shim would sit **beside** —
+   `packages/` and `libopenbios/`, which the package interface lives in — carry the
+   explicit *"version 2"* wording. So a ROM linking GPLv3-or-later code into them
+   cannot be distributed, and **§2.1c's "v2 only" row is the one selected**: GRUB 2
+   is a lab-only source; U-Boot and `libsa` are the shippable ones. Two things worth
+   keeping from the sample: the *legacy* GRUB files already in the tree are
+   **v2-or-later** (GRUB's own notice, untouched), which is why 0.97 has always sat
+   there without question and why the question is specific to GRUB **2**; and
+   `fs/iso9660/` carries **no license line at all**, only *"copied from EMILE"* — the
+   native ISO driver's provenance is a copyright line and a URL, which is the
+   cite-don't-mirror tier's failure mode and worth a catalog note of its own. The
+   full `git grep` over the pinned clone is still owed (a count, so the sample cannot
+   be an unlucky seven), but it can only move the answer *toward* "mixed", never to
+   "v2 or later throughout" — the two explicit files are enough to foreclose that.
 2. **The ppc image against its ceiling.** QEMU loads the ppc firmware into a
    fixed region (1 MiB on the Mac machines; sun4m's is smaller — measure both). The
    drivers are compiled C in the ROM, not dictionary, so the toolkit's dictionary
@@ -281,7 +315,7 @@ worth paying only for the drivers that source alone provides. So, per outcome of
 | §1(1) finds | what may ship in a ROM that leaves the lab | ext4 with extents from | ISO 9660 + Rock Ridge from | FAT from | GPT from | what stays lab-only |
 |---|---|---|---|---|---|---|
 | OpenBIOS is **"v2 or later"** throughout | everything: GPLv3+ combines | **GRUB 2** (§2.1) — one shim covers ext4, ISO, FAT, XFS, HFS+, CBFS, cpio and GPT | GRUB 2 | GRUB 2 | GRUB 2 | nothing; U-Boot and `libsa` are not needed |
-| OpenBIOS is **"v2 only"** (the expected case) | GPLv2+ and BSD only | **U-Boot** (§2.1a) | **`libsa`** (§2.1b) — U-Boot has none, GRUB 2's cannot ship | `libsa` (handle-based, the better fit) or U-Boot — pick one, `libsa` | U-Boot's `disk/part_efi.c` | **GRUB 2 as a whole**, kept for the lab as the widest reader and the CBFS/cpio oracles, with its catalog row saying why it cannot leave |
+| OpenBIOS is **"v2 only"** — **THE MEASURED CASE (§1(1), 2026-09-07)** | GPLv2+ and BSD only | **U-Boot** (§2.1a) | **`libsa`** (§2.1b) — U-Boot has none, GRUB 2's cannot ship | `libsa` (handle-based, the better fit) or U-Boot — pick one, `libsa` | U-Boot's `disk/part_efi.c` | **GRUB 2 as a whole**, kept for the lab as the widest reader and the CBFS/cpio oracles, with its catalog row saying why it cannot leave |
 | headers are **mixed** (some files v2-only) | depends on *which* files: `fs/` and `packages/` v2-only forecloses linking GPLv3 there regardless of the rest | as the v2-only row | as the v2-only row | as the v2-only row | as the v2-only row | as the v2-only row; the measurement is recorded per file, not per repo |
 
 Two consequences worth stating:
@@ -293,6 +327,13 @@ Two consequences worth stating:
   and re-mounts on device switch, §2.1a). The **probe order** is then a decision:
   `libsa` first (cheap, refuses non-ISO/FAT/ext2 quickly), U-Boot second, 0.97
   last and off by default as the negative control.
+- **The selected row, as of 2026-09-07:** the second. `packages/` and `libopenbios/`
+  say *"version 2"* explicitly (§1(1)), so the ROM that may leave the lab is
+  **U-Boot for ext4 + `libsa` for ISO and FAT**, and the GRUB 2 shim is a
+  `DIVERGENCE`-kind patch whose catalog row says *"lab-only: GPLv3+ into v2-only
+  `packages/`"*. The row moves only if the full grep finds the two explicit files to
+  be the exception rather than the rule — and even then the wiki's *"V2"* would need
+  a maintainer's word to read as *"or later"*.
 - **The lab does not have to choose at all.** The GRUB 2 shim can exist as a
   `DIVERGENCE`-kind patch that is never in a distributed ROM, exactly as the catalog
   already carries deliberate local divergences, and its value in the lab — every
@@ -413,7 +454,7 @@ honest, wrong is not).
 
 | step | the line that must print | needs |
 |---|---|---|
-| S0 | the three numbers of §1: the header count, the ppc image against its ceiling, the package interface as measured | a morning; no code |
+| S0 | the three numbers of §1: the header count (**sampled 2026-09-07: v2-only in `packages/` and `libopenbios/`; the full grep still owed**), the ppc image against its ceiling, the package interface as measured | a morning; no code |
 | S1 | `dir hd:\` through `grub2fs` lists a **modern `mke2fs`** ext4 image on unix and x86; the same path through `grubfs` says `File not found` in the same boot | the shim + `ext2.c` + `fshelp.c` (§2.1) |
 | S2 | the same, plus FAT with a long name and an ISO with Rock Ridge, on all four doors — or UNCOVERED on ppc *by name* if S0's ceiling said so | tier 1 |
 | S3 | `dir hd:2,\` on a GPT image; MBR unchanged through both packages | §2.2 |
