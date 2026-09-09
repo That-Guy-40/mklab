@@ -5910,6 +5910,16 @@ anywhere to link into.
   license measurement): in the expected "v2 only" outcome the ROM that may leave the
   lab is **U-Boot for ext4 + `libsa` for ISO and FAT**, with GRUB 2 kept lab-only
   as the widest reader and the CBFS/cpio oracles, its catalog row saying why.
+- **The chosen plan (its §2.1d, 2026-09-09): keep the 0.97 drivers ON, add U-Boot
+  and `libsa`, and make the dispatcher safe with one rule — a mount must be
+  decisive.** Probe by capability (U-Boot for the ext2 family, `libsa` for ISO/FAT,
+  0.97 last for XFS v4/JFS/ReiserFS/UFS/Minix/AFFS, which only it reads); a mount
+  that cannot list `/` unmounts and falls through *by name*, so POC-7's
+  "mounted but `File not found`" becomes an honest fall-through instead of a LIED
+  rung. That reads everything this repo's labs make; exFAT, NTFS, UDF, XFS v5 and
+  F2FS stay GRUB 2-only, and no lab here makes one. Track `fs-combo`: one image set
+  through every package that claims it, the fall-through message asserted, the
+  reversed probe order reported as LIED.
 - **Grading:** the shim is the only new code, so `grub-fstest` reading the same
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern

@@ -83,6 +83,12 @@ collects them. §0a is the digest.
     license outcome the ROM that may leave the lab is **U-Boot for ext4 + `libsa`
     for ISO and FAT**, and GRUB 2 stays as a lab-only patch for the widest coverage
     and the CBFS/cpio oracles. §2.1c is the decision table, keyed to §1(1).
+  - **The chosen plan** (§2.1d, 2026-09-09): **keep 0.97 on** (it is the only reader
+    for XFS v4, JFS, ReiserFS, UFS, Minix, AFFS), add U-Boot and `libsa`, and make the
+    dispatcher safe with one rule — **a mount must be decisive**: probe by capability
+    (U-Boot, `libsa`, then 0.97), and a mount that cannot list `/` unmounts and falls
+    through by name. That reads everything this repo's labs make; exFAT, NTFS, UDF,
+    XFS v5 and F2FS stay GRUB 2-only, and no lab here makes one.
 - **The testing story is unusually clean:** the drivers are upstream's; **the only
   new code is the shim.** So the shim's oracle is `grub-fstest` reading the same
   image through GRUB's *own* shim, byte for byte; the driver's oracle is the kernel
@@ -347,6 +353,74 @@ those three patches are selected from. Its own deliverable is one line in the pa
 catalog per source: the §1(1) result, the row of this table it selected, and the
 date.
 
+### 2.1d The chosen plan — keep 0.97, add U-Boot and `libsa`; the decisive-mount rule
+
+*Decided in discussion 2026-09-09, on the strength of §1(1)'s measurement.* Three
+in-firmware packages behind one seam, all three shippable together (0.97 is GRUB's own
+*"version 2 or later"*; U-Boot is GPL-2.0-or-later; `libsa` is BSD), and GRUB 2 stays
+where §1(1) put it — a lab-only patch, and the only source for the formats the plan
+does not reach.
+
+**Keep the 0.97 drivers, and keep them on.** They are not only ext2: the tree carries
+`fsys_fat`, `fsys_iso9660`, `fsys_xfs` (version 4), `fsys_jfs`, `fsys_reiserfs`,
+`fsys_ufs`/`ufs2`, `fsys_minix`, `fsys_affs`, `fsys_ffs`, `fsys_vstafs`. On the classic
+images they read today they keep reading, and for four of those formats they are the
+**only** reader in the plan. They also remain the negative control §3 asks for — the
+modern image must fail through them and succeed through the new package *in the same
+boot* — which is a stronger control when they are on than when they are off.
+
+**The design rule that makes three packages safe: a mount must be decisive.** POC-7
+measured the failure this combination invites: the 0.97 ext2 driver recognises a
+modern image by its superblock magic, reports it *mounted* (`Located filesystem`,
+`INTERPOSE!`), and then fails at the directory lookup (`File not found`). If that
+package probes first, nothing falls through to the one that could read it. Two fixes,
+both in the dispatcher, both small:
+
+1. **Probe order by capability, not by age.** U-Boot first for the ext2 family — its
+   `ext4` reader handles ext2, ext3 and ext4 uniformly, so there is no ext2 image it
+   reads worse than 0.97 does; `libsa` next, for ISO and FAT; 0.97 **last**, for the
+   formats only it has. A package never sees an image a better one has already
+   claimed.
+2. **A mount reads the root directory, not just the superblock.** Every package's
+   `open` completes its mount by listing `/`; a mount that cannot is *unmounted* and
+   the next package is tried, and the refusal is printed by name
+   (`grubfs: mounted ext2 but cannot read /: <feature> — trying next`). That turns
+   "mounted but cannot read" — the LIED rung, a false success that outranks an honest
+   failure — into an honest fall-through, and it costs one directory read per probe.
+
+**What "full coverage" reaches with the three, and what it does not:**
+
+| format | read by | note |
+|---|---|---|
+| ext2 / ext3 / **ext4 with extents** | U-Boot | the image that started the question |
+| FAT 12/16/32 | `libsa`, U-Boot, or 0.97 | `libsa` first (handle-based) |
+| ISO 9660 with Rock Ridge | `libsa`, or 0.97 | the door every track uses |
+| btrfs, squashfs, erofs, ubifs, cramfs | U-Boot | with their decompressors (§2.1a tier 2) |
+| XFS **v4**, JFS, ReiserFS, UFS/UFS2, Minix, AFFS, FFS | **0.97 only** | the reason to keep it on |
+| HFS, HFS+ | OpenBIOS's native `fs/hfs`, `fs/hfsplus` | unchanged |
+| CBFS | U-Boot's `fs/cbfs` | a second foreign reader of the ROM Act I walks |
+| ZFS | U-Boot's reader, or `libsa`'s (CDDL) | out of scope (§5), listed for completeness |
+| **exFAT, NTFS, UDF, XFS v5, F2FS** | **none of the three** | **GRUB 2 only** — no lab here makes one |
+
+So the plan reads everything this repo's labs actually produce, and the five formats
+it does not reach are ones no lab makes. That last row is the whole remaining case for
+the GRUB 2 patch, and it is a lab-only case, exactly as §1(1) decided.
+
+**Build:** the two new shims of §2.1a and §2.1b as specified there, plus the
+**dispatcher**: a probe-order table in `libopenbios/`'s filesystem-package registration
+(the same place `fsys_table[]` is consulted today), the decisive-mount check in each
+package's `open` (three lines each: list `/`, on failure unmount and `return` the next
+candidate), and one config switch per source (`CONFIG_FSYS_GRUB` stays as it is). One
+track, **`fs-combo`**, reads **one image set through every package that claims it**:
+the modern ext4 image (U-Boot reads, 0.97 falls through by name, `libsa` refuses by
+magic), a classic ext2 image (all three read it, byte-equal to the host), a Rock Ridge
+ISO (`libsa` and 0.97 agree), a FAT image (all three), and an XFS v4 image (0.97 only,
+the others refuse by magic) — and asserts the **fall-through message** on the modern
+image, not merely the eventual success, because the message is what proves the rule
+ran rather than the order happening to be right. Negative control: the probe order
+reversed (0.97 first) must reproduce POC-7's `File not found` **and be reported as a
+LIED rung by the track**, so the rule is known to be load-bearing.
+
 ### 2.2 Seam 2 — the partition maps, for the same price
 
 GRUB 2's `partmap/gpt.c` and `partmap/msdos.c` use nothing but `grub_disk_read`
@@ -469,6 +543,7 @@ honest, wrong is not).
 | 1a — U-Boot shim (§2.1a) | patch N, `fs/ubootfs/`, `CONFIG_FSYS_UBOOT` | `/packages/ubootfs`, same five methods | `grub2fs` re-aimed | U-Boot sandbox `ext4load` byte-equal; the kernel's mount; old package as control |
 | 1b — `libsa` shim (§2.1b) | patch N, `fs/libsafs/`, `CONFIG_FSYS_LIBSA`, `libsa` vendored with provenance | `/packages/libsafs`, same five methods | `grub2fs` re-aimed; **S1 on a modern `mke2fs -t ext2` image first** | the kernel's mount; old package as control (no `grub-fstest` twin — said so) |
 | 1c — the combination (§2.1c) | one catalog line per source | — | — | the §1(1) result and the table row it selected, dated |
+| 1d — the dispatcher (§2.1d) | the probe-order table + the decisive-mount check in each package's `open` | `open` lists `/` or falls through by name | `fs-combo` | one image set through every package that claims it; the fall-through **message** asserted on the modern image; reversed order reported as LIED |
 | 2 — partition maps (§2.2) | same patch, `partmap/` (or U-Boot's `disk/part_efi.c`) | `/packages/grub2parts` | `gpt-parts` | `sgdisk`-made image; MBR control |
 | 3 — bring your own (§2.3) | a client under the clib lab, `libsa` vendored | `strategy` over `cif-read` | `libsa-ofw`, `libsa-openbios` | host sha256; stock firmware, no build |
 | 4 — transliteration (§2.4) | `ext4.fth` in the OFW lab | the extent walk as a package method | `ofw-ext4` | host sha256; stock package refuses by name |
@@ -501,9 +576,11 @@ honest, wrong is not).
 3. **Does the ppc image fit?** §1(2). If not, the honest partition is *tier 1 on
    x86/amd64/unix, UNCOVERED on ppc by name* — or a ppc build with only `ext2.c`
    and `iso9660.c`, which is a per-arch config and not a fork.
-4. **Should `grub2fs` replace `grubfs` once it reads everything the old one can?**
-   Keeping both keeps the negative control; replacing removes 0.97 code with two
-   known defects. The answer is probably *keep, off by default, for the control*.
+4. ~~**Should `grub2fs` replace `grubfs` once it reads everything the old one can?**~~
+   **Answered 2026-09-09 (§2.1d): keep 0.97, and keep it ON** — it is the only
+   reader in the plan for XFS v4, JFS, ReiserFS, UFS, Minix and AFFS, and an
+   on-by-default control is stronger than an off one. What made "on" safe is the
+   decisive-mount rule; without it, 0.97 claiming a modern ext4 first is POC-7 again.
 5. **Is §2.4 worth doing at all**, given §2.3 reaches OFW without touching it? Only
    if *"the frozen firmware's own `load` reads modern disks"* is the sentence
    wanted — which is the sister lab's thesis (fix it live at the prompt), so
