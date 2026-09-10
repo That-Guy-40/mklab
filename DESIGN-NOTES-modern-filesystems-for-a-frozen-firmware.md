@@ -89,6 +89,13 @@ collects them. §0a is the digest.
     (U-Boot, `libsa`, then 0.97), and a mount that cannot list `/` unmounts and falls
     through by name. That reads everything this repo's labs make; exFAT, NTFS, UDF,
     XFS v5 and F2FS stay GRUB 2-only, and no lab here makes one.
+  - **The overlaps are tiered by measurement** (§2.1e): FAT, ISO, classic ext2 and
+    UFS each have two or three readers, so their probe order is *derived* — correctness
+    on a per-edge corpus first (byte-equal to host oracles; a partial reader never
+    first; a wrong reader disqualified by name), then cost measured from outside the
+    firmware as QEMU's `info blockstats` sector-read deltas, never wall time. The
+    result is `fs-tiers.toml` with provenance hashes; the dispatcher's table is
+    generated from it and a checker refuses a stale one.
 - **The testing story is unusually clean:** the drivers are upstream's; **the only
   new code is the shim.** So the shim's oracle is `grub-fstest` reading the same
   image through GRUB's *own* shim, byte for byte; the driver's oracle is the kernel
@@ -376,11 +383,14 @@ modern image by its superblock magic, reports it *mounted* (`Located filesystem`
 package probes first, nothing falls through to the one that could read it. Two fixes,
 both in the dispatcher, both small:
 
-1. **Probe order by capability, not by age.** U-Boot first for the ext2 family — its
-   `ext4` reader handles ext2, ext3 and ext4 uniformly, so there is no ext2 image it
-   reads worse than 0.97 does; `libsa` next, for ISO and FAT; 0.97 **last**, for the
-   formats only it has. A package never sees an image a better one has already
-   claimed.
+1. **Probe order by capability, not by age** — and, for the formats with more than
+   one reader, **by measured tier** (§2.1e), never by this paragraph. The shape as
+   reasoned: U-Boot first for the ext2 family — its `ext4` reader handles ext2, ext3
+   and ext4 uniformly, so there is no ext2 image it reads worse than 0.97 does; `libsa`
+   next, for ISO and FAT; 0.97 **last**, for the formats only it has. A package never
+   sees an image a better one has already claimed. Where two or three readers claim a
+   format, the order is whatever `fs-tiers.toml` says on the corpus, and the
+   dispatcher's table is generated from it.
 2. **A mount reads the root directory, not just the superblock.** Every package's
    `open` completes its mount by listing `/`; a mount that cannot is *unmounted* and
    the next package is tried, and the refusal is printed by name
@@ -420,6 +430,103 @@ image, not merely the eventual success, because the message is what proves the r
 ran rather than the order happening to be right. Negative control: the probe order
 reversed (0.97 first) must reproduce POC-7's `File not found` **and be reported as a
 LIED rung by the track**, so the rule is known to be load-bearing.
+
+### 2.1e Tiering the overlaps — the probe order is a measurement, not an opinion
+
+§2.1d's probe order was written by reasoning: U-Boot for the ext2 family, `libsa` for
+ISO and FAT, 0.97 last. That is the right *shape* and the wrong *source* for a table
+the dispatcher will consult on every boot: three of the formats have **two or three
+readers each**, and which one goes first is a cached fact about their behaviour on
+real images — exactly the kind of fact this repo keeps finding served stale. So the
+overlaps get a tier each, and the tier is **derived by a track, bound to the corpus it
+was derived from, and refused by name when either side moves.**
+
+**Where the sources overlap:**
+
+| format | 0.97 | U-Boot | `libsa` | what differs between them |
+|---|---|---|---|---|
+| FAT 12 / 16 / 32 | `fsys_fat` | `fs/fat` | `dosfs` | VFAT long names (0.97: yes; U-Boot: yes; `libsa`: **8.3 only** — a measurement, and the likely decider); FAT12 on a 1.44 MB floppy image (all three claim it); FAT32 with 64 KiB clusters |
+| ISO 9660 | `fsys_iso9660` (Rock Ridge) | — | `cd9660` (Rock Ridge) | Joliet (neither, probably); the `;1` version suffix (0.97 strips it — the toolkit plan measured that; `libsa`'s behaviour unmeasured); a multi-extent file > 4 GiB |
+| ext2, classic layout | `fsys_ext2fs` | `fs/ext4` | `ext2fs` | 256-byte inodes and `dir_index` (0.97 fails, POC-7; U-Boot reads; `libsa` **unmeasured**); symlinks; a directory with > 1,000 entries |
+| ext4 | — | `fs/ext4` | — | no overlap; U-Boot by default |
+| UFS / UFS2 | `fsys_ufs`, `fsys_ufs2` | — | `ufs` | UFS2 (0.97's `ufs2` vs `libsa`'s single driver); big-endian UFS from a sparc image on the ppc door |
+
+Every cell marked *unmeasured* is one the track below settles; nothing in the table
+is allowed to become a probe-order entry on the strength of this prose.
+
+**Tier 1 — correctness, on a corpus, byte-equal to the host.** A source competes for a
+format only if it reads **every** image in that format's corpus byte-equal to the
+host's own reader (`mtools`/`mcopy` for FAT, `isoinfo`/`bsdtar` for ISO, `debugfs` for
+ext2, the kernel's mount for all of them — foreign oracles, never one of the three
+sources). The corpus is authored by a builder in the `elf-gate` shape, one image per
+edge, each named for the edge it isolates:
+
+- FAT: 12 / 16 / 32; a VFAT long name; an 8.3-only name with a lower-case flag; a
+  file spanning a cluster-chain wrap; a root directory at its 512-entry limit (FAT16).
+- ISO: plain; Rock Ridge; Joliet; a name that needs `;1` stripped; a 700 MB image
+  whose file sits past the 2 GiB byte offset on the LE arches (the unsigned-compare
+  class `vaddr>off` already caught once).
+- ext2: classic; modern `mke2fs -t ext2`; a symlink; a 1,200-entry directory.
+
+A source that reads all of a format's corpus is **eligible**; one that reads some is
+**partial**, and a partial reader is never first — it is placed *after* every eligible
+one, so an image it cannot read falls through to one that can, and the decisive-mount
+rule (§2.1d) makes that fall-through honest. A source that reads the bytes *wrong*
+on any image (not a refusal — wrong bytes) is **disqualified** for that format, by
+name, until the defect is understood; a reader that lies outranks one that refuses,
+on this repo's ladder, as the worse outcome.
+
+**Tier 2 — cost, measured from outside the firmware.** Among eligible readers the tie
+is broken by cost, and the cost that matters in firmware is **not wall time**: TCG
+timing is noisy, KVM is not on every runner, and a read through the parent node is the
+same instruction stream on every accelerator. What differs between readers is **how
+many sector reads they issue** for the same work, and QEMU counts those exactly:
+`info blockstats` (`rd_operations`, `rd_bytes`, `rd_total_time_ns`) on the monitor,
+read before and after each operation — the observer *outside* the firmware, the way
+`xp` and `pmemsave` are for the other tracks. Three operations per source per format:
+
+| operation | what it exercises | the number |
+|---|---|---|
+| `load` of a 4 MiB file (the kernel's size) | read granularity, readahead, cluster-chain walking | `rd_operations` per MiB, `rd_bytes` / file size (the over-read ratio) |
+| `dir` of the 1,200-entry directory | directory-walk strategy, whether it re-reads the same block | `rd_operations`; a reader that re-reads is visible as *more operations than blocks in the directory* |
+| `open` of a file 8 levels deep | path-walk cost — the U-Boot shim's path-based API re-walks per `read` unless it caches (§2.1a), and this row is where that shows | `rd_operations` for one `open` + one 512-byte `read`, twice — the second must not repeat the first's walk |
+
+Wall time is recorded beside the counts, on the hosted door and under KVM where
+present, as a *secondary* figure the report labels by accelerator; it is never the
+tie-breaker, because it is not reproducible on the runner that matters.
+
+**The tier table is data with provenance, not a constant.** The `fs-tiers` track
+emits `fs-tiers.toml`: per format, the ordered readers, each with its corpus verdict
+(eligible / partial / disqualified, and which image decided it) and its cost row, plus
+the sha256 of the corpus builder's output and the pinned commits of the three sources.
+The dispatcher's probe-order table (§2.1d) is **generated from it**, not typed, and a
+checker in `tools/tests/` fails the run when the generated table and the toml disagree
+— the track-list checker's shape. When the corpus builder changes or a source's pin
+moves, the toml's hashes no longer match and the *track* refuses to grade against it
+by name until re-derived: the record cannot outlive its subject.
+
+**Two things the measurement is expected to find, written down so the surprise is
+legible either way:**
+
+- **The FAT tier is probably not `libsa` first.** The reasoning in §2.1d put `libsa`
+  ahead for its handle-based API; if `dosfs` reads 8.3 names only, it is *partial* on
+  the FAT corpus and drops behind both 0.97 and U-Boot, and the order becomes
+  U-Boot, 0.97, `libsa` — the opposite of the prose. That is the point of the track.
+- **0.97 may win a cost row it loses on correctness.** Its `devread()` takes a byte
+  range and the glue reads only the sectors covering it; U-Boot's `blk_dread` is
+  whole-block and the shim may over-read. If 0.97 posts the fewest `rd_operations` on
+  the 4 MiB load, that is a finding about the *U-Boot shim's* granularity to fix, not
+  a reason to put a partial reader first.
+
+**Build:** the corpus builder (`fixtures/fs-corpus/build-fs-corpus.sh`, one image per
+edge, host oracles named per format); the `fs-tiers` track (all three packages
+compiled in, `info blockstats` deltas via the monitor, the toml emitted with its
+provenance hashes); the generator from toml to the dispatcher's table; and the
+checker that binds them. **Controls:** an image the builder corrupts by one byte in a
+directory entry must be *refused* by every eligible reader, not read wrong (the
+disqualification path, watched to bite); and a `rd_operations` delta of zero on any
+row is a **broken instrument** (the read went to a cache the monitor cannot see, or the
+wrong device was measured), reported as such rather than as a free read.
 
 ### 2.2 Seam 2 — the partition maps, for the same price
 
@@ -543,7 +650,8 @@ honest, wrong is not).
 | 1a — U-Boot shim (§2.1a) | patch N, `fs/ubootfs/`, `CONFIG_FSYS_UBOOT` | `/packages/ubootfs`, same five methods | `grub2fs` re-aimed | U-Boot sandbox `ext4load` byte-equal; the kernel's mount; old package as control |
 | 1b — `libsa` shim (§2.1b) | patch N, `fs/libsafs/`, `CONFIG_FSYS_LIBSA`, `libsa` vendored with provenance | `/packages/libsafs`, same five methods | `grub2fs` re-aimed; **S1 on a modern `mke2fs -t ext2` image first** | the kernel's mount; old package as control (no `grub-fstest` twin — said so) |
 | 1c — the combination (§2.1c) | one catalog line per source | — | — | the §1(1) result and the table row it selected, dated |
-| 1d — the dispatcher (§2.1d) | the probe-order table + the decisive-mount check in each package's `open` | `open` lists `/` or falls through by name | `fs-combo` | one image set through every package that claims it; the fall-through **message** asserted on the modern image; reversed order reported as LIED |
+| 1d — the dispatcher (§2.1d) | the probe-order table (**generated from `fs-tiers.toml`**) + the decisive-mount check in each package's `open` | `open` lists `/` or falls through by name | `fs-combo` | one image set through every package that claims it; the fall-through **message** asserted on the modern image; reversed order reported as LIED |
+| 1e — the tiers (§2.1e) | `fixtures/fs-corpus/build-fs-corpus.sh`; `fs-tiers.toml` with provenance hashes; the toml-to-table generator; a `tools/tests/` checker binding them | — | `fs-tiers` | byte-equal to host oracles per format (eligible / partial / disqualified); `info blockstats` deltas per operation; a zero delta is a broken instrument; a one-byte corruption refused, not read wrong |
 | 2 — partition maps (§2.2) | same patch, `partmap/` (or U-Boot's `disk/part_efi.c`) | `/packages/grub2parts` | `gpt-parts` | `sgdisk`-made image; MBR control |
 | 3 — bring your own (§2.3) | a client under the clib lab, `libsa` vendored | `strategy` over `cif-read` | `libsa-ofw`, `libsa-openbios` | host sha256; stock firmware, no build |
 | 4 — transliteration (§2.4) | `ext4.fth` in the OFW lab | the extent walk as a package method | `ofw-ext4` | host sha256; stock package refuses by name |
@@ -581,7 +689,10 @@ honest, wrong is not).
    reader in the plan for XFS v4, JFS, ReiserFS, UFS, Minix and AFFS, and an
    on-by-default control is stronger than an off one. What made "on" safe is the
    decisive-mount rule; without it, 0.97 claiming a modern ext4 first is POC-7 again.
-5. **Is §2.4 worth doing at all**, given §2.3 reaches OFW without touching it? Only
+5. **Which reader wins FAT?** §2.1e expects the measurement to contradict §2.1d's
+   prose: if `libsa`'s `dosfs` is 8.3-only it is *partial* and drops to last, and the
+   order is U-Boot, 0.97, `libsa`. The corpus decides; the prose does not.
+6. **Is §2.4 worth doing at all**, given §2.3 reaches OFW without touching it? Only
    if *"the frozen firmware's own `load` reads modern disks"* is the sentence
    wanted — which is the sister lab's thesis (fix it live at the prompt), so
    probably yes, but after §2.3 has shown the cheaper route.
