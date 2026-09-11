@@ -412,6 +412,14 @@ RAM-resident infra labs' "reboot = newest build" rule
 ([TODO §4](TODO.md#4-net-booted-ram-resident-infrastructure-images-immutable-infra-reboot--newest-build)):
 newest build, **unless the newest build did not come up**.
 
+**Which store the counter lives in is a per-door choice the store table makes**, not
+this section: [the filesystems notes' §2.5](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md#25-the-other-direction--persistent-backing-stores-tiered-the-same-way)
+tiers every backing store the labs have measured by use, and the boot counter's
+must-have — survives reset **and** the OS can clear it — is met by pmem on amd64
+(`/dev/pmem0`, one `dd`), raw IDE sectors on x86 (a driver-free `dd` to a known
+LBA), and Apple's chip on ppc via `/dev/nvram`; CFI needs a flash driver on the OS
+side and sun4m cannot be written from inside at all.
+
 **Build: `bootcount.fth`** — `bootcount@`/`bootcount!` over the NVRAM words, the
 `nvramrc` script, and the `linux-go-hook` word; on the OS side one line in the
 u-root `init` this lab already builds. One track, `boot-counter`, three power cycles,

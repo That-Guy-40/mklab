@@ -5932,6 +5932,17 @@ anywhere to link into.
   source pins; the dispatcher's table is generated from it; a `tools/tests/` checker
   refuses a stale one. Expected surprise, written down first: `libsa`'s `dosfs` is
   probably 8.3-only, which makes it *partial* on FAT and last, not first.
+- **The same table for the other direction — persistent backing stores (its §2.5).**
+  Every store the labs measured (P0 buffer, IDE sectors, CFI flash, the half-done
+  floppy, amd64's NVDIMM, the framebuffer, `write-file`'s host file, Apple's
+  `nvram@60000`, sun4m's unbound `/obio/eeprom`, the ROM's CBFS) with what it
+  survives, who observes it from outside, and whether the OS sees the same bytes —
+  tiered **by use**: config variables, the boot counter (§22's seam 4 now selects
+  its store per door from this table), a mailbox to the OS, an authored file. pmem
+  serves three of the four uses and exists on one door; the floppy and sun4m rows are
+  the same half-working shape. Build: `store-tiers.toml` from one sweep of the
+  existing persistence tracks, with `blockstats` write/flush deltas; the P0 buffer
+  passing durability is a broken instrument.
 - **Grading:** the shim is the only new code, so `grub-fstest` reading the same
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern

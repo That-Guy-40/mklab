@@ -96,6 +96,13 @@ collects them. §0a is the digest.
     firmware as QEMU's `info blockstats` sector-read deltas, never wall time. The
     result is `fs-tiers.toml` with provenance hashes; the dispatcher's table is
     generated from it and a checker refuses a stale one.
+  - **The other direction gets the same table** (§2.5): every persistent backing
+    store the labs have measured — static buffer, IDE sectors, CFI flash, floppy,
+    NVDIMM, the framebuffer, a host file, Apple's chip, sun4m's unbound eeprom, the
+    ROM's CBFS — with what each survives, who observes it from outside, and whether
+    the OS sees the same bytes; tiered **by use** (config variables, the boot counter,
+    a mailbox to the OS, an authored file). pmem is the only store serving three of
+    the four uses, and it lives on one door.
 - **The testing story is unusually clean:** the drivers are upstream's; **the only
   new code is the shim.** So the shim's oracle is `grub-fstest` reading the same
   image through GRUB's *own* shim, byte for byte; the driver's oracle is the kernel
@@ -599,6 +606,85 @@ Scope guard: **read-only**, extents and 64-bit only, no journal replay (a dirty
 image is refused, not replayed), no htree lookups (linear directory scan — slow is
 honest, wrong is not).
 
+### 2.5 The other direction — persistent backing stores, tiered the same way
+
+Seams 1–4 are about **reading**: bytes on a medium into the firmware. The rival lab
+has spent as much effort on the **other direction** — bytes the firmware (or the OS
+it booted) writes to something that outlives the boot — and those seams are scattered
+across patches 04–07 and 10, TODO §16's three writer seams, patch 54's `write-file`,
+and the habitats lab's NVRAM findings. This section is the same table as §2.1e for
+that direction: every store the labs have measured, what each survives, who can see
+it from outside, and a tiering *by use* rather than by format — because a boot
+counter, a config variable and a mailbox to the OS want different stores.
+
+**Every store measured so far**, with the track that proved it:
+
+| store | door(s) | how the firmware reaches it | survives a reset | survives QEMU exiting | the OS sees the same bytes | outside observer | capacity | proven by |
+|---|---|---|---|---|---|---|---|---|
+| **static buffer** (P0, patch 04) | x86 | `/nvram` node over a RAM buffer | **no** | no | no | none — *this is the control row* | — | `nvram` (the P0 checkpoint; without the patch the tree stops at `console`) |
+| **raw IDE sectors** (P1, patch 05) | x86, amd64 | `/nvram` package over reserved sectors of the boot disk | **yes** | **yes** — the host image changed | as raw sectors, yes; *shown* to be read by Linux: **no** (the track says so by name) | `od` on the host image; the no-drive control | a few sectors | `persist`, `persist-os` (survived a full Linux boot that enumerated the disk holding it) |
+| **CFI flash** (P2, patch 06) | x86 `-M pc` pflash | the driver's command sequence (`0x20`/`0x40`/`0xff`) | **yes** | **yes** | as the pflash image; only through a flash driver | the host image; the erased-part control (`ff ff ff` where no-flash reads `0 0 0`) | the part minus the ROM | `persist-flash`, `persist-os-flash`; **`flash-writer` measured that a bare store is a command, not data** — so structures reach it only *through* the driver, never by `int!+` |
+| **floppy** (patch 07, half) | x86 | the FDC read path | read yes; **write blocked** (known gap, fails honestly) | — | — | — | 1.44 MB | `floppy` — asserts exactly the half that works |
+| **NVDIMM / pmem** (P3, patch 10) | **amd64 only** — above 4 GiB, long mode | a **store-to seam**: `int!+` lands, the `/nvram` partition at its base | **yes** | **yes** — bytes in the host file after exit | **yes, directly** — Linux exposes it as `/dev/pmem0` with no OpenBIOS driver in the path | `od` on the host file; the ordinary-RAM control (two firmware words agree with each other and the file is unchanged — the LIED shape, refused) | the region (MiB–GiB) | `amd64-pmem`, `pmem-writer` |
+| **MMIO framebuffer** (`mmio-writer`) | x86, amd64 | stores land at the VGA aperture | **no** — a device, not a store | no | as pixels | QEMU `screendump` | — | listed so it is not mistaken for one: the third distinct answer TODO §16 predicted |
+| **a host file** (`write-file`, patch 54) | **unix only** | a bound C word | n/a | **yes** | n/a (the host is the OS) | the host reads it; `tpm2_eventlog`, `cbfstool`, `elfls` have all graded one | unbounded | `file-writer`, `event-log`, `cbfs-write`, `elf-methods` |
+| **Apple `nvram@60000`** (g3beige) | ppc habitat, **stock** blob | `setenv` + `" update-nvram" " nvram" open-dev $call-method` (a *method*, not a root word) | **yes** — `reset-all` and it is there | yes | Linux on pmac reads `/dev/nvram` (unmeasured here) | `-prom-env` from outside proves the chip; `printenv` in-session proves **RAM**, not the chip — the habitats' liar | **3072 B** config partition, shared with ~30 variables; `minify-fth.py` exists because of it | `smoke-habitat.sh persist ppc`, D1 + D2 |
+| **sun4m mk48t08 `/obio/eeprom`** | sparc32 habitat, stock blob | **nothing** — `drivers/obio.c` builds the node and never binds the package (`?m` → `NO-METHOD`) | from outside (`-prom-env`): yes; from inside: **RAM only** | — | — | the negative arm: if `persist sparc32` ever passes, upstream fixed it and the docs are wrong | — | `smoke-habitat.sh persist sparc32` (asserted as **UNCOVERED**, not skipped) |
+| **the coreboot ROM's CBFS** (`cbfs-write`) | unix workbench via `write-file`; **not** the live flash | surgery on an image file | n/a | yes (the file) | coreboot reads it at the next boot | `cbfstool` | the free space in the region | `cbfs-write`; `cbfs-live` reads the live window, `flash-writer` says it cannot write it |
+
+**What tiers a store is the use, not the medium.** Four uses, each with a different
+must-have, so the same table sorts four ways:
+
+| use | must have | best today | why the others lose |
+|---|---|---|---|
+| **configuration variables** (`boot-file`, `boot-device`, `nvramrc`, §1b of the handoff notes) | survives reset; the firmware's own `/nvram` package owns it | IDE sectors or CFI flash on x86/amd64; **the chip** on Apple | pmem is amd64-only; sun4m has no in-firmware write; the buffer survives nothing |
+| **the boot counter** (the handoff notes' seam 4) | survives reset **and the OS can clear it** | **pmem** on amd64 (`/dev/pmem0`, one `dd`); IDE sectors elsewhere (the OS writes raw sectors — a driver-free `dd` to a known LBA); Apple's chip via `/dev/nvram` | CFI needs a flash driver in the OS; the buffer is gone at reset; sun4m cannot be written from inside |
+| **a mailbox to the OS** (a DTB, an event log, a boot report — the handoff notes §3) | the OS reads the *same bytes* without a firmware driver; sized in MiB | **pmem** — the only store Linux maps as memory; a reserved e820 range is its RAM-only cousin, lost at reset | sectors need a filesystem or a raw-LBA convention on the OS side; 3 KB of Apple NVRAM holds no DTB |
+| **an authored file** (a CBFS image, an ELF, a TCG log — TODO §20) | a real filesystem, or a host that has one | `write-file` on unix; **nothing in-firmware on the QEMU doors** until seam 1's readers gain a *writer*, which §5 rules out | this is the honest gap: the firmware **reads** files on every door and **writes** them only when hosted |
+
+**The tiering rules, mirroring §2.1e:**
+
+- **Tier 1 — durability, proven from outside.** A store competes only if a *host-side*
+  reader (`od` on the image, `screendump`, `cbfstool`) finds the bytes **after QEMU
+  has exited** or, for the habitats, after `reset-all`. "The firmware reads it back"
+  is the LIED shape (`pmem-writer`'s RAM control: two firmware words agree, the file
+  is unchanged) and is never sufficient. The sun4m `printenv` that reads RAM is the
+  worked example of a store that *looks* durable from inside.
+- **Tier 2 — reach and visibility.** Which doors have it, and whether the OS sees the
+  same bytes with no firmware driver in the way. pmem wins visibility outright and
+  loses reach (amd64 only); IDE sectors win reach and need a convention on the OS
+  side; flash needs a driver on both sides.
+- **Tier 3 — the write model, measured as §2.1e measures reads.** A store-to seam
+  (`int!+` lands: pmem, the framebuffer) versus a driver command (CFI) versus a package
+  method (`update-nvram`), and the cost from outside as QEMU `info blockstats`
+  **write** deltas (`wr_operations`, `wr_bytes`, and `flush_operations` — a store whose
+  writes never flush is not durable until they do, which is a measurement the
+  `persist` tracks make implicitly by power-cycling and could make explicitly).
+- **Capacity last**, because it only matters once the use is known: 3 KB rules Apple's
+  chip out of the mailbox row and nothing else.
+
+**Two things the table makes visible that the prose around the patches did not:**
+
+- **pmem is the only store that serves three of the four uses**, and it exists on one
+  door. That is the strongest single argument in this repo for the amd64 port being
+  the *primary* door rather than the exotic one — the handoff notes' seam 4 and the
+  mailbox both land there first.
+- **The floppy row and the sun4m row are the same shape**: a store whose read half
+  works and whose write half does not, one blocked by a driver gap and one by an
+  unbound package. Both are asserted as *exactly the half that works*; neither is a
+  skip. That is the shape §2.1d's decisive-mount rule generalises — a half-working
+  seam must say which half.
+
+**Build:** `store-tiers.toml`, emitted by a track that re-runs the durability proof
+of every row above **in one sweep** (`persist`, `persist-flash`, `amd64-pmem`,
+`mmio-writer`, `file-writer`, the two habitat `persist` arms), records per store the
+door, the observer, the survives-reset and survives-exit verdicts, the OS-visibility
+verdict, and the `blockstats` write/flush deltas, with the patch pins and the QEMU
+version as provenance; the handoff notes' seam 4 (the boot counter) then selects its
+store **from the table** per door rather than from a sentence. The control is the P0
+row: a store-tiers run in which the static buffer *passes* a durability check is a
+broken instrument.
+
 ## 3. Grading, per this repo's rules
 
 - **The shim is the only new code, so the shim gets the sharpest oracle.** For
@@ -651,6 +737,7 @@ honest, wrong is not).
 | 1b — `libsa` shim (§2.1b) | patch N, `fs/libsafs/`, `CONFIG_FSYS_LIBSA`, `libsa` vendored with provenance | `/packages/libsafs`, same five methods | `grub2fs` re-aimed; **S1 on a modern `mke2fs -t ext2` image first** | the kernel's mount; old package as control (no `grub-fstest` twin — said so) |
 | 1c — the combination (§2.1c) | one catalog line per source | — | — | the §1(1) result and the table row it selected, dated |
 | 1d — the dispatcher (§2.1d) | the probe-order table (**generated from `fs-tiers.toml`**) + the decisive-mount check in each package's `open` | `open` lists `/` or falls through by name | `fs-combo` | one image set through every package that claims it; the fall-through **message** asserted on the modern image; reversed order reported as LIED |
+| 2.5 — the stores (§2.5) | `store-tiers.toml` with patch pins and QEMU version | — | `store-tiers` (one sweep over the existing persistence tracks) | bytes found from **outside** after exit or `reset-all`; OS-visibility per store; `blockstats` write/flush deltas; the P0 buffer passing durability is a broken instrument |
 | 1e — the tiers (§2.1e) | `fixtures/fs-corpus/build-fs-corpus.sh`; `fs-tiers.toml` with provenance hashes; the toml-to-table generator; a `tools/tests/` checker binding them | — | `fs-tiers` | byte-equal to host oracles per format (eligible / partial / disqualified); `info blockstats` deltas per operation; a zero delta is a broken instrument; a one-byte corruption refused, not read wrong |
 | 2 — partition maps (§2.2) | same patch, `partmap/` (or U-Boot's `disk/part_efi.c`) | `/packages/grub2parts` | `gpt-parts` | `sgdisk`-made image; MBR control |
 | 3 — bring your own (§2.3) | a client under the clib lab, `libsa` vendored | `strategy` over `cif-read` | `libsa-ofw`, `libsa-openbios` | host sha256; stock firmware, no build |
