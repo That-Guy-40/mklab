@@ -5920,6 +5920,29 @@ anywhere to link into.
   F2FS stay GRUB 2-only, and no lab here makes one. Track `fs-combo`: one image set
   through every package that claims it, the fall-through message asserted, the
   reversed probe order reported as LIED.
+- **The overlaps are tiered by measurement, not prose (its §2.1e).** FAT, ISO,
+  classic ext2 and UFS each have two or three readers. A track `fs-tiers` derives
+  their probe order: correctness first on a per-edge corpus (FAT12/16/32, VFAT long
+  names, Rock Ridge/Joliet, `;1`, modern-`mke2fs` ext2, a 1,200-entry directory…)
+  byte-equal to *host* oracles — an eligible reader read all of it, a partial one
+  never goes first, a reader that returns wrong bytes is disqualified by name; then
+  cost measured from **outside** the firmware as QEMU `info blockstats` sector-read
+  deltas per `load`/`dir`/`open` (deterministic on every accelerator; wall time is
+  secondary and labelled). Output `fs-tiers.toml` with the corpus hash and the three
+  source pins; the dispatcher's table is generated from it; a `tools/tests/` checker
+  refuses a stale one. Expected surprise, written down first: `libsa`'s `dosfs` is
+  probably 8.3-only, which makes it *partial* on FAT and last, not first.
+- **The same table for the other direction — persistent backing stores (its §2.5).**
+  Every store the labs measured (P0 buffer, IDE sectors, CFI flash, the half-done
+  floppy, amd64's NVDIMM, the framebuffer, `write-file`'s host file, Apple's
+  `nvram@60000`, sun4m's unbound `/obio/eeprom`, the ROM's CBFS) with what it
+  survives, who observes it from outside, and whether the OS sees the same bytes —
+  tiered **by use**: config variables, the boot counter (§22's seam 4 now selects
+  its store per door from this table), a mailbox to the OS, an authored file. pmem
+  serves three of the four uses and exists on one door; the floppy and sun4m rows are
+  the same half-working shape. Build: `store-tiers.toml` from one sweep of the
+  existing persistence tracks, with `blockstats` write/flush deltas; the P0 buffer
+  passing durability is a broken instrument.
 - **Grading:** the shim is the only new code, so `grub-fstest` reading the same
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern
