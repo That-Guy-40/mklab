@@ -5996,3 +5996,55 @@ small, both are named, neither is blocked on a question nobody has answered.*
   `reset-all` within one run was ever measured. §23's table said "yes" for Apple; it now
   says no. A store that survives a *reset* and not an *exit* is fine for `nvramrc` and a
   boot counter within a session and useless for anything the host must find afterwards.
+
+## 25. FCode option ROMs — portability, and the malicious card (2026-09-13)
+
+*Discussion draft, not scheduled.* Written up in
+[`DESIGN-NOTES-fcode-option-roms.md`](DESIGN-NOTES-fcode-option-roms.md); this entry is the
+pointer. What a card's own FCode program (delivered through a PCI expansion ROM) was *for* —
+self-description, boot methods, device init before the OS — and what the rival lab can do with
+it now that Act III runs one.
+
+- **One ROM, two implementations (its §3) — the portability proof.** One `.fc`, tokenised
+  **once** by the shared `toke`, wrapped once, booted unmodified under **OFW-x86,
+  OpenBIOS-x86, OpenBIOS-ppc** (and, if the SBus track lands, sun4m). Oracles: `detok` agrees
+  on the one blob, `romheaders` validates the wrapper, `fcode-card` is a node with the same
+  `fcode-marker`/`cfg-id` in each tree. Expected finding, written first: a **token-coverage
+  table** (`fcode-tokens.toml`) — the firmwares differ in which FCode numbers they implement,
+  and a common-subset gap is the finding, named per firmware, not a failure. No new firmware.
+- **The malicious card (its §4) — a Thunderstrike-class option-ROM compromise, proven in the
+  emulator, then prevented.** DEFENSIVE, emulated, the lab's own authored FCode against its own
+  OpenBIOS; the deliverable is the prevention. Four attack rows on the chaos ladder —
+  (A) dictionary overrun [already defended, patch 66, the regression anchor], (B) clobber a
+  firmware function pointer, (C) persist across boot from a surviving store [the §2.5 store
+  table's IDE/pmem rows, *not* the memory-backed NVRAM chips], (D) spread to a second device —
+  each run unprevented to its LIED/STRANDED rung, then ABSORBED by a prevention: (1) refuse
+  stores into firmware `[_start,_end)` [patch 66's class], (2) measure+gate `byte-load` of an
+  option ROM against a provenance list [the ELF-gate Spike-5 pattern] with the refusal authored
+  into the TCG log, (3) a no-option-ROM-execution build switch, (4) measured boot noticing the
+  persistence via the event-log bench. The no-fault control is the known-good Act III card,
+  which must stay green through every prevention.
+- **The card's word reaches Linux (its §5) — a custom device tree, authored in bytecode.** Not
+  just the Act III rename: author `compatible`/`model`/`reg` and a vendor property (the ROM's
+  own `sha256`) in the card's FCode, flatten with `dsl/fdt.fth`, hand over via `SETUP_DTB`, and
+  read them from `/proc/device-tree`. Three steps — the `edu` test device first (grade:
+  `/proc/device-tree` + `/sys/firmware/fdt` byte-match), then a `compatible` a lab kernel module
+  **binds** to (`dmesg`; card removed → silent), then fleshing QEMU's sparse VGA (OF display
+  binding: `width`/`height`/`depth`/`address`) and e1000 (`mac-address`) nodes. Hazards named:
+  x86 Linux may ignore an FDT node it also enumerated from config space (author non-PCI nodes),
+  and `CONFIG_OF` gates it (shared with the handoff note). Track `fdt-authored`.
+- **The toolkit delivered as a driver (its §6) — a third door beside CD and NVRAM.** A card's
+  ROM carries the readers; `byte-load`/`evaluate` at probe installs them before any prompt, off
+  the bus — earliest and fewest-dependency door, and **sun4m's SBus slot is its native home**
+  (the habitats lab's next track). Cost named first: the toolkit is 38–68 KiB and an option ROM
+  is size-limited, so carry a subset / an `evaluate`d blob / a drop-in manifest — measure which
+  fits. Track `fcode-toolkit`: booted with the card and no CD, `/elf64-ehdr` resolves; removed →
+  `undefined`.
+- **Emitting FCode in-firmware (its §7) — close the toke/detok loop, no host.** No FCode
+  assembler exists anywhere; a small Forth emitter (`dsl/fcode-emit.fth`) over the cursor emits
+  the handful of tokens a self-describing card uses, `byte-load`s them, and host `detok` is the
+  oracle (same Forth as `toke`'s output; the emitted tokens define the same node). Most
+  OF-native, lowest priority — the one format the toolkit reads but cannot yet write. Track
+  `fcode-emit`, unix workbench first.
+- **Also named:** the shared-memory bootable card (a device the firmware has no driver for,
+  made bootable by FCode — "what FCode was for", no patch).
