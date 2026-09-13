@@ -5947,3 +5947,52 @@ anywhere to link into.
   image byte-for-byte is the shim's oracle, the kernel's mount the driver's, and the
   old package stays as the negative control that must fail *by name* on the modern
   image the new one reads.
+
+## 24. Two half-working stores — finish the write half, or record why not (2026-09-13)
+
+*From [§23's store table](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md#25-the-other-direction--persistent-backing-stores-tiered-the-same-way):
+two rows read and do not write, each asserted as exactly the half that works. Both are
+small, both are named, neither is blocked on a question nobody has answered.*
+
+- [ ] **24.1 — the x86 floppy write** ([patch 07](examples/openbios-the-rival-that-shipped/patches/07-x86-floppy-backing.patch),
+      track `floppy`). **State:** the read path works (and fixed an upstream bug — `read_ok()`
+      compared ST0's head to the *requested* head, wrong for multi-track reads). The write
+      transfers all 512 bytes, then QEMU's S82078B sits at MSR `0x30` (BUSY|NON_DMA) through
+      200,000 polls and never enters the result phase; it fails by name (`WRITE FAILED`), and
+      the track asserts the gap is *still this gap*. **Undiagnosed.** Do, in order:
+      1. Read `hw/block/fdc.c`'s non-DMA write path in the pinned QEMU and compare the
+         command bytes the driver sends for READ vs WRITE — **EOT and MT** first: a write
+         whose EOT names a later sector leaves the controller waiting for more data, which
+         is exactly `BUSY|NON_DMA` with RQM clear.
+      2. Try the write with **EOT = the sector being written** (single-sector), then with
+         MT clear. Each attempt is one boot of the `floppy` track's fixture.
+      3. If polled non-DMA is the quirk, try the **DMA** path (8237 channel 2) — bigger,
+         but it is the path every real BIOS uses and QEMU's best-exercised one.
+      4. If it is a QEMU-side limitation, record it as such in the driver comment and keep
+         the track's assertion: the store stays **read-only on floppy, by name**.
+      **Done means:** `boot-file` survives a power cycle on `floppy0`, the host image
+      changed, and the no-drive control did not see it — the `persist` shape, third backing.
+- [ ] **24.2 — sun4m NVRAM from inside** ([habitats DELIVERY.md D2](examples/open-firmware-native-habitats/DELIVERY.md#d2--nvram-written-from-inside-ppc-only),
+      track `smoke-habitat.sh persist sparc32`). **State:** `drivers/obio.c`'s
+      `ob_nvram_init()` builds `/obio/eeprom` (reg, address, model `mk48t08`) and
+      `finish-device`s it **without binding the nvram package methods** — `?m` says
+      `NO-METHOD` for `read` and `update-nvram`, and there is no `nvram` alias — so `setenv`
+      lives in RAM and is gone at `reset-all`. The chip is emulated, `arch_nvram_get/put`
+      exist for sparc32, the Forth side exists: **only the binding is absent.** Do:
+      1. A patch in the habitats lab (`patches/`, applied by its `build-firmware.sh`, the
+         lab's one build path) that calls the same `BIND_NODE_METHODS(get_cur_dev(), nvram)`
+         `nvram_init()` does on the Apple ports, from `ob_nvram_init()`, and creates the
+         `nvram` alias.
+      2. **The track's negative arm flips by design** — it says so in its own failure
+         message. Flip it to the D2 shape (`setenv` → `update-nvram` → `reset-all` → present)
+         and update DELIVERY.md's table (D2: ✅ on both), since the doc is the record.
+      3. Keep the stock-blob run as the control: the *unpatched* firmware must still lose
+         the value, or the patch is not what fixed it.
+      **Done means:** `persist sparc32` PASSes on the patched firmware and FAILs by name
+      on the stock blob; `printenv` after `reset-all` shows the value on sparc32 as it
+      does on ppc.
+- **Both, one correction already made:** neither habitat's chip survives **QEMU exiting** —
+  `macio-nvram` and `m48t59` are memory-backed models with no file behind them, and only
+  `reset-all` within one run was ever measured. §23's table said "yes" for Apple; it now
+  says no. A store that survives a *reset* and not an *exit* is fine for `nvramrc` and a
+  boot counter within a session and useless for anything the host must find afterwards.
