@@ -6024,7 +6024,27 @@ it now that Act III runs one.
   into the TCG log, (3) a no-option-ROM-execution build switch, (4) measured boot noticing the
   persistence via the event-log bench. The no-fault control is the known-good Act III card,
   which must stay green through every prevention.
+- **The card's word reaches Linux (its §5) — a custom device tree, authored in bytecode.** Not
+  just the Act III rename: author `compatible`/`model`/`reg` and a vendor property (the ROM's
+  own `sha256`) in the card's FCode, flatten with `dsl/fdt.fth`, hand over via `SETUP_DTB`, and
+  read them from `/proc/device-tree`. Three steps — the `edu` test device first (grade:
+  `/proc/device-tree` + `/sys/firmware/fdt` byte-match), then a `compatible` a lab kernel module
+  **binds** to (`dmesg`; card removed → silent), then fleshing QEMU's sparse VGA (OF display
+  binding: `width`/`height`/`depth`/`address`) and e1000 (`mac-address`) nodes. Hazards named:
+  x86 Linux may ignore an FDT node it also enumerated from config space (author non-PCI nodes),
+  and `CONFIG_OF` gates it (shared with the handoff note). Track `fdt-authored`.
+- **The toolkit delivered as a driver (its §6) — a third door beside CD and NVRAM.** A card's
+  ROM carries the readers; `byte-load`/`evaluate` at probe installs them before any prompt, off
+  the bus — earliest and fewest-dependency door, and **sun4m's SBus slot is its native home**
+  (the habitats lab's next track). Cost named first: the toolkit is 38–68 KiB and an option ROM
+  is size-limited, so carry a subset / an `evaluate`d blob / a drop-in manifest — measure which
+  fits. Track `fcode-toolkit`: booted with the card and no CD, `/elf64-ehdr` resolves; removed →
+  `undefined`.
+- **Emitting FCode in-firmware (its §7) — close the toke/detok loop, no host.** No FCode
+  assembler exists anywhere; a small Forth emitter (`dsl/fcode-emit.fth`) over the cursor emits
+  the handful of tokens a self-describing card uses, `byte-load`s them, and host `detok` is the
+  oracle (same Forth as `toke`'s output; the emitted tokens define the same node). Most
+  OF-native, lowest priority — the one format the toolkit reads but cannot yet write. Track
+  `fcode-emit`, unix workbench first.
 - **Also named:** the shared-memory bootable card (a device the firmware has no driver for,
-  made bootable by FCode — "what FCode was for", no patch), the toolkit-as-a-driver delivery
-  door, the card's word reaching Linux via `SETUP_DTB`, and an in-firmware FCode emitter
-  (`detok` as its oracle).
+  made bootable by FCode — "what FCode was for", no patch).
