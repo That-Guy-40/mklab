@@ -6145,3 +6145,43 @@ down (roll back a bad *firmware*, not just a bad *kernel*). **Adjacency named, n
 Thunderstrike rows) is its own future security lab beside
 [`SECURITY_RANGE_LAB_PLAN.md`](SECURITY_RANGE_LAB_PLAN.md) — *verified boot is integrity at load,
 SMM is isolation at runtime*, and the two must not be blurred. §2b LOCKED.
+
+## 30. The UKI Workbench — the Unified Kernel Image as the subject (2026-09-14)
+
+*Discussion draft, not scheduled — a proposed **new lab** (`uki-workbench/`), written up in
+[`UKI_WORKBENCH_LAB_PLAN.md`](UKI_WORKBENCH_LAB_PLAN.md); this is the pointer.*
+
+The linuxboot lab **builds** UKIs with `ukify` and **boots** them under OVMF but never **takes one
+apart**. This lab makes the UKI the subject and gives the toolkit its **PE reader** (`dsl/pe.fth`).
+A UKI is systemd's EFI stub (a PE/COFF `.efi`) with the kernel/initramfs/cmdline/os-release glued
+on as named PE sections — one signable, measurable file that fuses every note's theme. Spikes:
+0 the PE reader's depth (section-table → data-directories → the fields the signature excludes);
+1 dissect the section table vs. `objdump`; 2 extract each section and grade it by its own nature
+(`.linux` a kernel, `.initrd` a cpio, `.cmdline` the string); **3 the richest — `.pcrsig` vs. the
+real boot**: a UKI carries its **own signed, pre-computed** TPM PCR values, so read them, boot
+under OVMF+swtpm, and prove the prediction equals the measurement (a changed `.cmdline` predicts
+*and* produces a different PCR — the attested-boot capstone's measurement, carried inside the
+file); 4 the Authenticode signature (extract in firmware, host-verify with `sbverify` — the
+ELF-gate anchor split, no PKCS#7 in Forth); 5 `uki-inspect`/`uki-edit` as the tool. Ties to the
+attested-boot lab (`.pcrsig`), the fs note (ESP=FAT), and the verified-boot lab (signatures). Its
+`dsl/pe.fth` is exported to the UEFI workbench (§31). §2b LOCKED.
+
+## 31. The UEFI Workbench — the platform where the family converges (2026-09-14)
+
+*Discussion draft, not scheduled — a proposed **new lab** (`uefi-workbench/`), written up in
+[`UEFI_WORKBENCH_LAB_PLAN.md`](UEFI_WORKBENCH_LAB_PLAN.md); this is the pointer.*
+
+Where the coreboot workbench (§28) makes coreboot the subject, this makes **UEFI** the subject —
+the OVMF/edk2 platform the repo runs but never dissects. The lesson is the **convergence**: UEFI is
+not one artifact but a set of interfaces, and each is a note's theme — PE/COFF is the UKI lab's
+format (§30), the ESP is the fs note's FAT, EFI variables are the store note's backing store,
+secure boot is the verified-boot note's trust theme, the config tables are the FCode note's "reach
+Linux through a firmware-authored tree." One spike per interface, each graded against its host tool
+(`efivar`/`sbsign`/`efibootmgr`/`dmidecode`/`dtc`/`objdump`), each stating its QEMU-honesty tier:
+0 tier the facets (real on OVMF / logic-only / not-here) and the anchors (KEY-ANCHOR: dev,
+VAR-PROTECT: UNKNOWN); 1 the ESP read by the fs reader; 2 EFI variables read inside (efivarfs) and
+outside (the OVMF VARS pflash) — the store note's survives-reset test for EFI vars; 3 any `.efi`
+via `dsl/pe.fth`; 4 secure boot — enrol dev PK/KEK/db, sign an app, boot signed vs. unsigned vs.
+dbx-revoked (the verified-boot theme in UEFI's own mechanism); 5 the handoff tables (memory map,
+ACPI, SMBIOS, and the **DT config table** — the FCode note's UEFI seat); 6 `uefi-inspect` shows all
+five facets in one oracle-graded view. Consumes `dsl/pe.fth` from §30. §2b LOCKED.
