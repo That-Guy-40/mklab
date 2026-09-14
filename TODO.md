@@ -6101,3 +6101,47 @@ whether it is a track, a lab, or undecided.*
   and the forensics-firmware image (the toolkit baked into an FCode ROM/NVRAM so a bare boot
   comes up with the readers present — a small deliverable, licensing call, gated on
   toolkit-as-a-driver).
+
+## 28. The coreboot ROM Workbench — coreboot as the subject (2026-09-14)
+
+*Discussion draft, not scheduled — a proposed **new lab** (`coreboot-rom-workbench/`), written up
+in [`COREBOOT_ROM_WORKBENCH_LAB_PLAN.md`](COREBOOT_ROM_WORKBENCH_LAB_PLAN.md); this is the pointer.*
+
+The **construction** half of a two-lab coreboot split (the **trust** half is §29). The repo builds
+coreboot ROMs in four places but always as a **substrate** carrying a payload; this lab makes
+**coreboot itself the subject** — build a ROM, dissect its FMAP/CBFS/descriptor with the toolkit
+against `cbfstool`/`ifdtool`, do **CBFS surgery on a live bootable ROM** (add a file the payload
+reads, replace the payload, resize a region, boot each), run the **payload matrix** (one q35
+board, the same target through every payload coreboot ships — SeaBIOS/edk2/GRUB2/FILO/LinuxBoot/
+OpenBIOS/bare-Linux), and read **coreboot's own handoff record** (the coreboot table / CBMEM /
+timestamps) from inside the firmware. Deliverable tool: `rom-inspect`/`rom-edit` — the "firmware
+image assembly" backend the poke-elf reviews said the toolkit needed, coreboot supplying the
+format. The grade is the **boot outcome**, `cbfstool` the second witness. Spike 0 decides the edit
+surface (host-side cbfstool vs. firmware-side live self-edit — the `flash-writer` result says a
+bare live store is a command, so measure its reach first). Its-own-lab rationale §2b LOCKED. It is
+the shared backend the attested-boot capstone (CBFS-tamper measurement) and §29 (region layout)
+both want.
+
+## 29. coreboot Verified Boot — the trust half (vboot, A/B, rollback) (2026-09-14)
+
+*Discussion draft, not scheduled — a proposed **new lab** (`coreboot-verified-boot/`), written up
+in [`COREBOOT_VERIFIED_BOOT_LAB_PLAN.md`](COREBOOT_VERIFIED_BOOT_LAB_PLAN.md); this is the pointer.*
+
+The **trust** half (§28 is construction). Coreboot's real answer to the question the
+[attested-boot capstone](ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md) leaves open — *can I trust the
+firmware I ran?* — is **vboot**: a read-only region verifies a cryptographic **signature** on the
+read-write region before running it, and boots **recovery** on failure. This lab builds that with
+a real dev key, **A/B firmware slots**, and **rollback protection**, drawing the family's line
+*no record → measured → verified*. Honesty caveat on every run, mirroring the capstone's QUOTE:
+UNKNOWN: real vboot's teeth are **hardware write-protect** and a **hardware rollback counter**,
+neither of which QEMU provides, so the lab proves the **verification/recovery logic** and prints
+**HW-ANCHOR: UNKNOWN** with the reason — measured→verified is real, verified→*unforgeable* still
+needs the hardware, and the lab says exactly where the line is. Spikes: 0 does vboot build+boot on
+this q35 target and what anchors trust (decision; TPM-anchored RO the honest option); 1 a tampered
+RW caught → recovery; 2 A/B slots with fallback; 3 rollback refused by version; 4 the verified
+decision **measured into** the attested-boot log. Composes with the A/B **updater** idea one layer
+down (roll back a bad *firmware*, not just a bad *kernel*). **Adjacency named, not built:** SMM
+(x86 ring -2, runtime isolation, the firmware-rootkit surface, the runtime sibling of the FCode
+Thunderstrike rows) is its own future security lab beside
+[`SECURITY_RANGE_LAB_PLAN.md`](SECURITY_RANGE_LAB_PLAN.md) — *verified boot is integrity at load,
+SMM is isolation at runtime*, and the two must not be blurred. §2b LOCKED.
