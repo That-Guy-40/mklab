@@ -6048,3 +6048,56 @@ it now that Act III runs one.
   `fcode-emit`, unix workbench first.
 - **Also named:** the shared-memory bootable card (a device the firmware has no driver for,
   made bootable by FCode — "what FCode was for", no patch).
+
+## 26. The attested boot — a capstone lab (`openbios-measures-its-own-boot`) (2026-09-14)
+
+*Discussion draft, not scheduled — a proposed **separate lab**, deliberately downstream of the
+toolkit so it does not block it. Written up in
+[`ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md`](ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md); this is the pointer.*
+
+The capstone that gives every design note a shared destination: **the firmware measures
+everything it touched — payload, kernel, initrd, command line, the DTB it authored, the option
+ROMs that ran — authors one TCG event log, and hands the OS both the boot and the log**, so
+userspace replays the firmware's own account against the kernel's record. The honest word is
+**measured, not attested**: the hardware quote stays **UNKNOWN, by name, every run** — the lab's
+whole point is holding exactly that line, because it is where measured boot stops and
+attestation begins. Composition plus **one new gate**, not new primitives:
+
+- **Both gates feed the chain.** The **ELF gate** exists (patch 68, `elf-ladder`); the
+  **bzImage gate** is the handoff notes' §2.6 `?bootparams`, built here as the lab's first code
+  (Spike 1) since the capstone must measure a bzImage's gate verdict. The user wants both, and
+  both land here.
+- **Spikes:** 0 the anchor (a decision — provenance file / golden log / both); 1 the bzImage
+  gate green; 2 measure the chain into one log; 3 hand the log across (`setup_data`/e820
+  mailbox) beside `SETUP_DTB`; 4 replay three ways (firmware, kernel sysfs, host) and require
+  agreement, QUOTE: UNKNOWN printed; 5 the same boot under OpenBIOS/coreboot/UEFI, one report of
+  what each firmware's handoff differs by; 6 the malicious payload **noticed** (the FCode note's
+  chaos rows from the measurer's seat).
+- **Its own lab because** it is a consumer not a primitive, spans three firmwares, carries the
+  security posture the toolkit lab does not, and has a stated finish line ("the chain agrees
+  three ways and the quote is UNKNOWN by name"). §2b LOCKED.
+
+## 27. Ideas downstream of the toolkit — a backlog (2026-09-14)
+
+*Discussion draft. The four ideas beside the capstone, written up in
+[`DESIGN-NOTES-ideas-downstream-of-the-toolkit.md`](DESIGN-NOTES-ideas-downstream-of-the-toolkit.md);
+this is the pointer. Each names what it composes, the seam that makes it a measurement, and
+whether it is a track, a lab, or undecided.*
+
+- **The A/B updater** (its §2) — the most product-shaped: the boot counter (store table §2.5) +
+  the fs readers + the ELF **and** bzImage gates = a rollback loop, *newest build unless it did
+  not come up*, in OpenBIOS Forth. Three power cycles as the grade (good clears the counter; a
+  never-reaches-init kernel and a `panic=5` kernel both roll back; empty alternate slot refused
+  by name). **Its own small lab, the next plan to write.**
+- **The reader fuzzer** (its §3) — the lab the ELF-gate plan explicitly deferred (*"that is a
+  different lab"*). Mutate the ELF/CBFS/FDT/cpio/fs fixtures, grade each reader on the chaos
+  ladder; the finding that matters is the **LIED** row (accepted and misread), re-checked
+  against the host oracle. **Its own lab**, highest security value.
+- **UEFI as the third firmware** (its §1) — the same authored device tree reaching Linux through
+  OpenBIOS `SETUP_DTB`, OFW natively, and **edk2's DTB config table** — portability at the
+  firmware-interface level. **A track under the capstone**, pending the DTB-table measurement.
+- **Two hardening ideas** (its §4): the one-cursor consistency meta-test (the shared cursor now
+  backs five readers; nothing asserts it behaves identically across them — a cheap **track**),
+  and the forensics-firmware image (the toolkit baked into an FCode ROM/NVRAM so a bare boot
+  comes up with the readers present — a small deliverable, licensing call, gated on
+  toolkit-as-a-driver).
