@@ -59,7 +59,9 @@ oracle).
   under OVMF; `.uname`/`.sbat`/`.pcrsig` already named in `WALKTHROUGH.md`, signing skipped).
 - the toolkit reads typed binaries against a foreign oracle — **✅** (ELF/CBFS/FDT); **PE is new**.
 - oracles present or one `apt` away: `objdump -h`/`llvm-readobj` (sections), `sbverify`/`pesign`
-  (signature), `ukify --measure` (predicted PCRs), `systemd-dissect`/`objcopy` (extract).
+  (signature), `ukify --measure` (predicted PCRs), `systemd-dissect`/`objcopy` (extract), and
+  GNU poke's `pe.pk` pickle as a **structure oracle** (§4a) — a second, independent PE model to
+  grade the reader's field-by-field understanding against, not just its section list.
 - **to verify first:** whether the lab's `ukify` emits `.pcrsig` with a dev key here (Spike 3's
   subject); and whether OVMF measures the UKI into a PCR without a full secure-boot enrolment (the
   edk2-swtpm fixture says OVMF measures — confirm the UKI leg does).
@@ -70,6 +72,48 @@ firmware reading a UKI's structure**, and — the uniquely-afforded thing — ne
 between the UKI's **self-predicted** measurement (`.pcrsig`, computed at build) and the **actual**
 measurement an OVMF boot produces. Reading the prediction, booting, and checking it came true is a
 round trip across build-time and boot-time that no single hosted tool spans.
+
+### 4a. The PE oracle: GNU poke's `pe.pk`
+GNU poke ships a complete PE/COFF model, [`pickles/pe.pk`](https://git.savannah.gnu.org/cgit/poke.git/tree/pickles/pe.pk)
+(José E. Marchesi, GPLv3-or-later), and it earns a place here for the same reason `objdump` does:
+a **foreign, independently-authored oracle**. It is used **on the host only** — it is *not* vendored
+into the firmware. That is a license fact, not a preference: OpenBIOS is GPLv2-**only** (no "or
+later"), the exact incompatibility the [modern-filesystems note](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md)
+worked through for GRUB 2, so a GPLv3 body cannot be lifted into the frozen image. On the host,
+beside `objdump`, it is unencumbered — a `poke -L check.pk uki.efi` that dumps the same structure
+the Forth reader claims to see.
+
+Reading it against our sketch **confirms two things and sharpens five**, and every one of the five
+is a reader requirement or a control:
+
+- **Confirmed.** The PE entry is the 4-byte offset at `0x3C`, then the literal `['P','E','\0','\0']`
+  at that offset (Spike 1's control is right); the Certificate Table is data-directory index **4**
+  (Spike 0's depth-B/C target is the right entry).
+- **Locate the section table by `SizeOfOptionalHeader`, never by walking to the end of the parsed
+  optional header.** `pe.pk` places sections at `opt_hdr_offset + hdr.opthdr` and warns in-comment
+  that the parsed optional header may not match that size. A reader that computes the section offset
+  by struct-walking will drift on a real image — this is "assert the outcome, not the mechanism" in
+  PE form, and it becomes a **named control**: a UKI whose `SizeOfOptionalHeader` exceeds its parsed
+  optional header still yields the right section table.
+- **PE32 vs PE32+ is a union discriminated on the optional-header magic** (`0x10b` vs `0x20b`).
+  UKIs and x86-64 `.efi` apps are PE32+; `image_base` and the stack/heap sizes change width, so
+  every later field offset depends on the magic. Spike 0's depth ladder names the magic as the
+  discriminator, decided before any field past it is trusted.
+- **The data-directory count is variable** (`num_of_rva_and_sizes`) — do not hardcode 16. A reader
+  assuming a fixed count reads garbage on a lean image; the count is read, then indexed.
+- **Attribute certificates are 8-byte aligned** (`pe.pk` pads each entry to `alignto(length, 8)`).
+  Spike 4's cert walk needs that or it desynchronizes across a multi-certificate file.
+- **The Authenticode signed region excludes exactly the optional-header `checksum` field and the
+  Certificate Table data-directory entry** — `pe.pk` pins both locations, which is precisely what
+  Spike 0 option **C** needs for the signed-region hash to agree with `sbverify`.
+
+**The largest win is that `pe.pk` is a validity catalog.** Its constraint expressions enumerate what
+a *valid* PE satisfies — `file_alignment` a power of two in `[512B, 64KB]` and `<= section_alignment`,
+`size_of_image % section_alignment == 0`, `size_of_headers % file_alignment == 0`, the reserved
+directories zeroed. Those map straight onto this lab's read/**validate**/edit theme: each is a
+value the editor (Spike 5) must preserve or refuse, and each is a negative control that must bite
+(feed the reader a PE that violates it and watch the refusal name the invariant). We lift the list;
+we do not lift the code.
 
 ## 5. The spikes
 
@@ -84,12 +128,17 @@ tables (real PE, needed for Spike 4's signature and for the UEFI workbench's arb
 to hash the *signed region* correctly. **Criterion:** the reader must reach every UKI section
 (so **A** is the floor) and, for the signature spike, the signed-region hash must match
 `sbverify`'s idea of it (so **C** where signatures are graded). Build **A** first; grow to **C**
-only along the signature path. Measure the PE against `objdump -h` before trusting a byte.
+only along the signature path. Measure the PE against `objdump -h` and poke's `pe.pk` (§4a) before
+trusting a byte — and **read the optional-header magic first** (PE32 vs PE32+), since every field
+offset past it depends on the answer, and a UKI is PE32+.
 
 ### Spike 1 — dissect: the section table, against the oracle
 `dsl/pe.fth` lists every section (name/vaddr/size/offset) matching `objdump -h`/`llvm-readobj`;
-the UKI-specific sections are found by name. **Control:** a flipped `PE\0\0` signature or a section
-count past the header is refused by name; the counts equal the oracle exactly.
+the UKI-specific sections are found by name. The section table is located by the file header's
+`SizeOfOptionalHeader` (per §4a), not by walking to the end of the parsed optional header.
+**Controls:** a flipped `PE\0\0` signature or a section count past the header is refused by name;
+a UKI whose `SizeOfOptionalHeader` exceeds its parsed optional header still yields the right
+section table (the drift `pe.pk` warns about); the counts equal the oracle exactly.
 
 ### Spike 2 — extract, and grade each section by what it is
 Pull each section and grade it against its *own* nature: `.linux` is an EFISTUB kernel (its PE/ELF
@@ -109,12 +158,14 @@ tracks the artifact. This is the attested-boot capstone's measurement, **pre-com
 inside the file**, and it is the single richest thing in the lab.
 
 ### Spike 4 — the signature: extract in firmware, verify on host
-Reach the Certificate Table (Spike 0(C)); the firmware hashes the **signed region** (the PE minus
-the excluded fields) and reads the PKCS#7 blob; the **host** (`sbverify`/`pesign`) verifies the
-blob against a dev cert — the ELF-gate's *"measure in the firmware, anchor on the host"* split,
-because a full X.509 chain in Forth is out of scope and saying so is the honesty. **Control:** an
-unsigned UKI has no Certificate Table (refused by name); a re-signed UKI verifies; a tampered body
-fails the host verify.
+Reach the Certificate Table (Spike 0(C)); the firmware hashes the **signed region** — the PE minus
+the two fields `pe.pk` pins (§4a): the optional-header `checksum` and the Certificate Table
+data-directory entry — and reads the PKCS#7 blob (attribute-certificate entries walked with the
+8-byte alignment `pe.pk` encodes); the **host** (`sbverify`/`pesign`) verifies the blob against a
+dev cert — the ELF-gate's *"measure in the firmware, anchor on the host"* split, because a full
+X.509 chain in Forth is out of scope and saying so is the honesty. **Controls:** the signed-region
+hash equals `sbverify`'s idea of it (the exclusions are exactly right); an unsigned UKI has no
+Certificate Table (refused by name); a re-signed UKI verifies; a tampered body fails the host verify.
 
 ### Spike 5 — edit-and-remeasure, as the deliverable tool
 `uki-inspect` prints the section map, the decoded `.cmdline`/`.osrel`/`.uname`, the `.pcrsig`
