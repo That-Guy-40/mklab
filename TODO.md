@@ -6210,3 +6210,32 @@ prove the seam (poke's bytes == `xxd`); 2 dissect with pickles == the toolkit's 
 (click a field, jump to its byte span); 4 edit a live block store and prove the firmware sees the
 new value, refusing a bad edit **before** the write; 5 live RAM across the handoff — or `SNAPSHOT`,
 named. Host-only, own QEMU session/images/sockets, defensive/emulated. §2b LOCKED.
+
+## 33. Firmware family — a foundation-first roadmap (federation, not fusion) (2026-09-15)
+
+*Meta-roadmap across the unbuilt firmware plans, written up in
+[`FIRMWARE_FAMILY_ROADMAP.md`](FIRMWARE_FAMILY_ROADMAP.md); this is the pointer. Build order and an
+architecture decision — schedules nothing.*
+
+The family grew a **roof before its walls**: six capstones (§26 attested boot, §28/§29 coreboot,
+§30 UKI, §31 UEFI, §32 pacme) plus the edit/fs/fcode notes all consume a shared `dsl/` structure
+toolkit (`struct`/`elf`/`pe`/`fdt`/`cbfs`/`sha256`/`eventlog`) that **is itself only a plan** (§25-era
+[preboot structure toolkit](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)); ten docs assume slightly
+different shapes of the same readers → **plan drift**, the "record that outlives its subject" one
+level up. The roadmap fixes the order and the one load-bearing decision. **Architecture (LOCKED):
+a federation of *separable* readers/writers behind a thin shared **contract**, NOT one fused DSL** —
+so modules can be pruned to slim a real-hardware image, and the family can lift into its own repo
+apart from MAAS. Shared substrate is small (`struct.fth` TLV/cursor + `alignto`, and `sha256.fth`);
+each format is one removable file that *opts in* to a uniform vocabulary (`NAME-open`/`-fields`/
+`-validate`/`-manifest`, optional `-emit`/`-write`/`-live`); a loader composes what's present and
+**names what's absent**. Order: **Tier 0** foundation (the `struct` TLV rung green on 4 arches;
+`sha256.fth` graded vs `sha256sum`; the contract + a conformance checker that proves a slimmed build
+still passes); **Tier 1** readers, each graded against a foreign oracle (`readelf`/`tpm2_eventlog`/
+`cbfstool`/`dtc`/`objdump`+`pe.pk`); **Tier 2** the thin write/edit half (finish the two half-working
+stores §24; edit-and-reverify, refuse before the irreversible step); **Tier 3** the capstones, each
+pinned to `contract vN`. Cross-cutting: a **firmware-family chaos ladder** (fills the gap — truncated
+event log, a PCR extend racing the read, a writer killed pre-commit, a stale pacme `SNAPSHOT` served
+as `LIVE`), and two honesty axes in the manifest (`ARCH: x86-only` for PE/UEFI so the family never
+quietly leaves its four-arch edge; `HOST-ONLY`/`LIVE`/`SNAPSHOT`). A `check-*.sh` proves the slim
+profile and the lift-to-own-repo closure. Next actionable unit: **Tier 0**. Does not fuse the DSLs,
+does not schedule, does not touch the provisioning goals.
