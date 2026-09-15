@@ -6185,3 +6185,28 @@ via `dsl/pe.fth`; 4 secure boot — enrol dev PK/KEK/db, sign an app, boot signe
 dbx-revoked (the verified-boot theme in UEFI's own mechanism); 5 the handoff tables (memory map,
 ACPI, SMBIOS, and the **DT config table** — the FCode note's UEFI seat); 6 `uefi-inspect` shows all
 five facets in one oracle-graded view. Consumes `dsl/pe.fth` from §30. §2b LOCKED.
+
+## 32. pacme in the workbench — poke's acme UI as a live firmware inspector, not a port into it (2026-09-15)
+
+*Discussion draft, not scheduled — a proposed **new lab** (`pacme-inspects-the-firmware/`), written
+up in [`DESIGN-NOTES-pacme-a-live-firmware-inspector.md`](DESIGN-NOTES-pacme-a-live-firmware-inspector.md);
+this is the pointer.*
+
+Could GNU poke's acme-inspired C interface (pacme) run **under OpenBIOS** as a client, like the
+[MicroEMACS port](examples/openbios-clib-hello-to-emacs/README.md)? **No, twice over:** its "core"
+is libpoke — a parser, the Jitter JIT/VM, a bignum lib, a GC, a filesystem-loaded pickle system,
+all assuming POSIX, so the honest MicroEMACS move (reimplement the core) means reimplementing GNU
+poke; and libpoke is **GPLv3+** against OpenBIOS's **GPLv2-only**, the same wall the fs note and the
+`pe.pk` note found — a link the frozen image cannot make. The framing that survives is the user's
+own: **confine pacme to the Unix process that hosts the workbench**, which is what pacme already is
+(a `poked` daemon + small *pokelets* + tmux over a `/tmp/poked.ipc` socket) and the interactive,
+**live** sibling of the `pe.pk` host oracle. The lab's real deliverable is **the bridge**: point one
+of poke's IO spaces (FILE / MEMORY / **NBD** / STREAM / PROC) at the running OpenBIOS session, and
+pacme dissects the firmware's own bytes graded against the Forth toolkit. Spike 0 is that decision,
+with an honest asymmetry — **block** artifacts (disk, OVMF VARS pflash, NVRAM) go **live** over
+QEMU's NBD server (`nbd://`, poke needs `libnbd`); **guest RAM** is **snapshot-only**
+(`dump-guest-memory` → a FILE IOS) until a custom IOD on the gdbstub (named, stretch). Spikes: 1
+prove the seam (poke's bytes == `xxd`); 2 dissect with pickles == the toolkit's read; 3 the acme UI
+(click a field, jump to its byte span); 4 edit a live block store and prove the firmware sees the
+new value, refusing a bad edit **before** the write; 5 live RAM across the handoff — or `SNAPSHOT`,
+named. Host-only, own QEMU session/images/sockets, defensive/emulated. §2b LOCKED.
