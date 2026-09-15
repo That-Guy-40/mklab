@@ -61,7 +61,8 @@ variables).
 - OVMF measures into a TPM — **✅** (edk2-swtpm fixture).
 - oracles present or one `apt` away: `efivar`/`efibootmgr` (variables + boot manager, in the
   guest), `sbsign`/`sbverify`/`cert-to-efi-sig-list`/`sign-efi-sig-list` (secure boot),
-  `dmidecode`/`acpidump` (tables), `dtc` (the DT config table), `mtools`/`mcopy` (the ESP).
+  `dmidecode`/`acpidump` (tables), `dtc` (the DT config table), `mtools`/`mcopy` (the ESP), and
+  GNU poke's `pe.pk` as the PE **structure** oracle (host-only, GPLv3 — the UKI lab's §4a).
 - **to verify first:** whether the repo's OVMF build supports **secure boot** (some OVMF builds are
   plain; the SecureBoot variant is a different `.fd`) — Spike 4 gates on it, and names the fallback
   (read/host-verify only, as the UKI lab does) if the SecureBoot OVMF is not available.
@@ -104,8 +105,13 @@ survives-reset test); `VAR-PROTECT: UNKNOWN` printed (OVMF's NVRAM is an unprote
 
 ### Spike 3 — PE/COFF apps, generalised
 Take the UKI lab's `dsl/pe.fth` and point it at *any* `.efi` — the UKI, the OVMF shell, a signed
-bootloader — reading headers, sections, and the data directories against `objdump`/`llvm-readobj`.
-**Control:** a non-PE file is refused by name; the section map equals the oracle.
+bootloader — reading headers, sections, and the data directories against `objdump`/`llvm-readobj`
+and GNU poke's `pe.pk` structure oracle (the UKI lab's [§4a](UKI_WORKBENCH_LAB_PLAN.md#4a-the-pe-oracle-gnu-pokes-pepk)
+owns the analysis; on the host only, GPLv3, never vendored). Generalising past the UKI is exactly
+where `pe.pk`'s sharpenings bite: a bootloader with a variable data-directory count, a PE32 (not
+PE32+) app, an optional header whose size differs from what the reader parses. **Controls:** a
+non-PE file is refused by name; the section map equals the oracle; a PE32/PE32+ magic mismatch is
+read from the magic, not assumed; the section table is found via `SizeOfOptionalHeader`.
 
 ### Spike 4 — secure boot: the key hierarchy and the decision
 Enrol a **dev** Platform Key, KEK, and db (`cert-to-efi-sig-list` + `sign-efi-sig-list`); sign an
@@ -155,6 +161,6 @@ UEFI-platform member.
 
 **Open questions.** (1) Does the repo's OVMF support secure boot (Spike 4), or is the SecureBoot
 `.fd` a separate fetch? Names the fallback if not. (2) Does this lab or the UKI lab own `dsl/pe.fth`
-— the UKI lab builds it, this consumes it (stated). (3) Is the DT config table (Spike 5) shared
+— the UKI lab builds it and owns the `pe.pk` structure-oracle analysis (§4a), this consumes both (stated). (3) Is the DT config table (Spike 5) shared
 with the FCode note's "UEFI as the third firmware" track, or owned here? Likely owned here, cited
 there.
