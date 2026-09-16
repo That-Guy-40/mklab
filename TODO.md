@@ -5948,6 +5948,15 @@ anywhere to link into.
   old package stays as the negative control that must fail *by name* on the modern
   image the new one reads.
 
+**Re-measured 2026-09-16 — the license grep §1(1) owed is done.** Over `~/openbios-lab/openbios`,
+"any later version" by directory: `packages/` 0/14, `libopenbios/` 0/22, `kernel/` 0/6, `arch/`
+0/139 (only `fs/` 53/99 — the vendored GRUB 0.97 legacy — and `drivers/` 3/51 have any). So the
+dirs the shim sits beside carry no "or later" file; the 2026-09-07 sample was representative, and
+§2.1c's selected "v2-only" row (GRUB 2 lab-only; U-Boot + `libsa` shippable) stands on a count, not
+seven files. `fs/grubfs`, `fs/iso9660` and POC-7 confirmed on disk; the external source trees
+(GRUB 2/U-Boot/`libsa`) are cited, not vendored — correct. Still owed: §1(2)'s ppc-image-vs-ceiling
+size number.
+
 ## 24. Two half-working stores — finish the write half, or record why not (2026-09-13)
 
 *From [§23's store table](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md#25-the-other-direction--persistent-backing-stores-tiered-the-same-way):

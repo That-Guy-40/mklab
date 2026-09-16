@@ -12,6 +12,21 @@ lab's [POC-7](examples/openbios-clib-hello-to-emacs/POC-7-DISK-BOOT.md).*
 
 ---
 
+> **Re-measured 2026-09-16 — the license grep §1(1) owed is now complete, and it confirms the
+> selected row.** §1(1) sampled seven files in 2026-09-07 and said "the full `git grep` over the
+> pinned clone is still owed." Run over `~/openbios-lab/openbios`: of the files carrying an
+> "or later" clause, **`packages/` has 0 of 14, `libopenbios/` has 0 of 22, `kernel/` 0 of 6, and
+> `arch/` 0 of 139** — so the two directories the shim sits beside carry **zero** "or later"
+> files, and the only tree with them is `fs/` (53 of 99, the vendored GRUB legacy) plus three
+> files in `drivers/`. The "v2-only" row of §2.1c (§1(1)'s selected case) is therefore not an
+> unlucky sample but the measured state: GRUB 2 stays lab-only, U-Boot + `libsa` are the
+> shippable sources. One wording correction: `libopenbios/load.c` and `packages/disk-label.c` say
+> *"the terms of the GNU General Public License version 2"* (the words split across two lines),
+> not the *"version 2 of the License"* the sample table quoted — same substance, exact form noted.
+> Also confirmed on disk: `fs/grubfs`, `fs/iso9660`, and [POC-7](examples/openbios-clib-hello-to-emacs/POC-7-DISK-BOOT.md).
+> The external source trees (GRUB 2, U-Boot, FreeBSD `libsa`) are cited, not vendored — correct,
+> per the note's own cite-don't-mirror tier.
+
 ## 0. The question, and the answer in one paragraph each
 
 **The premise, corrected.** Only **OpenBIOS** carries GRUB code. Its `fs/grubfs/`
@@ -154,6 +169,14 @@ collects them. §0a is the digest.
    full `git grep` over the pinned clone is still owed (a count, so the sample cannot
    be an unlucky seven), but it can only move the answer *toward* "mixed", never to
    "v2 or later throughout" — the two explicit files are enough to foreclose that.
+
+   **DONE 2026-09-16 — the count.** Over `~/openbios-lab/openbios`, files carrying "any later
+   version" by directory: `packages/` **0 / 14**, `libopenbios/` **0 / 22**, `kernel/` **0 / 6**,
+   `arch/` **0 / 139**, `drivers/` **3 / 51**, and `fs/` **53 / 99** — the last being the vendored
+   GRUB 0.97 legacy, which is *why* 0.97 has always sat there without a licensing question. So the
+   directories the new shim would sit beside carry **no** "or later" file at all, and the sample
+   was not unlucky: it was representative. The answer is settled at "v2-only for the package
+   interface," and §2.1c's second row stands on a count, not seven files.
 2. **The ppc image against its ceiling.** QEMU loads the ppc firmware into a
    fixed region (1 MiB on the Mac machines; sun4m's is smaller — measure both). The
    drivers are compiled C in the ROM, not dictionary, so the toolkit's dictionary
@@ -721,7 +744,7 @@ broken instrument.
 
 | step | the line that must print | needs |
 |---|---|---|
-| S0 | the three numbers of §1: the header count (**sampled 2026-09-07: v2-only in `packages/` and `libopenbios/`; the full grep still owed**), the ppc image against its ceiling, the package interface as measured | a morning; no code |
+| S0 | the three numbers of §1: the header count (**DONE 2026-09-16: `packages/` 0/14, `libopenbios/` 0/22, `kernel/` 0/6, `arch/` 0/139 "or later" — v2-only settled by count**), the ppc image against its ceiling (still owed), the package interface as measured | a morning; no code |
 | S1 | `dir hd:\` through `grub2fs` lists a **modern `mke2fs`** ext4 image on unix and x86; the same path through `grubfs` says `File not found` in the same boot | the shim + `ext2.c` + `fshelp.c` (§2.1) |
 | S2 | the same, plus FAT with a long name and an ISO with Rock Ridge, on all four doors — or UNCOVERED on ppc *by name* if S0's ceiling said so | tier 1 |
 | S3 | `dir hd:2,\` on a GPT image; MBR unchanged through both packages | §2.2 |
