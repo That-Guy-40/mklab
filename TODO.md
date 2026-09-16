@@ -6222,6 +6222,22 @@ ELF-gate anchor split, no PKCS#7 in Forth); 5 `uki-inspect`/`uki-edit` as the to
 attested-boot lab (`.pcrsig`), the fs note (ESP=FAT), and the verified-boot lab (signatures). Its
 `dsl/pe.fth` is exported to the UEFI workbench (§31). §2b LOCKED.
 
+**Re-measured 2026-09-16 (against `linuxboot-uefi-kexec/build-uki.sh`, the host, and the
+edk2-swtpm fixture).** Three corrections in the plan's §3: **(1) no UKI is on disk** — `~/linuxboot-lab`
+has neither `vmlinuz`/`initramfs.cpio` nor any `.efi` (reclaimed), so Spike 1 starts with the rebuild
+chain; **(2) `.pcrsig`/`.pcrpkey` are not in the UKI the script builds and cannot be** — `build_uki`
+passes no `--pcr-private-key`/`--pcr-public-key`, which is what makes ukify write them; ukify 255 and
+`systemd-measure` are both installed, so Spike 3's subject is one flag pair and a keypair away, and
+`WALKTHROUGH.md:122`'s "add `.pcrsig`" is a doc claim the artifact does not bear; **(3) `cpio.fth`
+does not exist** — Spike 2 names it as if built; a `newc` walker on the struct.fth cursor is a small
+prerequisite, now owned by this lab. Measured ✅: OVMF measures a directly-booted PE app into PCR4
+with **no** secure boot (one `EV_EFI_BOOT_SERVICES_APPLICATION` in the fixture's log — a bare
+kernel, not a UKI, so the UKI leg stays unmeasured until rebuilt); oracles present (`ukify`,
+`systemd-measure`, `systemd-dissect`, `sbverify`, `sbsign`, `objdump`, `mtools`, `swtpm`,
+`tpm2_eventlog`) or one `apt` away (`pesign`, `llvm`, `poke` 4.0 — whether the package ships `pe.pk`
+is UNMEASURED, `efitools`). PE's manifest is `ARCH: x86-only` (an aarch64 UKI under AAVMF is a door
+the host could open — roadmap §8).
+
 ## 31. The UEFI Workbench — the platform where the family converges (2026-09-14)
 
 *Discussion draft, not scheduled — a proposed **new lab** (`uefi-workbench/`), written up in
@@ -6241,6 +6257,23 @@ via `dsl/pe.fth`; 4 secure boot — enrol dev PK/KEK/db, sign an app, boot signe
 dbx-revoked (the verified-boot theme in UEFI's own mechanism); 5 the handoff tables (memory map,
 ACPI, SMBIOS, and the **DT config table** — the FCode note's UEFI seat); 6 `uefi-inspect` shows all
 five facets in one oracle-graded view. Consumes `dsl/pe.fth` from §30. §2b LOCKED.
+
+**Re-measured 2026-09-16 (against the host's firmware packages and the kernel's EFI stub).** The
+plan's one "to verify first" — does the OVMF here support secure boot — is **yes, and better than
+hoped**: `ovmf 2024.02` ships `OVMF_CODE_4M.secboot.fd` (empty store, enrol your own), the
+Microsoft-keyed `.ms.fd` pair, **and a `snakeoil` pair whose enrolled PK/KEK private key is on disk**
+(`/usr/share/ovmf/PkKek-1-snakeoil.key`) — a dev-key-enrolled secure-boot firmware with zero
+enrolment; Spike 4's fallback is retired, `KEY-ANCHOR: dev` is exactly right (the snakeoil key is
+everyone's, so only a lab-generated hierarchy makes "signed wrong → refused" mean anything, and the
+two must not be confused). **One facet loses its x86 subject:** the DT config table — the x86 EFI
+stub (`libstub/x86-stub.c`) has no FDT code; the DT-from-config-table path is `libstub/fdt.c`,
+reached only by the generic stub on ARM/RISC-V/LoongArch — so on x86 Spike 5 prints
+`DT-TABLE: absent (SETUP_DTB is the route)` by name. The facet **is** real on aarch64, and the host
+has **AAVMF** (`qemu-efi-aarch64 2024.02`: `AAVMF_CODE.fd`, `.secboot.fd`, `.ms.fd`, `.snakeoil.fd`)
+plus QEMU `-M virt`/`sbsa-ref` — the family's first non-x86 UEFI door, fully provisioned and
+unopened (roadmap §8). Oracles present (`efibootmgr`, `sbsign`/`sbverify`, `dmidecode`, `acpidump`,
+`mtools`, `objdump`, `dtc`) or one `apt` away (`efivar`, `efitools`, `pesign`, `llvm`, `poke`).
+UNMEASURED and said so: parsing the OVMF `VARS` firmware volume from outside (Spike 2).
 
 ## 32. pacme in the workbench — poke's acme UI as a live firmware inspector, not a port into it (2026-09-15)
 
@@ -6312,7 +6345,13 @@ writer killed pre-commit, a corrupt first record, a stale pacme `SNAPSHOT` serve
 honesty axes in the manifest (`ARCH: x86-only` for PE/UEFI; `HOST-ONLY`/`LIVE`/`SNAPSHOT`). A
 `check-*.sh` proves the slim profile and the lift-to-own-repo closure. Next actionable unit:
 **Tier 0**, as re-cut. Does not fuse the DSLs, does not schedule, does not touch the provisioning
-goals.
+goals. **§8 added 2026-09-16 — where else this runs, measured:** coreboot's seven upstream emulation
+boards (doc.coreboot.org) against the nine in the depth-1 checkout (two, `qemu-armv7`/`qemu-power8`,
+no longer on the upstream page) and the QEMU 8.2 binaries on the host (every target but Spike has
+one); the other firmwares' doors (OpenBIOS x86/amd64/ppc/unix, OFW, OpenBoot sparc/ppc, OVMF with
+its `secboot`/`ms`/`snakeoil` variants, **AAVMF aarch64 — installed, fully provisioned, unopened**).
+Verdict: the four-arch matrix stays OpenBIOS's; the cheapest second architecture is aarch64 via
+AAVMF (`-M virt`), not coreboot; RISC-V and POWER9 are coreboot-first bring-ups (§34's subject).
 
 ## 34. coreboot bring-up — a host-side porting workbench + a payload inspector (2026-09-16)
 
