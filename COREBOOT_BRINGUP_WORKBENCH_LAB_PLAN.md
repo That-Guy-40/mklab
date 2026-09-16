@@ -1,4 +1,17 @@
-# coreboot bring-up — a host-side porting workbench, and a payload inspector (2026-09-16)
+# coreboot bring-up — a host-side porting workbench, and a payload inspector (2026-09-16; feasibility measured same day)
+
+> **Measured 2026-09-16, against the coreboot checkout and the host.** Every §3 row checks out,
+> with two sharpenings. **autoport is present** (`util/autoport/readme.md`), and so are the
+> harvest tools' *sources* — `util/{inteltool,superiotool,ectool}` — but **none is built and none
+> is on the host** (`cbmem` is the one util built here). That is not a gap, it is the evidence for
+> Spike 0's decision: the workbench's input contract is *a directory of logs*, and live
+> tool-driving is the removable edge, so the parser must run with **no tools installed at all** —
+> which is exactly the state of this host. The payload precedent is real
+> ([`open-firmware-forth-to-boot/POC-3`](examples/open-firmware-forth-to-boot/POC-3-COREBOOT-PAYLOAD.md)),
+> `cbmem` is built, and Lab B's target-selection question is answered by the roadmap's
+> [§8](FIRMWARE_FAMILY_ROADMAP.md#8-where-else-this-runs--the-qemu-targets-measured-2026-09-16):
+> every coreboot emulation board has a QEMU 8.2 binary on this host, so B0 is a build-and-boot,
+> not a hunt for a machine. §3 carries the rows.
 
 Two labs that aim the firmware toolkit at **coreboot board bring-up** — the term
 of art for getting coreboot running on a **new mainboard**. Neither expects the
@@ -59,23 +72,38 @@ bring-up are different subjects with different honesty tiers, so they are separa
 labs. They **share** the toolkit's CBFS/FMAP readers and the roadmap's host-process
 stance; neither owns the other. §2b LOCKED.
 
-## 3. Verified feasibility (to check before writing)
+## 3. Verified feasibility (measured 2026-09-16)
 
-- **autoport exists and its output is a documented, static artifact** — a `logs/`
-  dir of raw tool dumps and a generated board directory. Parsing those is durable;
+- **autoport exists — ✅**: `util/autoport/readme.md` is in the checkout, and its output is a
+  documented static artifact (a `logs/` dir + a generated board dir). Parsing those is durable;
   driving the tools live is not (§5, Spike 0).
-- **coreboot builds for QEMU** (`qemu-i440fx`/`qemu-q35` and non-x86 `qemu-*`
-  targets), so Lab B's payload boot is **verifiable on emulation**, no metal.
-- **The payload path has repo precedent** —
+- **The harvest tools are sources in the tree, not built, not on the host — ✅ and it decides
+  Spike 0.** `util/inteltool`, `util/superiotool` and `util/ectool` are present as source; **none
+  is compiled here and none is on PATH.** Only `util/cbmem/cbmem` is built (the measured-boot
+  fixtures use it). So a *live harvest* on this host would first have to build three utils — which
+  is exactly why Spike 0 makes "a directory of logs" the input contract and live tool-driving the
+  removable edge, and why Spike 0's control ("the parser runs on a committed fixture `logs/` with
+  no tools installed at all") is the state of the host **today**, not a hypothetical.
+- **coreboot builds for QEMU — ✅**: nine emulation boards in the checkout, and per the roadmap's
+  [§8](FIRMWARE_FAMILY_ROADMAP.md#8-where-else-this-runs--the-qemu-targets-measured-2026-09-16)
+  **every one but Spike has a QEMU 8.2 binary on this host** (`qemu-i440fx`/`qemu-q35` on
+  `qemu-system-x86_64`, `qemu-aarch64`/`qemu-sbsa` on `qemu-system-aarch64`, `qemu-power8`/
+  `qemu-power9` on `qemu-system-ppc64`, `qemu-riscv` on `qemu-system-riscv64`). So Lab B's payload
+  boot is verifiable on emulation, no metal, and B0 is *which* target boots the payload cleanest
+  (a build-and-boot), not whether a machine exists.
+- **The payload path has repo precedent — ✅**:
   [`open-firmware-forth-to-boot` POC-3](examples/open-firmware-forth-to-boot/POC-3-COREBOOT-PAYLOAD.md)
-  already ran Forth/OpenBIOS as a coreboot payload.
+  already ran Forth/OpenBIOS as a coreboot payload, and the rival lab ships OpenBIOS as a q35
+  coreboot payload today (the `coreboot-amd64`/`cbfs-live` tracks).
 - **coreboot's own tools are already oracles here.** The CBFS work in
   [`openbios-the-rival-that-shipped`](examples/openbios-the-rival-that-shipped/dsl/cbfs.fth)
-  grades against `cbfstool`; this lab extends the pattern to `cbmem`, `inteltool`,
-  `superiotool`, `dmidecode`, `acpidump` as oracles.
-- **to verify first:** which coreboot `qemu-*` target boots an OpenBIOS ELF payload
-  cleanly today (Lab B, Spike 0), and whether a real captured autoport `logs/` set
-  can be committed as a fixture without licensing snags.
+  grades against `cbfstool` (built); this lab extends the pattern to `cbmem` (built), and to
+  `inteltool`/`superiotool`/`dmidecode`/`acpidump` (the first two need building, the last two are
+  one `apt` away) — each named per row rather than assumed present.
+- **to verify first (still open):** which coreboot `qemu-*` target boots an OpenBIOS ELF payload
+  cleanest today (Lab B, Spike 0 — narrowed to a choice among boards that all have a binary), and
+  whether a real captured autoport `logs/` set can be committed as a fixture without licensing
+  snags (autoport dumps carry vendor-firmware register values — a provenance call, §7 open Q2).
 
 ## 4. Why this and not `autoport` alone
 
@@ -196,7 +224,12 @@ is missing or renamed (DEGRADE to the parsed fixture + name it, never a silent
 wrong fact).
 
 **Open questions.** (1) Which coreboot `qemu-*` target boots the OpenBIOS payload
-cleanest today (B0)? (2) Can a real autoport `logs/` capture be vendored as a
-fixture cleanly, or must it be synthesised? (3) Does the `devicetree.cb` reader
+cleanest today (B0)? **Narrowed 2026-09-16:** every emulation board but Spike has a QEMU 8.2
+binary on this host (roadmap §8), and the rival lab already boots OpenBIOS as a q35 payload, so
+this is a choice among working targets, not a search. (2) Can a real autoport `logs/` capture be
+vendored as a fixture cleanly, or must it be synthesised? The dumps carry a vendor board's live
+register values — likely **synthesised** (or captured from a QEMU/emulated board that has no
+vendor firmware to attribute), to avoid enshrining a real vendor's ROM state; measure before
+committing one. (3) Does the `devicetree.cb` reader
 live here or graduate into the shared Tier-1 set (likely graduates, since the ROM
 workbench wants it too)?
