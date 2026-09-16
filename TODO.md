@@ -6211,34 +6211,52 @@ prove the seam (poke's bytes == `xxd`); 2 dissect with pickles == the toolkit's 
 new value, refusing a bad edit **before** the write; 5 live RAM across the handoff — or `SNAPSHOT`,
 named. Host-only, own QEMU session/images/sockets, defensive/emulated. §2b LOCKED.
 
-## 33. Firmware family — a foundation-first roadmap (federation, not fusion) (2026-09-15)
+## 33. Firmware family — a foundation-first roadmap (federation, not fusion) (2026-09-15; gap re-measured 2026-09-16)
 
-*Meta-roadmap across the unbuilt firmware plans, written up in
+*Meta-roadmap across the firmware plans, written up in
 [`FIRMWARE_FAMILY_ROADMAP.md`](FIRMWARE_FAMILY_ROADMAP.md); this is the pointer. Build order and an
 architecture decision — schedules nothing.*
 
-The family grew a **roof before its walls**: six capstones (§26 attested boot, §28/§29 coreboot,
-§30 UKI, §31 UEFI, §32 pacme) plus the edit/fs/fcode notes all consume a shared `dsl/` structure
-toolkit (`struct`/`elf`/`pe`/`fdt`/`cbfs`/`sha256`/`eventlog`) that **is itself only a plan** (§25-era
-[preboot structure toolkit](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)); ten docs assume slightly
-different shapes of the same readers → **plan drift**, the "record that outlives its subject" one
-level up. The roadmap fixes the order and the one load-bearing decision. **Architecture (LOCKED):
-a federation of *separable* readers/writers behind a thin shared **contract**, NOT one fused DSL** —
-so modules can be pruned to slim a real-hardware image, and the family can lift into its own repo
-apart from MAAS. Shared substrate is small (`struct.fth` TLV/cursor + `alignto`, and `sha256.fth`);
-each format is one removable file that *opts in* to a uniform vocabulary (`NAME-open`/`-fields`/
-`-validate`/`-manifest`, optional `-emit`/`-write`/`-live`); a loader composes what's present and
-**names what's absent**. Order: **Tier 0** foundation (the `struct` TLV rung green on 4 arches;
-`sha256.fth` graded vs `sha256sum`; the contract + a conformance checker that proves a slimmed build
-still passes); **Tier 1** readers, each graded against a foreign oracle (`readelf`/`tpm2_eventlog`/
-`cbfstool`/`dtc`/`objdump`+`pe.pk`); **Tier 2** the thin write/edit half (finish the two half-working
-stores §24; edit-and-reverify, refuse before the irreversible step); **Tier 3** the capstones, each
-pinned to `contract vN`. Cross-cutting: a **firmware-family chaos ladder** (fills the gap — truncated
-event log, a PCR extend racing the read, a writer killed pre-commit, a stale pacme `SNAPSHOT` served
-as `LIVE`), and two honesty axes in the manifest (`ARCH: x86-only` for PE/UEFI so the family never
-quietly leaves its four-arch edge; `HOST-ONLY`/`LIVE`/`SNAPSHOT`). A `check-*.sh` proves the slim
-profile and the lift-to-own-repo closure. Next actionable unit: **Tier 0**. Does not fuse the DSLs,
-does not schedule, does not touch the provisioning goals.
+**The 2026-09-15 draft was written away from the tree and got the gap backwards — retracted
+2026-09-16, measured against `eae9281`.** It said the shared `dsl/` structure toolkit
+(`struct`/`elf`/`pe`/`fdt`/`cbfs`/`sha256`/`eventlog`) "is itself only a plan" and that its readers
+were "scattered across three labs." On disk: the [preboot structure toolkit](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)
+records Spikes −1 through 5 **done 2026-09-01→03**; six of the seven modules exist in **one** lab
+(`openbios-the-rival-that-shipped/dsl/`, 14 files, 2,403 lines — the OFW siblings carry no format
+reader at all), each graded against a foreign oracle (`readelf`+`eu-elflint`, `cbfstool`, `dtc`,
+`tpm2_eventlog`, NIST vectors + `hashlib`), the TLV cursor decided (B) and green 4/4, and the
+*writers* (`elf-write`, `cbfs-write`, `dt>fdt`, `evlog-author`) built too. Only `pe.fth` and
+`bootparams.fth` are absent. A cached "unbuilt" served after its subject changed — the stale-record
+class, one level up. **What the code shows that the plans could not:** drift already happened, in
+the *refusal convention* — `elf` aborts through `chk`, `fdt-open` returns a flag, `eventlog` sets
+`ev-err`, and `cbfs-list` **stops silently** at a bad magic and prints `CBFS-END` (a corrupt first
+entry reads as an empty CBFS — a defect). And **measured here is not measured there**: `cbfs*`,
+`event-*`, `file-writer`, `region-diff` run in no workflow (tier-b's `DEFAULT_TRACKS` omits them;
+`ci.yml` runs the wrappers headless, where they SKIP), so the attestation and CBFS halves are green
+on one host only.
+
+**Architecture (LOCKED, unchanged):** a federation of *separable* readers/writers behind a thin
+shared **contract**, NOT one fused DSL — so modules can be pruned to slim a real-hardware image, and
+the family can lift into its own repo apart from MAAS. Shared substrate is small (`struct.fth`
+TLV/cursor + `alignto`, and `sha256.fth`); each format is one removable file that *opts in* to a
+uniform vocabulary (`NAME-open`/`-fields`/`-validate`/`-manifest`, optional `-emit`/`-write`/`-live`);
+a loader composes what's present and **names what's absent** (`elf.fth`'s `hook` already does this
+by hand for `elf32.fth`). **Order, re-cut:** **Tier 0** is a *conformance pass over running code*,
+not a build — one refusal convention through `struct.fth`'s `chk` (and `cbfs-list`'s silent stop
+closed), `NAME-fields` derived once in the substrate from the `t-off`/`t-width`/`t-order` it already
+keeps, manifests as words lifted from each header's prose, the registry, `check-module-conforms.sh`
+with its slimmed-build control, and a CI witness for the host-only tracks (`event-real` needs only
+`tpm2-tools`; `cbfs` needs the ROM cached); **Tier 1** conforms the six built readers and builds the
+two missing (`pe.fth` vs `objdump`+`pe.pk`, `bootparams.fth`); **Tier 2** is the edit-and-reverify
+*loop* — every writer is graded on a whole artifact today and none on a delta; §24's two stores are
+backing stores, a different axis, and stay there; **Tier 3** the capstones, each pinned to
+`contract vN`. Cross-cutting: a **firmware-family chaos ladder** (genuinely absent — LIED/HALTED
+appear in the smoke only as grading language: truncated event log, a PCR extend racing the read, a
+writer killed pre-commit, a corrupt first record, a stale pacme `SNAPSHOT` served as `LIVE`), and two
+honesty axes in the manifest (`ARCH: x86-only` for PE/UEFI; `HOST-ONLY`/`LIVE`/`SNAPSHOT`). A
+`check-*.sh` proves the slim profile and the lift-to-own-repo closure. Next actionable unit:
+**Tier 0**, as re-cut. Does not fuse the DSLs, does not schedule, does not touch the provisioning
+goals.
 
 ## 34. coreboot bring-up — a host-side porting workbench + a payload inspector (2026-09-16)
 
