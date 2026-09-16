@@ -11,6 +11,18 @@ boot that matters.*
 
 ---
 
+> **Re-measured 2026-09-16, against the OpenBIOS tree and the coreboot LinuxBoot kernel.** §1's
+> substrate is confirmed: `arch/x86/linux_load.c` and `arch/amd64/linux_load.c` both exist,
+> patches 01 and 12 are in the catalog, and `cpio.fth` (§2.2's deliverable) does **not** yet exist
+> — which is now a *shared* prerequisite, wanted by this note, the [UKI plan](UKI_WORKBENCH_LAB_PLAN.md)'s
+> Spike 2, and the reader-fuzzer idea, so whichever lands first builds it once. **Idea B's "measurement
+> that comes first" (§3) is partly answered: the coreboot LinuxBoot payload kernel has `# CONFIG_OF
+> is not set`** (`payloads/external/LinuxBoot/build/kernel-6_3/.config`), so on *that* kernel the
+> `SETUP_DTB` record is skipped and **the mailbox is the route** — which the note already calls "the
+> better story." `payload-bzImage`'s own config stays UNKNOWN (no `IKCFG`, no `.config` on disk), so
+> the first act is still to adopt a kernel whose config is a fact. This is the same finding the
+> [attested-boot plan](ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md) carries; the two notes agree.
+
 ## 0. The two ideas in one paragraph each
 
 **A — the boot-handoff edit.** When OpenBIOS boots a bzImage, its C loader
@@ -544,6 +556,15 @@ flipped must be *rejected by a kernel that has OF* (early FDT verification refus
 it and boots on) and *ignored identically by one that has not*. Only a kernel that
 accepts the good blob and refuses the bad one has been shown to read it.
 
+**Partly measured 2026-09-16.** One concrete kernel is answered: the coreboot LinuxBoot payload
+build (`payloads/external/LinuxBoot/build/kernel-6_3/.config`, a 6.3 of a different sha than
+`payload-bzImage`) has `# CONFIG_OF is not set` — so *it* skips a `SETUP_DTB` record silently, and
+for it Idea B is the **mailbox** (the fallback below), not the `setup_data` record. `payload-bzImage`
+itself is still unmeasured (no `IKCFG`, no `.config` on disk). So the honest first step is to adopt a
+kernel whose config is known — the LinuxBoot one, or a `micro-linux` build with the flag flipped —
+rather than assume the cached image's answer. The [attested-boot plan](ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md)
+reached the same finding for its own Spike 1.
+
 **If `CONFIG_OF` is off, two fallbacks, both with what they cost:**
 
 - **Build the kernel.** The repo builds kernels ([`micro-linux/`](micro-linux/README.md));
@@ -630,7 +651,10 @@ what leaves**.
 3. **Does u-root's `init` consume `sysctl.d`?** Decides whether §2.4 route 3 is a
    file edit or an `init` replacement.
 4. **`CONFIG_OF` in the cached kernel** — decides whether Idea B is a `setup_data`
-   record or a mailbox, and the mailbox is arguably the better story.
+   record or a mailbox, and the mailbox is arguably the better story. **Partly answered
+   2026-09-16:** the coreboot LinuxBoot payload kernel has `# CONFIG_OF is not set`, so on that
+   kernel it is the mailbox; `payload-bzImage` itself is unmeasured. What is left to decide is
+   *which* kernel the lab adopts (one with a known config), not what the flag does.
 5. **Is a bzImage `load` a rung of the ELF ladder?** If S0 shares `state-valid`, the
    `elf-ladder` track's vocabulary (LOADED / REFUSED / RUN) describes both formats,
    and a bzImage with a bad `HdrS` magic is a REFUSED row — the bzImage gate beside
