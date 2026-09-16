@@ -6108,19 +6108,36 @@ whether it is a track, a lab, or undecided.*
 in [`COREBOOT_ROM_WORKBENCH_LAB_PLAN.md`](COREBOOT_ROM_WORKBENCH_LAB_PLAN.md); this is the pointer.*
 
 The **construction** half of a two-lab coreboot split (the **trust** half is §29). The repo builds
-coreboot ROMs in four places but always as a **substrate** carrying a payload; this lab makes
-**coreboot itself the subject** — build a ROM, dissect its FMAP/CBFS/descriptor with the toolkit
-against `cbfstool`/`ifdtool`, do **CBFS surgery on a live bootable ROM** (add a file the payload
-reads, replace the payload, resize a region, boot each), run the **payload matrix** (one q35
-board, the same target through every payload coreboot ships — SeaBIOS/edk2/GRUB2/FILO/LinuxBoot/
-OpenBIOS/bare-Linux), and read **coreboot's own handoff record** (the coreboot table / CBMEM /
-timestamps) from inside the firmware. Deliverable tool: `rom-inspect`/`rom-edit` — the "firmware
-image assembly" backend the poke-elf reviews said the toolkit needed, coreboot supplying the
-format. The grade is the **boot outcome**, `cbfstool` the second witness. Spike 0 decides the edit
-surface (host-side cbfstool vs. firmware-side live self-edit — the `flash-writer` result says a
-bare live store is a command, so measure its reach first). Its-own-lab rationale §2b LOCKED. It is
-the shared backend the attested-boot capstone (CBFS-tamper measurement) and §29 (region layout)
-both want.
+coreboot ROMs through three scripts (linuxboot-uefi-kexec, the rival lab, forth-to-boot) into six
+build dirs, always as a **substrate** carrying a payload; this lab makes **coreboot itself the
+subject** — build a ROM, dissect its FMAP/CBFS with the toolkit against `cbfstool`/`fmaptool`,
+do **CBFS surgery on a live bootable ROM** (add a file the payload reads, replace the payload,
+resize a region, boot each), run the **payload matrix** (one q35 board, the same target through
+every payload coreboot's `Kconfig.name` offers), and read **coreboot's own handoff record** (the
+coreboot table / CBMEM / timestamps) from inside the firmware. Deliverable tool:
+`rom-inspect`/`rom-edit` — the "firmware image assembly" backend the poke-elf reviews said the
+toolkit needed, coreboot supplying the format. The grade is the **boot outcome**, `cbfstool` the
+second witness. Its-own-lab rationale §2b LOCKED. It is the shared backend the attested-boot
+capstone (CBFS-tamper measurement) and §29 (region layout) both want.
+
+**Re-measured 2026-09-16 (against the checkout and its built ROMs).** Five corrections, all in
+the plan's §3: **(1) the emulation board has no flash descriptor** — `coreboot.rom` starts with
+`__FMAP__` at 0 and `cbfstool layout -w` lists exactly `BIOS`/`FMAP`/one `COREBOOT` CBFS, so
+`ifdtool -d` has no subject and Spike 1 prints `DESCRIPTOR: absent … by design`; **(2) Spike 0's
+live self-edit is further along than the draft thought** — `persist-flash` (patch 06) already
+*programs* pflash through the CFI sequence (`flash-writer`'s "a bare store is a command" is the
+same fact from the other side); what remains is delivering the ROM as `if=pflash,unit=0` instead
+of `-bios`, one flag, measured on the first boot — recommended (C); **(3) only `cbfstool` and
+`cbmem` are built**, `ifdtool`/`fmaptool` sources present and unbuilt; **(4) only LinuxBoot's
+payload source is on disk** — SeaBIOS/edk2/GRUB2/FILO/U-Boot `git clone` at build time, so the
+matrix's first column is fetch-and-build, the rest UNCOVERED by name; **(5) the coreboot tree is
+a depth-1 shallow clone at `c583b0c4`** — the "~`e95bdb7e`" pin is a comment in one build script,
+not a commit the tree contains, and the rival lab guards the ROM artifacts, not the tree: the
+lab's first act is to record the tree's identity and refuse a mismatch by name. Also measured ✅:
+two checked-in q35 configs exist (`linuxboot-uefi-kexec/`), patch 58's `lb-walk` already reads
+the CBMEM-forwarded table (the console and timestamp entries are Spike 4's new work),
+`CONFIG_CONSOLE_CBMEM`/`COLLECT_TIMESTAMPS` are on. Kept UNMEASURED: a cbfstool-edited ROM
+still boots (acceptance ≠ boot; Spike 2's first boot is the measurement).
 
 ## 29. coreboot Verified Boot — the trust half (vboot, A/B, rollback) (2026-09-14)
 
