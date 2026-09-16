@@ -1,4 +1,4 @@
-# The UKI Workbench — a Lab Plan v1 (2026-09-14)
+# The UKI Workbench — a Lab Plan v1 (2026-09-14; feasibility re-measured 2026-09-16)
 
 *Proposed **new lab**: **`uki-workbench/`**. The linuxboot lab **builds** Unified Kernel Images
 with `ukify` and **boots** them under OVMF, but never **takes one apart**. This lab makes the UKI
@@ -8,6 +8,18 @@ section and watch the measurement change. It is the artifact-focused sibling of 
 [UEFI Workbench](UEFI_WORKBENCH_LAB_PLAN.md), and it is where the toolkit gains its **PE reader**
 (`dsl/pe.fth`) — the format both labs need. Tracked as
 [`TODO.md` §30](TODO.md#30-the-uki-workbench--the-unified-kernel-image-as-the-subject-2026-09-14).*
+
+> **Re-measured 2026-09-16, against the linuxboot lab's scripts, the host, and the edk2/swtpm
+> fixture.** The thesis holds and the tooling is nearly all on the host. Three corrections:
+> **(1) no UKI exists on disk today** — `~/linuxboot-lab` has neither the `vmlinuz`/`initramfs.cpio`
+> inputs nor any `.efi`; the subject is rebuilt before Spike 1; **(2) `.pcrsig` is not emitted
+> by the current `build-uki.sh` and cannot be** — it passes no `--pcr-private-key`/`--pcr-public-key`,
+> which is what makes ukify write `.pcrsig`/`.pcrpkey` (ukify 255 and `systemd-measure` are both
+> present, so it is one flag pair away; the WALKTHROUGH's "add `.pcrsig`" is a doc claim the
+> artifact does not bear); **(3) the `cpio.fth` reader Spike 2 names does not exist** — it is a
+> small prerequisite, not a dependency. Measured ✅: OVMF measures a directly-booted PE app into
+> PCR4 with **no** secure boot (one `EV_EFI_BOOT_SERVICES_APPLICATION` event in the fixture's log),
+> and every oracle is present or one `apt` away. §3 carries the rows.
 
 ---
 
@@ -54,17 +66,44 @@ oracle).
   handoff (`.cmdline`/`.initrd`), a measured boot (`.pcrsig`), and a signed artifact
   (Authenticode) — the notes made concrete.
 
-## 3. Verified feasibility (to check before writing)
-- UKIs are built and booted here — **✅** (`build-uki.sh` with `ukify`, `run-uefi-linuxboot.sh`
-  under OVMF; `.uname`/`.sbat`/`.pcrsig` already named in `WALKTHROUGH.md`, signing skipped).
-- the toolkit reads typed binaries against a foreign oracle — **✅** (ELF/CBFS/FDT); **PE is new**.
-- oracles present or one `apt` away: `objdump -h`/`llvm-readobj` (sections), `sbverify`/`pesign`
-  (signature), `ukify --measure` (predicted PCRs), `systemd-dissect`/`objcopy` (extract), and
-  GNU poke's `pe.pk` pickle as a **structure oracle** (§4a) — a second, independent PE model to
-  grade the reader's field-by-field understanding against, not just its section list.
-- **to verify first:** whether the lab's `ukify` emits `.pcrsig` with a dev key here (Spike 3's
-  subject); and whether OVMF measures the UKI into a PCR without a full secure-boot enrolment (the
-  edk2-swtpm fixture says OVMF measures — confirm the UKI leg does).
+## 3. Verified feasibility (measured 2026-09-16)
+- **UKIs are built and booted here — the scripts, ✅; the artifact, absent.**
+  `linuxboot-uefi-kexec/build-uki.sh` builds `uki-shell.efi` / `uki-kexec.efi` (+ their ESPs) into
+  `$WORKDIR`, and `run-uefi-linuxboot.sh` boots them under `OVMF_CODE_4M.fd` (pflash unit 0,
+  `readonly=on`) with a per-run copy of `OVMF_VARS_4M.fd`. But **`~/linuxboot-lab` holds no
+  `.efi` today, nor the `vmlinuz`/`initramfs.cpio` it is built from** — the earlier artifacts were
+  reclaimed. Spike 1's first act is the rebuild chain (`fetch-kernel.sh` → `build-uroot.sh` →
+  `build-uki.sh`). The stub is on the host (`/usr/lib/systemd/boot/efi/linuxx64.efi.stub`,
+  68 608 bytes), and so is `ukify 255` (`255.4-1ubuntu8.17`).
+- **`.pcrsig`/`.pcrpkey` are NOT in the UKI this script builds — answered, and it is the
+  script, not the tool.** `build_uki` passes exactly `--linux --initrd --cmdline --os-release
+  --stub --output`; ukify writes `.pcrsig` only when given `--pcr-private-key`/`--pcr-public-key`
+  (optionally `--phases`), and it needs `systemd-measure` to compute the prediction — which **is**
+  installed (`/usr/lib/systemd/systemd-measure`). So Spike 3's subject is one flag pair and one
+  generated keypair away, and `WALKTHROUGH.md:122`'s "add `.uname`/`.sbat`/`.pcrsig` sections" is
+  a doc claim the artifact does not bear until then (fix it when the lab lands). `.uname` and
+  `.sbat` ukify adds on its own (from the kernel and the stub) — believed, **verify on the rebuilt
+  artifact** with `objdump -h`.
+- **OVMF measures a PE application into PCR4 without secure boot — ✅ measured.** The
+  [`edk2-swtpm`](examples/openbios-the-rival-that-shipped/fixtures/edk2-swtpm/README.md) capture
+  (plain OVMF, no enrolment) holds exactly **one `EV_EFI_BOOT_SERVICES_APPLICATION`** event — the
+  kernel's EFI stub, direct-booted. A UKI is the same event kind (it *is* an EFI application), so
+  Spike 3's "actual PCR" exists without secure boot. *That fixture booted a bare kernel, not a
+  UKI* — the UKI leg itself is unmeasured until the artifact is rebuilt.
+- the toolkit reads typed binaries against a foreign oracle — **✅** (ELF/CBFS/FDT); **PE is new**
+  and, per the roadmap's arch axis, its manifest says **`ARCH: x86-only`** (the family's PE
+  subjects are x86-64 `.efi`; an aarch64 UKI under AAVMF is possible — the host has it — but is a
+  door this family has not opened).
+- **Oracles, measured on the host:** present — `ukify`, `systemd-measure`, `systemd-dissect`,
+  `sbverify`, `sbsign`, `objdump`, `objcopy`, `mtools`, `swtpm`, `tpm2_eventlog`. One `apt` away —
+  `pesign` (116), `llvm` (for `llvm-readobj`, 18), `poke` (**4.0**, for `pe.pk`; whether the
+  Debian package ships the pickle is UNMEASURED — check `dpkg -L poke | grep pe.pk` before relying
+  on §4a), `efitools`.
+- **`cpio.fth` does not exist.** Spike 2 grades `.initrd` with "the `cpio.fth` reader" as if it
+  were built; the `dsl/` has no cpio walker and the fs note's tiers cover ext/FAT/ISO, not cpio.
+  A `newc` walker is the TLV shape `struct.fth`'s cursor was made for (a 110-byte ASCII header,
+  then name, then data, each 4-aligned) — a small prerequisite, named here so Spike 2 does not
+  discover it.
 
 ## 4. Why this and not a hosted tool
 `objdump` prints sections and `sbverify` checks a signature **on the host**; neither is **the
@@ -143,13 +182,17 @@ section table (the drift `pe.pk` warns about); the counts equal the oracle exact
 ### Spike 2 — extract, and grade each section by what it is
 Pull each section and grade it against its *own* nature: `.linux` is an EFISTUB kernel (its PE/ELF
 magic checks; the `elf-gate`/`?bootparams` readers already know these); `.initrd` is a cpio the
-`cpio.fth` reader walks; `.cmdline` is the string (compared to what the boot's `/proc/cmdline`
+`cpio.fth` reader walks (**to be written first — it does not exist**, §3; a `newc` walker on the
+struct.fth cursor); `.cmdline` is the string (compared to what the boot's `/proc/cmdline`
 shows); `.osrel` parses as `os-release`; `.uname` is the kernel version (`== .linux`'s built
 version). **Control:** a section extracted with the wrong length fails its own reader, not silently.
 
 ### Spike 3 — the UKI's self-prediction: `.pcrsig` vs. the real boot
-Read `.pcrpkey` (the public key) and `.pcrsig` (the **signed, pre-computed** PCR values the boot
-should produce, per phase). Then **boot the UKI under OVMF+swtpm** and read the guest's actual PCR
+**Prerequisite (measured 2026-09-16):** the UKI must be built with `--pcr-private-key` /
+`--pcr-public-key` (a lab-generated keypair) so ukify writes `.pcrsig`/`.pcrpkey` at all — the
+current `build-uki.sh` does not, and `systemd-measure` (present) is what ukify calls to compute
+the prediction. Read `.pcrpkey` (the public key) and `.pcrsig` (the **signed, pre-computed** PCR
+values the boot should produce, per phase). Then **boot the UKI under OVMF+swtpm** and read the guest's actual PCR
 (the edk2-swtpm capture shape). **The prediction must equal the measurement** — the UKI told the
 truth about what it would measure to. **Controls:** `ukify --measure` on the host agrees with the
 firmware's read of `.pcrsig` (the section decoded right); and a UKI with **one byte of `.cmdline`
@@ -195,7 +238,13 @@ UEFI workbench.
 | 4 | the signed-region hash matches `sbverify`; a signed UKI host-verifies | unsigned → no Certificate Table, named; tampered body fails |
 | 5 | `uki-inspect`/`uki-edit` drive the loop; the edited UKI measures as predicted | a bad edit refused before re-emit |
 
-**Open questions.** (1) PE depth — Spike 0's A/B/C, decided by the signature path. (2) Does the
+**Open questions.** (1) PE depth — Spike 0's A/B/C, decided by the signature path. (2) ~~Does the
 lab's `ukify` emit `.pcrsig` with a dev key here, and does OVMF measure the UKI without full secure
-boot? Spike 3's prerequisites. (3) Does this lab own `dsl/pe.fth` (yes) and the UEFI workbench
-consume it (yes) — stated, not duplicated.
+boot?~~ **Answered 2026-09-16 (§3):** ukify 255 + `systemd-measure` are on the host and *can*, but
+`build-uki.sh` passes no PCR key so today's UKI has no `.pcrsig` — one flag pair away; and OVMF
+measures a directly-booted PE app into PCR4 with no secure boot (one
+`EV_EFI_BOOT_SERVICES_APPLICATION` in the fixture's log). Still unmeasured: the rebuilt UKI itself
+(none is on disk), and whether the `poke` Debian package ships `pe.pk`. (3) Does this lab own
+`dsl/pe.fth` (yes) and the UEFI workbench consume it (yes) — stated, not duplicated. (4) **New:**
+`cpio.fth` is a prerequisite nobody had written down — this lab builds it (Spike 2), the fs note
+cites it.

@@ -1,4 +1,4 @@
-# The UEFI Workbench — a Lab Plan v1 (2026-09-14)
+# The UEFI Workbench — a Lab Plan v1 (2026-09-14; feasibility re-measured 2026-09-16)
 
 *Proposed **new lab**: **`uefi-workbench/`**. Where the [coreboot ROM workbench](COREBOOT_ROM_WORKBENCH_LAB_PLAN.md)
 makes coreboot the subject, this makes **UEFI the subject** — the platform this repo already runs
@@ -11,6 +11,18 @@ backing store, secure boot is the [coreboot verified-boot](COREBOOT_VERIFIED_BOO
 theme, and the config tables are the [FCode notes](DESIGN-NOTES-fcode-option-roms.md)' "reach Linux
 through a firmware-authored tree." **UEFI is where the whole family converges.** Tracked as
 [`TODO.md` §31](TODO.md#31-the-uefi-workbench--the-platform-where-the-family-converges-2026-09-14).*
+
+> **Re-measured 2026-09-16, against the host's firmware packages, the linuxboot lab, and the
+> kernel's EFI stub.** §3's one "to verify first" is answered **yes, and better than hoped**:
+> `/usr/share/OVMF/` ships `OVMF_CODE_4M.secboot.fd`, the Microsoft-keyed `.ms.fd` pair, **and a
+> `snakeoil` pair whose PK/KEK private key is on disk** (`/usr/share/ovmf/PkKek-1-snakeoil.key`)
+> — a dev-key-enrolled secure-boot firmware, ready. Spike 4's fallback is not needed. One facet
+> loses its x86 subject: **the DT config table (Spike 5) has no path into an x86 kernel** —
+> `libstub/x86-stub.c` has no FDT code; the DT-from-config-table path is `libstub/fdt.c`, used by
+> the generic stub on ARM/RISC-V/LoongArch — but the same host has **AAVMF** (aarch64 edk2, with
+> its own secboot/snakeoil variants), where the firmware publishes QEMU's DTB as a config table and
+> the kernel consumes it. So that facet is real on an aarch64 leg, absent on x86, and the roadmap's
+> new §8 says where else the family can run. §3 carries the rows.
 
 ---
 
@@ -55,17 +67,43 @@ variables).
 - **It is the convergence lab, and that is the point.** Every other note owns one theme; this shows
   them as facets of one platform. That framing is a deliverable, not a side effect.
 
-## 3. Verified feasibility (to check before writing)
+## 3. Verified feasibility (measured 2026-09-16)
 - OVMF runs here with a writable variable store — **✅** (`run-uefi-linuxboot.sh`: `OVMF_CODE_4M.fd`
-  read-only + a per-run `OVMF_VARS_4M.fd`); the guest boots a UKI off a FAT ESP — **✅**.
-- OVMF measures into a TPM — **✅** (edk2-swtpm fixture).
-- oracles present or one `apt` away: `efivar`/`efibootmgr` (variables + boot manager, in the
-  guest), `sbsign`/`sbverify`/`cert-to-efi-sig-list`/`sign-efi-sig-list` (secure boot),
-  `dmidecode`/`acpidump` (tables), `dtc` (the DT config table), `mtools`/`mcopy` (the ESP), and
-  GNU poke's `pe.pk` as the PE **structure** oracle (host-only, GPLv3 — the UKI lab's §4a).
-- **to verify first:** whether the repo's OVMF build supports **secure boot** (some OVMF builds are
-  plain; the SecureBoot variant is a different `.fd`) — Spike 4 gates on it, and names the fallback
-  (read/host-verify only, as the UKI lab does) if the SecureBoot OVMF is not available.
+  on pflash unit 0 `readonly=on` + a per-run copy of `OVMF_VARS_4M.fd` on unit 1); the guest boots
+  a UKI off a FAT ESP — **✅ the scripts; the UKI itself is not on disk today** (the
+  [UKI plan](UKI_WORKBENCH_LAB_PLAN.md) §3 — rebuild it first).
+- **Secure boot — ✅, answered: the host has every OVMF variant** (`ovmf 2024.02-2ubuntu0.9`):
+  `OVMF_CODE_4M.secboot.fd` (secure-boot capable, no keys — enrol your own with `efitools`),
+  `OVMF_CODE_4M.ms.fd` + `OVMF_VARS_4M.ms.fd` (Microsoft PK/KEK/db enrolled), and
+  **`OVMF_CODE_4M.snakeoil.fd` + `OVMF_VARS_4M.snakeoil.fd` with the enrolled PK/KEK's private key
+  shipped** at `/usr/share/ovmf/PkKek-1-snakeoil.{key,pem}`. So Spike 4 has two honest routes on
+  day one — sign with the snakeoil key against the snakeoil VARS (zero enrolment), or enrol a
+  lab-generated hierarchy into `secboot.fd`'s empty store — and the read/host-verify fallback is
+  not needed. **`KEY-ANCHOR: dev` is exactly right for both**: the snakeoil private key is public
+  by construction (every Debian/Ubuntu host has it), so "signed" with it proves the *mechanism*,
+  and only a lab-generated key makes "signed wrong → refused" mean anything — the same note the
+  verified-boot plan makes about coreboot's `devkeys/`.
+- OVMF measures into a TPM — **✅** (edk2-swtpm fixture: one `EV_EFI_BOOT_SERVICES_APPLICATION`
+  event for the directly-booted kernel, PCR4, with no secure boot enrolled).
+- **The DT config table has no x86 subject — measured from the kernel.** The x86 EFI stub
+  (`drivers/firmware/efi/libstub/x86-stub.c`) contains **no FDT code at all**; the
+  DT-from-config-table path is `libstub/fdt.c`, reached only from the generic stub that ARM,
+  RISC-V and LoongArch use. On x86 a firmware-authored tree reaches Linux **only** through
+  `SETUP_DTB` (the handoff note's route, and the attested-boot plan's `CONFIG_OF` row). The facet
+  **is** real on **aarch64**: the host has `qemu-efi-aarch64` (`/usr/share/AAVMF/AAVMF_CODE.fd`,
+  `.secboot.fd`, `.ms.fd`, `.snakeoil.fd` + VARS) and QEMU `-M virt`/`sbsa-ref`, where ArmVirtQemu
+  publishes QEMU's own DTB as the `EFI_DTB_TABLE` config table and the kernel reads it. So
+  Spike 5 either prints `DT-TABLE: absent on x86 (SETUP_DTB is the route)` by name, or gains an
+  aarch64 leg — the roadmap's [§8](FIRMWARE_FAMILY_ROADMAP.md#8-where-else-this-runs--the-qemu-targets-measured-2026-09-16)
+  lists what that leg would stand on.
+- **Oracles, measured on the host:** present — `efibootmgr`, `sbsign`/`sbverify`, `dmidecode`,
+  `acpidump`, `mtools` (`mdir`/`mcopy`), `objdump`, `dtc`, `swtpm`, `tpm2_eventlog`. One `apt`
+  away — `efivar`, `efitools` 1.9.2 (`cert-to-efi-sig-list`/`sign-efi-sig-list`), `pesign` 116,
+  `llvm` 18 (`llvm-readobj`), `poke` 4.0 (`pe.pk` presence in the package UNMEASURED).
+- **UNMEASURED, kept honest:** parsing the OVMF `VARS` file from outside (Spike 2) — it is an
+  EDK2 firmware volume (`_FVH`) holding a variable store whose header GUID says plain or
+  authenticated; the layout is documented and `struct.fth` can carry it, but no byte of it has
+  been read here yet.
 
 ## 4. Why this and not a hosted tool
 The host tools each read *one* facet from outside a running system; none of them is **the platform
@@ -118,18 +156,29 @@ Enrol a **dev** Platform Key, KEK, and db (`cert-to-efi-sig-list` + `sign-efi-si
 `.efi` with a db key (`sbsign`); boot it (accepted), then boot an **unsigned** one (**refused by
 the firmware**). Then **dbx** (revocation): revoke the signed app's hash and watch it refused. This
 is the [verified-boot](COREBOOT_VERIFIED_BOOT_LAB_PLAN.md) trust theme in UEFI's own mechanism — a
-firmware **deciding** whether to run a binary by signature. **KEY-ANCHOR: dev** printed (our keys,
-not a vendor root); **Controls:** the signed app boots (no false negative); revoking it flips the
-decision; if the OVMF build lacks secure boot, the spike degrades to read/host-verify (Spike 3 +
-`sbverify`) and says so by name.
+firmware **deciding** whether to run a binary by signature. **Two routes, both on the host today
+(§3):** the **snakeoil** pair (`OVMF_CODE_4M.snakeoil.fd` + its VARS, private key shipped) for a
+zero-enrolment first boot, and `OVMF_CODE_4M.secboot.fd` + `efitools` for the from-scratch
+enrolment the spike is really about. **KEY-ANCHOR: dev** printed (our keys, not a vendor root —
+and the snakeoil key is *everyone's*, so it demonstrates the mechanism only; the refusal control
+below must use the lab-generated hierarchy). **Controls:** the signed app boots (no false
+negative); revoking it flips the decision; an app signed with the snakeoil key is **refused** by a
+store that enrolled only the lab's key (the two hierarchies must not be confused). The no-secure-
+boot fallback is retired — the SecureBoot OVMF is not a separate fetch here.
 
 ### Spike 5 — the handoff tables: what UEFI hands the OS
 Read the tables UEFI produces: the **memory map** (`GetMemoryMap`, seen via the kernel's
 `/sys/firmware/efi/`), **ACPI** and **SMBIOS** (config-table pointers → `acpidump`/`dmidecode` as
-oracles), and — the FCode note's "third firmware" — the **device-tree config table**: hand the
-guest a DT through OVMF's DTB config-table GUID and read it from `/proc/device-tree`, the UEFI seat
-of "a firmware-authored tree reaches Linux". **Control:** the table the firmware published equals
-the host oracle's read; the DT node authored is the node Linux receives.
+oracles), and — the FCode note's "third firmware" — the **device-tree config table**. **Measured
+2026-09-16: this row has no x86 subject** (§3) — the x86 EFI stub has no FDT path, so an x86 kernel
+never reads a DTB config table; on x86 the row prints `DT-TABLE: absent (SETUP_DTB is the route)`
+by name and the handoff note's `SETUP_DTB` carries the tree instead. The row is **real on
+aarch64**: AAVMF (`qemu-efi-aarch64`, on the host) publishes QEMU's DTB as the `EFI_DTB_TABLE`
+config table and the kernel reads it — so the spike gains an **aarch64 leg** (`-M virt`) if the
+family opens that door (roadmap §8), where "hand the guest a DT and read it from
+`/proc/device-tree`" is the UEFI seat of "a firmware-authored tree reaches Linux". **Control:** the
+table the firmware published equals the host oracle's read; on aarch64 the DT node authored is the
+node Linux receives; on x86 the absence is printed, never a blank.
 
 ### Spike 6 — the convergence view, as the deliverable
 `uefi-inspect`: point it at a running (or captured) OVMF and print, in one view, the ESP contents,
@@ -159,8 +208,12 @@ UEFI-platform member.
 | 5 | memory map/ACPI/SMBIOS/DT match host oracles; the DT node reaches Linux | a published table != the oracle is a finding |
 | 6 | `uefi-inspect` shows all five facets in one view, oracle-graded | — |
 
-**Open questions.** (1) Does the repo's OVMF support secure boot (Spike 4), or is the SecureBoot
-`.fd` a separate fetch? Names the fallback if not. (2) Does this lab or the UKI lab own `dsl/pe.fth`
+**Open questions.** (1) ~~Does the repo's OVMF support secure boot (Spike 4), or is the SecureBoot
+`.fd` a separate fetch?~~ **Answered 2026-09-16: yes, on disk** — `secboot`, `ms` and `snakeoil`
+variants, the last with its private key shipped (§3); the fallback is retired. **New (1b):** the
+DT config table facet is absent on x86 by the kernel's own stub layout and real on aarch64 — does
+this lab open an AAVMF `-M virt` leg (the family's first non-x86 UEFI door, roadmap §8), or print
+the absence and stop? (2) Does this lab or the UKI lab own `dsl/pe.fth`
 — the UKI lab builds it and owns the `pe.pk` structure-oracle analysis (§4a), this consumes both (stated). (3) Is the DT config table (Spike 5) shared
 with the FCode note's "UEFI as the third firmware" track, or owned here? Likely owned here, cited
 there.

@@ -268,3 +268,72 @@ Prunability and repo-split-ability are only real if a checker proves them:
   refusal convention through `chk` (and `cbfs-list`'s silent stop closed), a
   substrate-derived `NAME-fields`, manifests as words, the registry, the
   conformance checker — and a CI witness for the tracks only this host runs.
+
+## 8. Where else this runs — the QEMU targets (measured 2026-09-16)
+
+The recurring question behind the capstone plans is *"what else can we get this
+running on?"* — a coreboot ROM, a UEFI firmware, an OpenBIOS door, on something
+that is not x86. This section is the measured answer, in three columns: what each
+firmware **upstream** can target under emulation, what the **checkout on this
+host** carries, and which **QEMU system binaries and firmware images** the host
+already has. Everything here was read from the tree or run on the host today; a
+row is a *door that could be opened*, not one the family has walked through —
+the last column says which is which.
+
+### 8.1 coreboot's emulation mainboards
+
+Source: [doc.coreboot.org/mainboard — Emulation](https://doc.coreboot.org/mainboard/index.html#emulation)
+(retrieved 2026-09-16), cross-read against `~/linuxboot-lab/coreboot/src/mainboard/emulation/`
+(depth-1 clone at `c583b0c4`, 2026-06-19) and `ls /usr/bin/qemu-system-*` (QEMU 8.2.2).
+
+| upstream doc lists | board dir in the checkout | QEMU binary + machine on this host | the family today |
+|---|---|---|---|
+| QEMU x86 Q35 | `qemu-q35` | `qemu-system-x86_64 -M q35` | **the only coreboot door** — six ROMs, all four coreboot-family plans, LinuxBoot/OpenBIOS/OFW payloads |
+| QEMU x86 PC (i440FX) | `qemu-i440fx` | `qemu-system-x86_64 -M pc` | unopened; the OpenBIOS x86/amd64 doors run on `-M pc` under SeaBIOS, not coreboot |
+| QEMU AArch64 | `qemu-aarch64` | `qemu-system-aarch64 -M virt` | unopened — but AAVMF is on the host (§8.2), so a coreboot-vs-edk2 comparison on one non-x86 machine is reachable |
+| QEMU SBSA | `qemu-sbsa` | `qemu-system-aarch64 -M sbsa-ref` | unopened; the server-class ARM reference, the natural pair for UEFI-on-ARM |
+| QEMU RISC-V | `qemu-riscv` | `qemu-system-riscv64 -M virt` | unopened; no firmware image for it on the host, coreboot would be the first |
+| Spike RISC-V emulator | `spike-riscv` | — (**no `spike` binary on the host**; not QEMU) | unopened, and out of reach without installing Spike |
+| QEMU POWER9 | `qemu-power9` | `qemu-system-ppc64 -M powernv9` | unopened; the OpenBIOS ppc door is 32-bit `mac99`, a different world from POWER9's skiboot/OPAL |
+| *(not in the current doc)* | `qemu-armv7` | `qemu-system-arm -M virt` | in the checkout but **no longer on the upstream page** — a board upstream may have dropped after `c583b0c4`; verify against a fresh tree before betting on it |
+| *(not in the current doc)* | `qemu-power8` | `qemu-system-ppc64 -M powernv8` | same caveat as `qemu-armv7` |
+
+Two things the table says that no single row does. **The checkout and the doc
+disagree by two boards**, which is the shallow-clone row from the
+[workbench plan](COREBOOT_ROM_WORKBENCH_LAB_PLAN.md) §3 wearing another face: a
+depth-1 tree from June cannot tell you what upstream supports in September. And
+**every coreboot emulation target except Spike has a QEMU binary on this host
+already** — the barrier to a second architecture is a toolchain
+(`util/crossgcc` per arch, or the distro cross-compilers) and a payload that
+runs there, not the machine.
+
+### 8.2 The other firmwares' QEMU doors
+
+| firmware | QEMU targets it runs on here | images / trees on the host | the family today |
+|---|---|---|---|
+| **OpenBIOS** (the toolkit's home) | `x86_64 -M pc` (x86 and the long-mode amd64 port), `ppc -M mac99` / `g3beige`, and the hosted `unix` build; upstream also has sparc32/sparc64 | `~/openbios-lab/openbios`, four built targets | **the four-arch matrix** (unix/x86/amd64/ppc) — the family's differentiator, §5 |
+| **Open Firmware (Firmworks)** | `x86_64 -M pc`; as a coreboot payload on q35 | the OFW labs' trees | two labs + a coreboot payload door |
+| **OpenBoot / OF habitats** | `sparc -M SS-5` (sun4m), `sparc64 -M sun4u`, `ppc -M mac99` | QEMU's bundled OpenBIOS ROMs | the native-habitats lab (SPARC + PPC) |
+| **edk2 — OVMF** (x86-64) | `x86_64 -M q35`/`pc` | `/usr/share/OVMF/`: `OVMF_CODE_4M.fd`, `.secboot.fd`, `.ms.fd`, `.snakeoil.fd` (+ VARS; snakeoil private key shipped) — `ovmf 2024.02` | the linuxboot UKI door, the edk2/swtpm measured-boot fixture, the UEFI/UKI workbench plans |
+| **edk2 — AAVMF** (aarch64) | `aarch64 -M virt` / `sbsa-ref` | `/usr/share/AAVMF/`: `AAVMF_CODE.fd`, `.secboot.fd`, `.ms.fd`, `.snakeoil.fd`, `AAVMF32_*` (+ VARS) — `qemu-efi-aarch64`/`qemu-efi-arm 2024.02` | **unopened, and the one non-x86 UEFI door that is fully provisioned** — the DT-config-table facet the [UEFI plan](UEFI_WORKBENCH_LAB_PLAN.md) Spike 5 cannot have on x86 is native here |
+
+### 8.3 What this means for the plans
+
+- **The four-arch claim stays OpenBIOS's.** Nothing in §8.1 or §8.2 gives coreboot,
+  UEFI or PE a second architecture *today*; the honesty label in §5 (`ARCH:
+  x86-only` for `pe`, UEFI, UKI, and — as measured — coreboot in this family) is
+  the true state, not a limitation of the format.
+- **The cheapest second architecture is aarch64, through AAVMF, not coreboot.** The
+  firmware is installed, QEMU has `virt` and `sbsa-ref`, the kernel's generic EFI
+  stub consumes the DTB config table there, and it needs no cross toolchain to
+  *run* (only to build a guest kernel, which distro arm64 kernels already are).
+  That is one door, not a matrix — but it is the door that makes the UEFI plan's
+  DT row and the coreboot plan's `qemu-aarch64` row measurable rather than named.
+- **RISC-V and POWER9 are coreboot-first doors**: the machine exists on the host,
+  no firmware image does, so coreboot's `qemu-riscv`/`qemu-power9` would be the
+  first firmware the family ever built for either — a real bring-up, which is the
+  [bring-up workbench plan](COREBOOT_BRINGUP_WORKBENCH_LAB_PLAN.md)'s subject, not
+  a spike in any of these.
+- **Refresh the checkout before choosing.** Two of the nine board directories are
+  not on the current upstream page; the tree that answers "what can coreboot
+  target" has to be the tree you will build from.
