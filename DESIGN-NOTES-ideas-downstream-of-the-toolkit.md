@@ -11,6 +11,18 @@ Each idea says the same three things: **what it composes** (all built or planned
 primitives), **the seam that makes it a measurement not a demo**, and **whether it is a track,
 a lab, or undecided** — so scope is a decision on the page, not a surprise later.
 
+> **Re-measured 2026-09-16.** The cross-references all resolve — [`RAM_INFRA_LAB_PLAN.md`](RAM_INFRA_LAB_PLAN.md),
+> [`ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md`](ATTESTED_BOOT_CAPSTONE_LAB_PLAN.md) and the ELF-gate plan
+> (which does reserve the fuzzer name, §3). Two ideas gain a measured fact. **§1 (UEFI as the third
+> firmware) loses its x86 leg:** the "first measurement" it names — does the cached kernel read a
+> DTB config table from edk2 — is answered by the [UEFI plan](UEFI_WORKBENCH_LAB_PLAN.md#3-verified-feasibility-measured-2026-09-16),
+> and the x86 EFI stub (`libstub/x86-stub.c`) has **no FDT path**, so a DTB config table reaches
+> *no* x86 kernel; the three-firmware claim is real on **aarch64** (AAVMF), not x86, where it
+> reaches two (OpenBIOS `SETUP_DTB`, OFW native on ppc). **§3 and §4's cpio dependency now has a
+> home:** `cpio.fth` is still unbuilt and is a *shared* prerequisite three plans want (the
+> firmware-edits note, the UKI plan's Spike 2, this note's fuzzer), so it is built once by whichever
+> lands first. The ranking (§5) is unchanged.
+
 ---
 
 ## 1. The third firmware in the portability story — UEFI hands Linux the same tree
@@ -31,7 +43,14 @@ two interpreters) to the *firmware-interface* level (three firmwares, one kernel
 - **Track or lab?** A **track** in the attested-boot lab's Spike 5 orbit (that lab already
   spans the three firmwares), or a small sibling if the UEFI DTB path proves fiddly. Undecided;
   the first measurement is whether edk2 on the lab's OVMF actually exposes the DTB config table
-  to the cached kernel.
+  to the cached kernel. **Measured 2026-09-16 (UEFI plan §3): on x86, no** — the x86 EFI stub has
+  no FDT code, so a DTB config table reaches no x86 kernel; the config-table seat of this idea is
+  **aarch64-only** (AAVMF, `-M virt`, where ArmVirtQemu publishes the DTB as `EFI_DTB_TABLE`). So
+  on x86 "a firmware-authored tree reaches Linux" is a *two*-firmware claim (OpenBIOS `SETUP_DTB`,
+  OFW native on ppc); making it *three* needs the aarch64 door the family has not opened. That
+  reshapes this idea from "a track under the capstone" to "a track that carries an aarch64 leg or
+  states its x86 absence by name" — no longer undecided on the mechanism, only on whether to open
+  that door.
 
 ## 2. The A/B updater — the boot counter made a product
 
@@ -100,8 +119,9 @@ asks of each reader the chaos-ladder question: does a malformed blob get **REFUS
    that gives every note a shared destination.
 2. **The A/B updater** (§2) — the most product-shaped; the next lab plan to write.
 3. **The reader fuzzer** (§3) — the deferred lab; highest security value, needs a triage harness.
-4. **UEFI as the third firmware** (§1) — likely a track under the capstone, pending the DTB-table
-   measurement.
+4. **UEFI as the third firmware** (§1) — a track under the capstone; the DTB-table measurement is
+   **done (2026-09-16)** and moved it: real on aarch64 (AAVMF), absent on x86 by the kernel's own
+   stub, so the track carries an aarch64 leg or names the x86 absence.
 5. **The cursor meta-test** (§4) — cheap hardening, a track, do it alongside any cursor change.
 6. **The forensics-firmware image** (§4) — a nice-to-have, gated on the toolkit-as-a-driver track
    and a licensing call.
