@@ -114,11 +114,16 @@ Spike 4); **both** an ELF gate and a bzImage gate feed the chain (§5).
   DT-probed TPM, and the ppc machine has none**. Consequence: on the OpenBIOS doors the
   kernel's own log interface is unreachable by mechanism, not by configuration; the mailbox
   (Spike 3) is the route, and the kernel is a witness only on the edk2 leg (Spike 4).
-- **UNKNOWN — the lab kernel's config.** `~/linuxboot-lab/payload-bzImage` is 6.3.0
-  (`coreboot@reproducible`), carries no `IKCFG` marker, and no `.config` for it is on disk.
-  `CONFIG_TCG_TPM`, `CONFIG_OF` (which `SETUP_DTB` needs), and `CONFIG_SECURITYFS` are
-  **unverified**. Spike 1's first act is to build or locate a kernel whose config is known and
-  say which; until then this row stays UNKNOWN rather than assumed.
+- **UNKNOWN — the lab kernel's config, with a known-config candidate beside it.**
+  `~/linuxboot-lab/payload-bzImage` is 6.3.0 (`coreboot@reproducible`), carries no `IKCFG`
+  marker, and no `.config` for it is on disk, so for *that* file `CONFIG_TCG_TPM`,
+  `CONFIG_OF` and `CONFIG_SECURITYFS` stay **unverified**. But the coreboot tree's LinuxBoot
+  payload build is a different kernel of the same version with its config on disk
+  (`payloads/external/LinuxBoot/build/kernel-6_3/.config`; the two images' sha256 differ):
+  **`CONFIG_TCG_TPM=y`, `CONFIG_TCG_TIS=y`, `CONFIG_SECURITYFS=y`, `CONFIG_ACPI=y` — and
+  `CONFIG_OF` is not set.** So Spike 1 has a kernel to adopt whose config is a fact, not a
+  guess — and adopting it means **`SETUP_DTB` needs a rebuild with `CONFIG_OF`** before the
+  tree can ride the handoff, which is now a named step rather than a discovery.
 
 ## 4. Why this and not a hosted tool
 

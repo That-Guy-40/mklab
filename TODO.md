@@ -6085,8 +6085,11 @@ attestation begins. Composition plus **one new gate**, not new primitives:
   open here — the mailbox is the route by mechanism, and the kernel is a witness only on the
   edk2 leg. Two corrections: the Linux door is **`amd64-linux`** (not "x86"; the 32-bit
   `linux_load.c` has no track), and the lab kernel's config (`payload-bzImage`, 6.3.0, no
-  `IKCFG`, no `.config` on disk) is an **UNKNOWN row** — `CONFIG_TCG_TPM`/`CONFIG_OF`/
-  `CONFIG_SECURITYFS` unverified until Spike 1 builds or locates a kernel whose config is known.
+  `IKCFG`, no `.config` on disk) is an **UNKNOWN row** — with a known-config candidate beside
+  it: the coreboot tree's LinuxBoot payload kernel (`build/kernel-6_3/.config`, a different image
+  of the same version) has `CONFIG_TCG_TPM=y`, `TCG_TIS=y`, `SECURITYFS=y`, `ACPI=y` and
+  **`CONFIG_OF` not set**, so adopting it makes "`SETUP_DTB` needs a rebuild with `CONFIG_OF`" a
+  named step rather than a discovery.
 - **Its own lab because** it is a consumer not a primitive, spans three firmwares, carries the
   security posture the toolkit lab does not, and has a stated finish line ("the chain agrees
   three ways where a third witness exists, two where it cannot, the missing seat named, and the
