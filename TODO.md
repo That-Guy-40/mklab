@@ -6378,7 +6378,12 @@ AAVMF (`-M virt`), not coreboot; RISC-V and POWER9 are coreboot-first bring-ups 
 [`COREBOOT_BRINGUP_WORKBENCH_LAB_PLAN.md`](COREBOOT_BRINGUP_WORKBENCH_LAB_PLAN.md); this is the
 pointer.*
 
-Aim the toolkit at **coreboot board bring-up** (porting to a new mainboard), in the two roles the
+**Feasibility measured 2026-09-16:** every §3 row confirmed — `util/autoport/readme.md` present,
+POC-3 payload precedent real, `cbmem` built. Sharpening: the harvest tools (`inteltool`/
+`superiotool`/`ectool`) are *source in the tree, not built, not on the host*, which is precisely
+Spike 0's control state (the parser must run with no tools installed) rather than a gap; and every
+coreboot emulation board but Spike has a QEMU 8.2 binary here (roadmap §8), so Lab B's B0 is a
+choice among working targets, not a hunt. Aim the toolkit at **coreboot board bring-up** (porting to a new mainboard), in the two roles the
 [roadmap](FIRMWARE_FAMILY_ROADMAP.md) allows: a coreboot **payload** and a Linux **host-side
 workbench** (a Tier-3 pair). **Lab A `coreboot-bringup-workbench`** (host-side, *before* the board
 boots coreboot): ingest a running board's harvested facts and **grade + honesty-label** a coreboot
