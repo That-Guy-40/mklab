@@ -39,6 +39,19 @@ driver (or the almost-unused EFI Byte Code). The cost of running a card's code i
 firmware's interpreter is that **it runs with the firmware's full privilege** — which is the
 Thunderstrike attack surface (§4).
 
+> **Re-measured 2026-09-16, against the OpenBIOS tree, the fixtures, and the host's QEMU.** The
+> "what is already on disk" table (§1) is confirmed row for row: `toke`/`detok`/`romheaders` all
+> build under `fcode-utils`; `fixtures/optrom/{build-fcode-rom.py,fcode-card.fth,fcode-card-cfg.fth}`
+> are present; `byte-load ( addr xt -- )` is at `forth/device/feval.fs:63`; patches **55–67** are
+> all in the catalog; the OFW side (`build-fcode-rom.sh`, `build-dropin-rom.sh`) is present. Two
+> facts for the shared-memory rows (§2, §5-S1, §D): QEMU 8.2 on this host has **`edu`** and
+> **`ivshmem-plain`**/`ivshmem-doorbell` — so open question (2)'s two candidates both ship, and
+> `edu` (in-tree, tiny) is the floor. And one cross-cut for §5: the card's word reaching Linux via
+> `SETUP_DTB` needs `CONFIG_OF`, which the coreboot LinuxBoot kernel here **does not have**
+> (`# CONFIG_OF is not set`, measured for the attested-boot plan) — so §5's Step 1–2 lean to the
+> mailbox/`/dev/mem` route on that kernel, the same finding the
+> [firmware-edits note](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md) carries.
+
 ## 1. What is already on disk
 
 | piece | where | state |
@@ -277,7 +290,11 @@ unclaimed by a native driver). Which nodes Linux honours from a handed-in FDT on
 first measurement, before any authoring is trusted. (b) **`CONFIG_OF` gates all of it** — the
 handoff note's §3 already flags this and gives the mailbox fallback; the same gate applies, and
 the same first measurement (does the cached kernel have `CONFIG_OF`) is shared with that note,
-not repeated.
+not repeated. **Partly measured 2026-09-16:** the coreboot LinuxBoot payload kernel here has
+`# CONFIG_OF is not set` (`payloads/external/LinuxBoot/build/kernel-6_3/.config`), so on *that*
+kernel the `SETUP_DTB` route is closed and the mailbox is the path; `payload-bzImage`'s own config
+is still unknown (no `IKCFG`, no `.config` on disk). Either way the authoring in §5 is unchanged —
+what moves is only how the tree reaches userspace.
 
 **Build:** extend `dsl/fdt.fth`'s flatten with the authored properties (no new primitive — it
 already writes strings and cells); FCode fixtures `describe-testdev.fth`, then
@@ -404,8 +421,11 @@ its ABSORBED proof.
    rival lab drives, depending on the OFW emu ROM as a built artifact — a cross-lab dependency
    to state, not hide.
 2. **`edu` vs `ivshmem` for the shared-memory block device (§2/S1, D)?** `edu` is in-tree and
-   tiny; `ivshmem` is a real BAR of host memory and closer to a disk. Measure which QEMU builds
-   ship on the runners.
+   tiny; `ivshmem` is a real BAR of host memory and closer to a disk. **Measured 2026-09-16:**
+   QEMU 8.2 on this host ships **both** (`edu`, `ivshmem-plain`, `ivshmem-doorbell`), so the choice
+   is by fit, not availability — `edu` as the floor (its BAR is trivially host-writable through
+   its MMIO), `ivshmem-plain` when a whole disk-image-sized shared region is wanted. Confirm the
+   CI runners match before a track depends on `ivshmem`.
 3. **Does prevention 1 belong at `here!`, in the device-register store words, or both?** The
    measured hazards (a `,` past the arena; a typed device store) sit in two places; the guard
    may need to as well.
