@@ -6144,6 +6144,13 @@ whether it is a track, a lab, or undecided.*
   comes up with the readers present — a small deliverable, licensing call, gated on
   toolkit-as-a-driver).
 
+**Re-measured 2026-09-16:** cross-refs all resolve (RAM_INFRA, ATTESTED_BOOT, the ELF-gate plan,
+which does reserve the fuzzer name). §1 (UEFI third firmware) loses its x86 leg — the x86 EFI stub
+has no FDT path (UEFI plan §3), so a DTB config table reaches no x86 kernel; the three-firmware
+claim is real on aarch64 (AAVMF), two on x86 (OpenBIOS SETUP_DTB, OFW native ppc). §3/§4's `cpio.fth`
+is unbuilt and now a shared prerequisite (firmware-edits §22, UKI Spike 2, the fuzzer). Ranking
+unchanged.
+
 ## 28. The coreboot ROM Workbench — coreboot as the subject (2026-09-14)
 
 *Discussion draft, not scheduled — a proposed **new lab** (`coreboot-rom-workbench/`), written up
