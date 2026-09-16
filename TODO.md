@@ -65,6 +65,35 @@ watched to fail on a needle that never arrives.
       without gating them — the first draft flagged all 30 hits including its own
       documentation, which would have bred exemptions until it meant nothing.
 
+## 0.7 The next BUILD, not plan — `dsl/cpio.fth` (2026-09-16)
+
+*The firmware family is now fully planned and fully measured (§22–§34 all re-measured 2026-09-16,
+PRs #426–#436). The next actual **build** — code, not a plan — is the one thing three of those
+plans converge on and none of them has.*
+
+**`dsl/cpio.fth` — a `newc` cpio reader on the existing `struct.fth` cursor.** It is the cheapest
+high-leverage build in the family: a 110-byte ASCII-hex `newc` header (`070701`, then thirteen
+8-digit hex fields), a NUL-terminated name padded to 4, data padded to 4, a `TRAILER!!!` member —
+which is exactly the length-prefixed, 4-aligned, sequential record the Spike-0 cursor
+(`>rec`/`t@+`/`vbytes`/`alignto`) was built for, plus **one** new type: "eight hex digits as a
+number". No new primitive; no firmware patch; unix workbench first.
+
+**It unblocks three plans at once, which is why it goes first:**
+- the [UKI workbench](UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 2** — grade a UKI's `.initrd` section
+  by walking it as a cpio (today the plan names `cpio.fth` as if built; it is not);
+- the [firmware-edits note](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md)'s **§2.2
+  `initrd-append`** seam — walk, find, and append a member to the initrd the kernel unpacks;
+- the [reader-fuzzer idea](DESIGN-NOTES-ideas-downstream-of-the-toolkit.md) (§3) — cpio is one of
+  the formats it mutates and grades on the chaos ladder.
+
+**Oracle and controls (this repo's rules):** the foreign oracle is host `cpio -itv` on the same
+bytes (via `pmemsave`/`write-file`), never our own reader; `cpio-walk`'s member count equals
+`cpio -itv`'s; a truncated archive or a size that overruns the next member is **refused by name**,
+not read as garbage; the four-arch matrix grades the ASCII-hex parse (byte-order-free, so ppc is a
+real row, not a copy). **Build:** `dsl/cpio.fth` (`cpio-walk`, `cpio-find`), a `cpio` track + a
+`tests/` wrapper, graded against `cpio -itv`; `initrd-append` and the UKI `.initrd` grade consume
+it rather than re-implement it. Whichever plan lands first builds it; it is owned by neither.
+
 ## 0.6 The OpenBIOS toolkit's front of the queue (2026-08-27)
 
 *Placed above §0.5 on purpose, and scoped narrowly on purpose.* §0.5 still has two open
