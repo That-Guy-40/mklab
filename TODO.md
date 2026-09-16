@@ -5863,6 +5863,14 @@ read, validated or changed (`SETUP_PCI` handing Act III's card ROM to Linux,
 seam left closed). **The seams are the build list**: §5 tabulates file, words, track
 and oracle per seam. Open questions for discussion are its §6.
 
+**Re-measured 2026-09-16:** §1's substrate confirmed — `arch/x86/linux_load.c` and
+`arch/amd64/linux_load.c` both exist, patches 01/12 in the catalog, `cpio.fth` (§2.2's deliverable)
+not yet built and now a *shared* prerequisite (this note, the UKI plan's Spike 2, the reader-fuzzer
+idea). Open question 4 partly answered: the coreboot LinuxBoot kernel has `# CONFIG_OF is not set`,
+so Idea B (§3) is the **mailbox** on that kernel, not the `setup_data` record; `payload-bzImage`'s
+own config stays UNKNOWN, so the first act is adopting a kernel whose config is a fact — same finding
+as the attested-boot plan.
+
 ## 23. Modern filesystems for a frozen firmware — lift, transliterate, or bring your own (2026-09-05)
 
 *Discussion draft, not scheduled.* Written up in
