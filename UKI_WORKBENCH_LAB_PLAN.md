@@ -96,9 +96,10 @@ oracle).
   door this family has not opened).
 - **Oracles, measured on the host:** present — `ukify`, `systemd-measure`, `systemd-dissect`,
   `sbverify`, `sbsign`, `objdump`, `objcopy`, `mtools`, `swtpm`, `tpm2_eventlog`. One `apt` away —
-  `pesign` (116), `llvm` (for `llvm-readobj`, 18), `poke` (**4.0**, for `pe.pk`; whether the
-  Debian package ships the pickle is UNMEASURED — check `dpkg -L poke | grep pe.pk` before relying
-  on §4a), `efitools`.
+  `pesign` (116), `llvm` (for `llvm-readobj`, 18), `poke` (**4.0**, for `pe.pk` — **measured
+  2026-09-16 from the package's file list: it ships `/usr/share/poke/pickles/pe.pk`**, plus
+  `poked`, and its `libpoke1` pulls `libnbd0`; so §4a's oracle is one `apt install poke` away),
+  `efitools`.
 - **`cpio.fth` does not exist.** Spike 2 grades `.initrd` with "the `cpio.fth` reader" as if it
   were built; the `dsl/` has no cpio walker and the fs note's tiers cover ext/FAT/ISO, not cpio.
   A `newc` walker is the TLV shape `struct.fth`'s cursor was made for (a 110-byte ASCII header,
@@ -244,7 +245,8 @@ boot?~~ **Answered 2026-09-16 (§3):** ukify 255 + `systemd-measure` are on the 
 `build-uki.sh` passes no PCR key so today's UKI has no `.pcrsig` — one flag pair away; and OVMF
 measures a directly-booted PE app into PCR4 with no secure boot (one
 `EV_EFI_BOOT_SERVICES_APPLICATION` in the fixture's log). Still unmeasured: the rebuilt UKI itself
-(none is on disk), and whether the `poke` Debian package ships `pe.pk`. (3) Does this lab own
+(none is on disk). The `poke` package question is closed — it ships `pe.pk` (measured from the
+package's file list, see §3). (3) Does this lab own
 `dsl/pe.fth` (yes) and the UEFI workbench consume it (yes) — stated, not duplicated. (4) **New:**
 `cpio.fth` is a prerequisite nobody had written down — this lab builds it (Spike 2), the fs note
 cites it.
