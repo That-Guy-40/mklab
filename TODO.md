@@ -6068,14 +6068,29 @@ attestation begins. Composition plus **one new gate**, not new primitives:
   (Spike 1) since the capstone must measure a bzImage's gate verdict. The user wants both, and
   both land here.
 - **Spikes:** 0 the anchor (a decision — provenance file / golden log / both); 1 the bzImage
-  gate green; 2 measure the chain into one log; 3 hand the log across (`setup_data`/e820
-  mailbox) beside `SETUP_DTB`; 4 replay three ways (firmware, kernel sysfs, host) and require
-  agreement, QUOTE: UNKNOWN printed; 5 the same boot under OpenBIOS/coreboot/UEFI, one report of
-  what each firmware's handoff differs by; 6 the malicious payload **noticed** (the FCode note's
-  chaos rows from the measurer's seat).
+  gate green; 2 measure the chain into one log; 3 hand the log across in the **e820 mailbox,
+  by decision** (see below) beside `SETUP_DTB`; 4 replay and require agreement — **three ways
+  where a third witness exists** (the edk2 leg's `binary_bios_measurements`), **two on the
+  OpenBIOS doors** with `KERNEL WITNESS: UNKNOWN` named; QUOTE: UNKNOWN printed on every leg;
+  5 the same boot under OpenBIOS/coreboot/UEFI, one report of what each firmware's handoff
+  differs by; 6 the malicious payload **noticed** (the FCode note's chaos rows from the
+  measurer's seat).
+- **Re-measured 2026-09-16 (against the tree and `drivers/char/tpm/eventlog/`).** The plan's
+  open question "does the OpenBIOS Linux door's kernel expose `/sys/kernel/security/tpm0/…`
+  without a TPM?" is **answered: no, and not with one either.** `tpm_bios_log_setup()` returns
+  before creating any `securityfs` entry unless `tpm_read_log()` finds a *firmware-authored* log
+  through ACPI (`TPM2` log area / `TCPA`), EFI, or the Open Firmware `linux,sml-base` property —
+  and no OpenBIOS door reaches any of the three (no ACPI parser or tables, no EFI, no TPM
+  device on ppc `mac99`). So "the log has no standard type" was wrong — it has two, neither
+  open here — the mailbox is the route by mechanism, and the kernel is a witness only on the
+  edk2 leg. Two corrections: the Linux door is **`amd64-linux`** (not "x86"; the 32-bit
+  `linux_load.c` has no track), and the lab kernel's config (`payload-bzImage`, 6.3.0, no
+  `IKCFG`, no `.config` on disk) is an **UNKNOWN row** — `CONFIG_TCG_TPM`/`CONFIG_OF`/
+  `CONFIG_SECURITYFS` unverified until Spike 1 builds or locates a kernel whose config is known.
 - **Its own lab because** it is a consumer not a primitive, spans three firmwares, carries the
   security posture the toolkit lab does not, and has a stated finish line ("the chain agrees
-  three ways and the quote is UNKNOWN by name"). §2b LOCKED.
+  three ways where a third witness exists, two where it cannot, the missing seat named, and the
+  quote is UNKNOWN by name"). §2b LOCKED.
 
 ## 27. Ideas downstream of the toolkit — a backlog (2026-09-14)
 

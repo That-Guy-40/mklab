@@ -1,4 +1,4 @@
-# The Attested Boot — a Capstone Lab Plan v1 (2026-09-14)
+# The Attested Boot — a Capstone Lab Plan v1 (2026-09-14; feasibility re-measured 2026-09-16)
 
 *Proposed as **its own lab**, deliberately downstream of and separate from the toolkit work,
 so it builds on the readers/writers/gates without getting in their way. Working lab name:
@@ -12,6 +12,16 @@ page, `SETUP_DTB`, the `?bootparams` bzImage gate), the
 [filesystem readers](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md), and the
 [FCode option-ROM notes](DESIGN-NOTES-fcode-option-roms.md) (measured `byte-load`). Tracked as
 [`TODO.md` §26](TODO.md#26-the-attested-boot--a-capstone-lab-openbios-measures-its-own-boot-2026-09-14).*
+
+> **Re-measured 2026-09-16, against the tree and the kernel's source.** §3's feasibility rows
+> hold. Its "to verify first" question (= §9.2) is now **answered, and the answer is no**: the
+> kernel creates `/sys/kernel/security/tpm0/` only when a TPM chip registers *and* the firmware
+> left a log where the kernel already knows to look — an ACPI `TPM2`/`TCPA` table, an EFI config
+> table, or the Open Firmware `linux,sml-base` property — and no OpenBIOS door can reach any of
+> the three today. So §9.3's "the log has no standard type" is wrong in a productive way (it has
+> two, both firmware-authored, neither open here), **Spike 3's oracle is the mailbox by
+> decision**, and **Spike 4's third witness exists only on the edk2 leg**. §3 also gains an
+> UNKNOWN row for the lab kernel's config, and the Linux door is named correctly (amd64).
 
 ---
 
@@ -49,8 +59,10 @@ anchor named as absent.
 
 **In scope:** measure the payload, kernel, initrd, command line, DTB, and each `byte-load`ed
 option ROM; author one event log spanning them; hand the OS the log (through a reserved e820
-range or a `setup_data` record) *and* the boot; replay three ways (firmware, kernel sysfs,
-host) and require agreement; **both** an ELF gate and a bzImage gate feed the chain (§5).
+range — the mailbox, §5 Spike 3) *and* the boot; replay and require agreement — **three ways
+where a third witness exists** (firmware, host, and the kernel's own `binary_bios_measurements`
+on the edk2 leg), **two ways on the OpenBIOS doors** with the third seat named UNKNOWN (§5
+Spike 4); **both** an ELF gate and a bzImage gate feed the chain (§5).
 
 **Out of scope (hard):** a hardware quote (UNKNOWN, always); sealing/unsealing to PCRs
 (that needs the quote); modifying secure-boot policy; any real machine or vendor firmware.
@@ -79,11 +91,34 @@ host) and require agreement; **both** an ELF gate and a bzImage gate feed the ch
   `event-replay`, `event-real`).
 - the kernel exposes `/sys/kernel/security/tpm0/binary_bios_measurements` under the phase-2
   swtpm+OVMF guest — **✅** (the toolkit plan's Spike 1 subject).
-- **to verify first:** whether the OpenBIOS-x86 Linux door's kernel exposes
-  `/sys/kernel/security/…` **without** a TPM present (measured boot needs the log interface,
-  not necessarily a TPM); and whether `CONFIG_OF` is on (shared with the handoff notes). If
-  the log interface needs a TPM, the guest gets QEMU's `tpm-tis` + swtpm, which the fixtures
-  already stand up.
+- `tools/openbios-rom-provenance.sh` binds a ROM to the payload inside it by **deriving**
+  (extracts the payload and compares it to the ELF) — **✅ exists**, and its own header
+  retracts a stale "cannot extract" claim, which is the shape Spike 0 wants.
+- the host has `swtpm`, `tpm2_eventlog`, QEMU `tpm-tis`/`tpm-crb` (x86 only — **ppc `mac99`
+  has no TPM device at all**), and phase 2 already passes TPM args (`test-tpm-args.sh`) — **✅**.
+- **the Linux door is `amd64-linux`**, the only track that boots a kernel under OpenBIOS
+  (`arch/x86/linux_load.c` exists but no track exercises the 32-bit door). The plan's first
+  draft said "OpenBIOS-x86"; corrected.
+- **Answered 2026-09-16 (was "to verify first"): does that door's kernel expose
+  `/sys/kernel/security/tpm0/…` without a TPM? No — and not *with* one either, under
+  OpenBIOS.** From `drivers/char/tpm/eventlog/common.c`: `tpm_bios_log_setup()` runs when a
+  chip registers, calls `tpm_read_log()` (ACPI → EFI → OF, in that order), and **`if (rc < 0)
+  return;` before `securityfs_create_dir`** — no log found, no directory at all. The three
+  places it looks are all *firmware-authored*: an ACPI `TPM2` table's `log_area_start_address`
+  (or a `TCPA` table), an EFI configuration table, or the Open Firmware `linux,sml-base` /
+  `linux,sml-size` properties on the TPM's device-tree node (`eventlog/of.c`, which also
+  wants `compatible = "IBM,vtpm"`). Under OpenBIOS: **no ACPI** (`arch/amd64/openbios.c`:
+  *"this tree has no ACPI parser at all"* — QEMU's tables, TPM2 included, sit in fw_cfg
+  behind a table-loader OpenBIOS does not run, so the kernel boots with no RSDP); **no EFI**;
+  and the **OF route — exactly the device tree the `fdt` track already flattens — needs a
+  DT-probed TPM, and the ppc machine has none**. Consequence: on the OpenBIOS doors the
+  kernel's own log interface is unreachable by mechanism, not by configuration; the mailbox
+  (Spike 3) is the route, and the kernel is a witness only on the edk2 leg (Spike 4).
+- **UNKNOWN — the lab kernel's config.** `~/linuxboot-lab/payload-bzImage` is 6.3.0
+  (`coreboot@reproducible`), carries no `IKCFG` marker, and no `.config` for it is on disk.
+  `CONFIG_TCG_TPM`, `CONFIG_OF` (which `SETUP_DTB` needs), and `CONFIG_SECURITYFS` are
+  **unverified**. Spike 1's first act is to build or locate a kernel whose config is known and
+  say which; until then this row stays UNKNOWN rather than assumed.
 
 ## 4. Why this and not a hosted tool
 
@@ -129,18 +164,30 @@ At each gate (ELF and bzImage) and each `byte-load`, `sha256` the bytes and auth
 string, the DTB `dt>fdt` wrote, and each option ROM. **Control:** one byte changed in any input
 moves exactly its entry's digest and the replayed PCR, and nothing else's.
 
-### Spike 3 — hand the log across
-Carry the finished log to the OS: a `setup_data` record of a lab type, or a reserved e820 range
-named on the command line (the handoff notes' mailbox). **Oracle:** userspace reads the log
-back (`/sys/kernel/…` if the kernel ingested it, or `/dev/mem` at the named address), and its
-sha256 equals the firmware's. **The tree goes too** (`SETUP_DTB`), so the DTB the log measured
-is the DTB the kernel received — the two accounts are of one boot.
+### Spike 3 — hand the log across (the mailbox, by decision)
+Carry the finished log to the OS in a **reserved e820 range named on the command line** (the
+handoff notes' mailbox). This is a decision, not a fallback: the two *standard* firmware→kernel
+channels for a TCG log — an ACPI `TPM2` table's log area and the Open Firmware
+`linux,sml-base` property — are both firmware-authored and **neither is open through an
+OpenBIOS door** (§3: no ACPI, no EFI, no TPM on ppc), so the kernel's own ingestion
+(`/sys/kernel/security/tpm0/binary_bios_measurements`) is **unreachable here by mechanism**.
+A `setup_data` record has no type for it. **Oracle:** userspace reads the log back from
+`/dev/mem` at the named address (an initrd that has it), and its sha256 equals the firmware's.
+**The tree goes too** (`SETUP_DTB`, if `CONFIG_OF` — §3's UNKNOWN row), so the DTB the log
+measured is the DTB the kernel received — the two accounts are of one boot. **Named and not
+taken:** authoring an ACPI `TPM2` table would mean authoring ACPI from nothing (RSDP → RSDT →
+TPM2) on a firmware that has none; that is a lab of its own, not a spike here.
 
-### Spike 4 — replay three ways, require agreement
+### Spike 4 — replay, require agreement; three ways where a third witness exists
 The firmware replays its own log (`evlog-replay`); the host replays the same bytes
-(`tpm2_eventlog` + python `hashlib`); and — where a TPM is present — the kernel's
-`binary_bios_measurements` is the third. **All three PCR sets must agree**, or the divergence
-is named per entry. **QUOTE: UNKNOWN** printed with its reason, every run.
+(`tpm2_eventlog` + python `hashlib`). **On the OpenBIOS doors that is the whole jury** — two
+witnesses — and the run prints the third seat as **`KERNEL WITNESS: UNKNOWN — no
+firmware-authored log channel reaches this kernel (§3)`**, by name, not as a blank. **The
+third witness exists on the edk2 leg only** — the kernel's `binary_bios_measurements`, which
+`event-real` already replays to the machine's own PCRs 8/8 — so on that leg **all three PCR
+sets must agree**, or the divergence is named per entry. **QUOTE: UNKNOWN** printed with its
+reason, every run, on every leg. §2b's finish line reads accordingly: *three ways where a
+third witness exists, two where it cannot, and the missing seat named.*
 
 ### Spike 5 — the same boot, N firmwares, one report
 Generalise the `event-bench`: the same kernel+initrd reached by **OpenBIOS**, **coreboot**, and
@@ -178,17 +225,23 @@ build doors; the edk2/coreboot fixtures) stated, not hidden.
 | 0 | the anchor named, a mismatch refused before `go` | a stale anchor refused by name |
 | 1 | the bzImage gate refuses a one-field-bad image by name; the good one boots | gate stripped → bad image accepted |
 | 2 | one log spanning payload/kernel/initrd/cmdline/DTB/ROMs; each entry's digest matches the host's | one byte per input moves only its entry |
-| 3 | userspace reads the log back, sha256 == the firmware's; `/proc/device-tree` carries the measured DTB | the mailbox address wrong → not found, by name |
-| 4 | firmware, host, and kernel PCRs agree; QUOTE: UNKNOWN printed | a flipped entry diverges in all three identically |
+| 3 | userspace reads the log back from the mailbox via `/dev/mem`, sha256 == the firmware's; `/proc/device-tree` carries the measured DTB (or `CONFIG_OF` named absent) | the mailbox address wrong → not found, by name |
+| 4 | OpenBIOS doors: firmware and host PCRs agree, `KERNEL WITNESS: UNKNOWN` named; edk2 leg: firmware, host **and** kernel agree; QUOTE: UNKNOWN printed on every leg | a flipped entry diverges in every witness identically |
 | 5 | one report, three firmwares, the per-firmware handoff differences named | the no-fault row: identical payload, identical payload-PCR |
 | 6 | the tampered boot's log differs from clean in exactly the touched entry | the clean boot is byte-identical run to run |
 
 ## 9. Open questions
 1. **Spike 0's anchor** — (A), (B), or (C)? Decide by the stale-record surface.
-2. **Does the OpenBIOS-x86 kernel expose the log interface without a TPM?** §3's first
-   measurement; decides whether Spike 4's third witness needs `tpm-tis`+swtpm on that door.
-3. **`setup_data` record vs the e820 mailbox for handing the log across** (Spike 3) — the DTB
-   uses `SETUP_DTB`; the log has no standard type, so the mailbox is likely, and the note says
-   so rather than inventing a type.
+2. ~~**Does the OpenBIOS-x86 kernel expose the log interface without a TPM?**~~ **Answered
+   2026-09-16: no, and not with one either** — `tpm_bios_log_setup()` returns before creating
+   `securityfs` entries unless `tpm_read_log()` finds a firmware-authored log through ACPI,
+   EFI, or the OF `linux,sml-base` property, and no OpenBIOS door (amd64, the only Linux
+   door) provides any of the three (§3). Adding `tpm-tis`+swtpm to that door registers a chip
+   and changes nothing about the log. Spike 4's third witness lives on the edk2 leg.
+3. ~~**`setup_data` record vs the e820 mailbox**~~ **Decided: the mailbox** (Spike 3). The
+   first draft's reason — "the log has no standard type" — was wrong: it has **two**, the ACPI
+   `TPM2` log area and the OF `linux,sml-base` property, both firmware-authored. The real
+   reason is that neither is reachable from OpenBIOS without first authoring ACPI (no) or
+   having a DT-probed TPM on ppc (none). `setup_data` genuinely has no type for it.
 4. **Does Spike 5's UEFI leg belong here or stay in the rival lab's `event-bench`?** It exists
    there; the capstone may *consume* it rather than re-home it — a cross-lab call, §2b.
