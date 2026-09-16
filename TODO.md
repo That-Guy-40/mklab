@@ -6171,11 +6171,32 @@ a real dev key, **A/B firmware slots**, and **rollback protection**, drawing the
 UNKNOWN: real vboot's teeth are **hardware write-protect** and a **hardware rollback counter**,
 neither of which QEMU provides, so the lab proves the **verification/recovery logic** and prints
 **HW-ANCHOR: UNKNOWN** with the reason — measured→verified is real, verified→*unforgeable* still
-needs the hardware, and the lab says exactly where the line is. Spikes: 0 does vboot build+boot on
-this q35 target and what anchors trust (decision; TPM-anchored RO the honest option); 1 a tampered
-RW caught → recovery; 2 A/B slots with fallback; 3 rollback refused by version; 4 the verified
-decision **measured into** the attested-boot log. Composes with the A/B **updater** idea one layer
-down (roll back a bad *firmware*, not just a bad *kernel*). **Adjacency named, not built:** SMM
+needs the hardware, and the lab says exactly where the line is. Spikes: 0 does vboot boot on
+this q35 target and what anchors trust (decision); 1 a tampered RW caught → recovery; 2 A/B
+slots with fallback; 3 rollback refused by version; 4 the verified decision **measured into** the
+attested-boot log. Composes with the A/B **updater** idea one layer down (roll back a bad
+*firmware*, not just a bad *kernel*).
+
+**Re-measured 2026-09-16 (against `src/mainboard/emulation/qemu-q35/`, `src/security/vboot/`,
+`3rdparty/vboot/`).** Four "to verify" rows answered from upstream's source, one of them
+reshaping a spike: **(1) vboot on q35 is upstream** — the board carries a `config VBOOT` block and
+ships `vboot-rwa-8M.fmd` (RO + RW_A) and `vboot-rwab-8M.fmd` (RO + RW_A + RW_B), so A/B is a
+config choice, not a port; only the *boot* remains to measure. **(2) Both layouts are 8 MiB**
+where every ROM here is 16 MiB, and the `rwab` slot holds ≈1.69 MiB — OpenBIOS (1.14 MiB) fits,
+LinuxBoot (3.08 MiB) does not, so the A/B payload is OpenBIOS or SeaBIOS. **(3) Without a TPM,
+anti-rollback is *disabled*, not unanchored** — `select VBOOT_MOCK_SECDATA if !TPM`, Kconfig's own
+words — so Spike 3 exists only on a `CONFIG_TPM2`+swtpm build (the measured-coreboot fixtures
+already make one), where the counter lives in TPM NV and persists with the swtpm state file; the
+no-TPM boot becomes the spike's named negative control, and HW-ANCHOR reads *swtpm NV (software
+TPM)* rather than the generic UNKNOWN. **(4) The RO region has no write-protect on this board**
+(`get_write_protect_state()` is the `__weak` 0), but QEMU can enforce one outside the guest by
+splitting the image at the `WP_RO` boundary (top of flash, 4 KiB-aligned) across two pflash units
+with unit 0 `readonly=on` — the OVMF shape — now Spike 0's option (C); recommended (B)+(C) with
+the single-unit boot as the control. Also: the selector/recovery request live in **CMOS**
+(`VBOOT_VBNV_CMOS`), volatile across a QEMU restart, so A/B is a warm reboot; coreboot signs with
+the on-disk `3rdparty/vboot/tests/devkeys/` by default, so the lab's own keypair is what makes
+"signed wrong" mean anything; `futility` source present, unbuilt; SMM (§7's sibling) is already
+real on this build (`HAVE_SMI_HANDLER=y`, `SMM_ASEG=y`). **Adjacency named, not built:** SMM
 (x86 ring -2, runtime isolation, the firmware-rootkit surface, the runtime sibling of the FCode
 Thunderstrike rows) is its own future security lab beside
 [`SECURITY_RANGE_LAB_PLAN.md`](SECURITY_RANGE_LAB_PLAN.md) — *verified boot is integrity at load,
