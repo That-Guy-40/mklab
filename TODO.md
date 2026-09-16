@@ -6049,6 +6049,13 @@ it now that Act III runs one.
 - **Also named:** the shared-memory bootable card (a device the firmware has no driver for,
   made bootable by FCode — "what FCode was for", no patch).
 
+**Re-measured 2026-09-16:** §1's "already on disk" table confirmed row for row — `toke`/`detok`/
+`romheaders` build, the `fixtures/optrom/` cards present, `byte-load` at `feval.fs:63`, patches
+55–67 all in the catalog, the OFW `build-fcode-rom.sh`/`build-dropin-rom.sh` present. QEMU 8.2 here
+has both `edu` and `ivshmem-plain` (open Q2's candidates both ship; `edu` is the floor). And the
+coreboot LinuxBoot kernel has `# CONFIG_OF is not set`, so §5's "card's word reaches Linux" leans to
+the mailbox on that kernel — same finding as the firmware-edits note (§22).
+
 ## 26. The attested boot — a capstone lab (`openbios-measures-its-own-boot`) (2026-09-14)
 
 *Discussion draft, not scheduled — a proposed **separate lab**, deliberately downstream of the
