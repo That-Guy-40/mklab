@@ -6234,8 +6234,8 @@ prerequisite, now owned by this lab. Measured ✅: OVMF measures a directly-boot
 with **no** secure boot (one `EV_EFI_BOOT_SERVICES_APPLICATION` in the fixture's log — a bare
 kernel, not a UKI, so the UKI leg stays unmeasured until rebuilt); oracles present (`ukify`,
 `systemd-measure`, `systemd-dissect`, `sbverify`, `sbsign`, `objdump`, `mtools`, `swtpm`,
-`tpm2_eventlog`) or one `apt` away (`pesign`, `llvm`, `poke` 4.0 — whether the package ships `pe.pk`
-is UNMEASURED, `efitools`). PE's manifest is `ARCH: x86-only` (an aarch64 UKI under AAVMF is a door
+`tpm2_eventlog`) or one `apt` away (`pesign`, `llvm`, `poke` 4.0 — **ships `pe.pk` and `poked`,
+measured from its file list**, `efitools`). PE's manifest is `ARCH: x86-only` (an aarch64 UKI under AAVMF is a door
 the host could open — roadmap §8).
 
 ## 31. The UEFI Workbench — the platform where the family converges (2026-09-14)
@@ -6299,6 +6299,24 @@ prove the seam (poke's bytes == `xxd`); 2 dissect with pickles == the toolkit's 
 (click a field, jump to its byte span); 4 edit a live block store and prove the firmware sees the
 new value, refusing a bad edit **before** the write; 5 live RAM across the handoff — or `SNAPSHOT`,
 named. Host-only, own QEMU session/images/sockets, defensive/emulated. §2b LOCKED.
+
+**Re-measured 2026-09-16 (against the host's packages, QEMU 8.2.2's QMP, sourceware's pacme page,
+and `libpoke.h`).** The framing holds; four facts sharpen it. **(1) There is no "repo's poke
+build"** — poke is not installed and no script invokes it (the `pe.pk` oracle is adopted in plans,
+not code); Ubuntu's `poke 4.0+dfsg-1` ships `poke`, **`poked`**, `pokefmt` and
+**`/usr/share/poke/pickles/pe.pk`**, and `libpoke1` depends on `libgc1` **and `libnbd0`** — so
+Spike 0's (A) FILE and (B) NBD are *both* on the floor after one `apt install poke`; the plan's
+"FILE until rebuilt" phase does not exist. **(2) pacme is unpackaged** — sourceware git, autotools,
+tmux (present). **(3) Capstone is NOT an existing repo dependency** — the READMEs' "capstone" is the
+metaphor for the x86 revival, no `libcapstone` is installed; it is a new optional dep for
+`plet-cpu-disasm` only. **(4) `libpoke.h` has `struct pk_iod_if` + `pk_register_iod()`**, documented
+as one foreign IO device at a time — Spike 5's gdbstub IOD is a real, bounded C file. QEMU's QMP
+has `nbd-server-start`/`nbd-server-add`/`block-export-add`/`pmemsave`/`dump-guest-memory`
+(measured), and the OVMF `VARS`/OpenBIOS NVRAM pflash are already block *nodes*, exportable
+directly — which answers open question (2). **One hazard added:** a *writable* export of a node the
+guest's pflash device holds meets QEMU's block-permission system; accepted / needs-pause / refused
+is UNMEASURED, Spike 0 measures it, and Spike 4's "edit live" is shaped by the answer rather than
+falling back silently to editing the file behind QEMU's back.
 
 ## 33. Firmware family — a foundation-first roadmap (federation, not fusion) (2026-09-15; gap re-measured 2026-09-16)
 
