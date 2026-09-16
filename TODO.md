@@ -6239,3 +6239,33 @@ as `LIVE`), and two honesty axes in the manifest (`ARCH: x86-only` for PE/UEFI s
 quietly leaves its four-arch edge; `HOST-ONLY`/`LIVE`/`SNAPSHOT`). A `check-*.sh` proves the slim
 profile and the lift-to-own-repo closure. Next actionable unit: **Tier 0**. Does not fuse the DSLs,
 does not schedule, does not touch the provisioning goals.
+
+## 34. coreboot bring-up — a host-side porting workbench + a payload inspector (2026-09-16)
+
+*Discussion draft, not scheduled — **two proposed new labs** (`coreboot-bringup-workbench/`,
+`coreboot-payload-inspector/`), written up in
+[`COREBOOT_BRINGUP_WORKBENCH_LAB_PLAN.md`](COREBOOT_BRINGUP_WORKBENCH_LAB_PLAN.md); this is the
+pointer.*
+
+Aim the toolkit at **coreboot board bring-up** (porting to a new mainboard), in the two roles the
+[roadmap](FIRMWARE_FAMILY_ROADMAP.md) allows: a coreboot **payload** and a Linux **host-side
+workbench** (a Tier-3 pair). **Lab A `coreboot-bringup-workbench`** (host-side, *before* the board
+boots coreboot): ingest a running board's harvested facts and **grade + honesty-label** a coreboot
+port against them. It does **not** reimplement coreboot's [`util/autoport`](https://github.com/coreboot/coreboot/blob/master/util/autoport/readme.md)
+(which harvests via inteltool/superiotool/ectool + lspci/dmidecode/acpidump and generates a board
+dir) — it **verifies** the port and labels each fact `DISCOVERED` / `VENDOR-STATE` (post-vendor-init
+snapshot, not reset truth) / `UNDERIVABLE` (raminit/FSP/AGESA/`mrc.bin` — a booted OS can't know).
+**Spike 0 seam (per your steer):** the input contract is *"a directory of logs/dumps"* — **rudimentary
+autoport-log parsing is the required, robust core** (files survive the coreboot team renaming or
+deprecating a tool); **driving the util tools live is the optional, fragile edge**, isolated behind an
+adapter so removing it doesn't touch the parser (control: parse a fixture `logs/` with no tools
+installed). Grades against coreboot's own tools as oracles — the repo already does this (`cbfstool` in
+[the rival lab](examples/openbios-the-rival-that-shipped/dsl/cbfs.fth)); extend to `cbmem`/`ifdtool`/
+`inteltool`/`superiotool`. **Lab B `coreboot-payload-inspector`** (in-firmware, *after* bring-up):
+OpenBIOS built as a **coreboot payload** on the emulated `qemu-q35` target (precedent:
+[open-firmware-forth-to-boot POC-3](examples/open-firmware-forth-to-boot/POC-3-COREBOOT-PAYLOAD.md)),
+reading the **coreboot table** (`lb_*` TLV records) + CBMEM console from inside, graded against host
+`cbmem`; real-board dumps as `HW-ANCHOR: capture` fixtures, never claimed as a live metal run.
+Honesty: `ARCH: x86-only` on the autoport/inteltool/FSP parts, multi-arch on CBFS/FMAP/SMBIOS/
+coreboot-table readers. Chaos rows: truncated harvest, rotated CBMEM, a missing/renamed live tool
+(DEGRADE to the fixture + name it). **Reads and verifies; never flashes metal.** §2b LOCKED.
