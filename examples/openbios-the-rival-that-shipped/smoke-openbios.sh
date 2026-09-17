@@ -104,6 +104,13 @@ TRACK (default multiboot):
                               re-flattened, dtc decompiles the round trip IDENTICALLY
                               on all four arches; the firmware's own blob reads back
                               with the writer's counts; BAD-MAGIC/BAD-TOKEN controls
+  cpio                        TODO §0.7: dsl/cpio.fth walks a newc cpio archive on the
+                              Spike-0 cursor — the member names and sizes equal the
+                              host's own `cpio -itv`, IN ORDER, on all four arches (a
+                              newc field is ASCII hex, so ppc reads the same values as
+                              x86, not a swap); cpio-find returns a member's bytes;
+                              BAD-MAGIC/TRUNCATED controls refuse a corrupt archive by
+                              name (needs GNU cpio, genisoimage, both QEMUs)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -5395,6 +5402,128 @@ PY
     imp_grade "$IPLOG" "$IWD/ppc-rt.dtb" ppc
     pass "B.3 Spike 5 (FDT, the reader half): dsl/fdt-read.fth walks a flattened device tree and MATERIALIZES it into the live tree, on unix, x86, amd64 AND ppc. Subject (a): a blob dtc AUTHORED on the host from fixtures/fdt/import.dts, delivered over the CD, ingested under /imported (root properties onto the node, every child a new-device, every property a property), re-flattened by Spike 4's writer from that node, pulled back out (write-file / QMP pmemsave / the console dump) — and dtc decompiles the round trip IDENTICALLY to its own blob on every arch: the reference and the result are both derived from binary, so dtc's rendering guesses cancel and only the tree can differ. Subject (b): the firmware's OWN blob read back — the reader's node and property counts equal the writer's. Every field is read big-endian, so ppc reads native and the three little-endian arches swap. The reader refuses by name: an LE magic → BAD-MAGIC and 0, a token of 7 → BAD-TOKEN and 0. What the round trip forced on the writer: FDT derives names from BEGIN_NODE and deprecates the `name` property, so dt>fdt now skips it on every node (Spike 4 skipped only the root's) — a materialized node gets one from device-name, and a blob dtc authored has none"
     ;;
+  cpio)
+    # TODO §0.7 — dsl/cpio.fth, a newc cpio reader on the Spike-0 cursor, and the
+    # one BUILD three firmware-family plans converge on: the UKI workbench's
+    # .initrd grade, the firmware-edits note's initrd-append seam, and the reader
+    # fuzzer. A newc archive is the cursor's native record — a 110-byte header,
+    # 4-aligned name and data, sequential, a "TRAILER!!!" sentinel — PLUS one
+    # thing the width/endian integer types cannot express: an ASCII-HEX field. So
+    # there is NO byte order to get wrong, and the four-arch matrix grades the
+    # PARSE: ppc must print the SAME names and sizes as x86, not a byte-swap of
+    # them. The oracle is the host's OWN `cpio -itv` on the SAME archive (built at
+    # run time by fixtures/cpio/, never cached), never our reader. Controls
+    # (unix): a corrupted magic → cpio| BAD-MAGIC and false; a buffer cut short →
+    # cpio| TRUNCATED and false — a corrupt archive is refused, not read wrong.
+    command -v cpio >/dev/null || skip "cpio not installed (GNU cpio) — the host oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    CSTRUCT="$HERE/dsl/struct.fth"; CCPIO="$HERE/dsl/cpio.fth"; CBLD="$HERE/fixtures/cpio/build-cpio-fixture.sh"
+    for f in "$CSTRUCT" "$CCPIO" "$CBLD"; do [[ -f "$f" ]] || fail "cpio: missing $f — this track stages the SHIPPED files"; done
+    CUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; CUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    CXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   CXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    CAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; CADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    CPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$CUBIN" "$CUDICT" "$CXMB" "$CXDI" "$CAMB" "$CADI" "$CPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    CWD="$WORKDIR/cpio"; rm -rf "$CWD"; mkdir -p "$CWD/stage"
+    bash "$CBLD" "$CWD/initrd.cpi" >/dev/null 2>&1 || fail "cpio: build-cpio-fixture.sh failed to author the archive"
+    [[ -s "$CWD/initrd.cpi" ]] || fail "cpio: the fixture archive was not produced at $CWD/initrd.cpi"
+    # the host oracle: the member names (in order) and byte sizes cpio itself reads
+    mapfile -t CNAMES < <(cpio -itv < "$CWD/initrd.cpi" 2>/dev/null | awk '{print $NF}')
+    mapfile -t CSIZES < <(cpio -itv < "$CWD/initrd.cpi" 2>/dev/null | awk '{print $5}')
+    (( ${#CNAMES[@]} >= 2 )) || fail "cpio: the oracle listing is empty — cpio -itv read no members from the fixture"
+    cp "$CSTRUCT" "$CWD/stage/STRUCT.FTH"; cp "$CCPIO" "$CWD/stage/CPIO.FTH"; cp "$CWD/initrd.cpi" "$CWD/stage/INITRD.CPI"
+    genisoimage -quiet -o "$CWD/cp.iso" -V CPIO -r -J "$CWD/stage" 2>/dev/null || fail "cpio: genisoimage failed"
+    note "subject: $(stat -c%s "$CWD/initrd.cpi")-byte newc archive, ${#CNAMES[@]} members per cpio -itv: ${CNAMES[*]}"
+
+    # grade one arch's log: the walk reached TRAILER!!!, and the member names and
+    # sizes it printed equal cpio -itv's, IN ORDER; cpio-find returns data.bin's
+    # size and its four bytes. <log> <arch>
+    cp_grade() {
+      local lg="$1" a="$2" g i fsz fdat
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'CPIO-END' <<<"$g" || fail "cpio ($a): the walk did not reach TRAILER!!! (no CPIO-END): $(grep -aoE 'cpio\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      grep -qE 'WALKOK' <<<"$g" || fail "cpio ($a): cpio-walk returned false on a clean archive (no WALKOK) — see $lg"
+      mapfile -t GNAMES < <(grep -aoE 'cpio\| name=[^ ]+' <<<"$g" | sed 's/.*name=//')
+      mapfile -t GSIZES < <(grep -aoE 'cpio\| name=[^ ]+ mode=[0-9a-f]+ size=[0-9a-f]+' <<<"$g" | grep -oE 'size=[0-9a-f]+$' | cut -d= -f2)
+      [[ "${#GNAMES[@]}" -eq "${#CNAMES[@]}" ]] || fail "cpio ($a): the reader listed ${#GNAMES[@]} members, cpio -itv lists ${#CNAMES[@]} — see $lg"
+      for i in "${!CNAMES[@]}"; do
+        [[ "${GNAMES[$i]}" == "${CNAMES[$i]}" ]] || fail "cpio ($a): member $i is '${GNAMES[$i]}', cpio -itv says '${CNAMES[$i]}' — see $lg"
+        [[ "$((16#${GSIZES[$i]}))" -eq "${CSIZES[$i]}" ]] || fail "cpio ($a): '${CNAMES[$i]}' size 0x${GSIZES[$i]} != cpio -itv's ${CSIZES[$i]} — see $lg"
+      done
+      fsz="$(grep -aoE 'FSZ=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      fdat="$(grep -aoE 'FDAT=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ -n "$fsz" && "$((16#$fsz))" -eq 4 ]] || fail "cpio ($a): cpio-find data.bin returned size 0x${fsz:-<none>}, expected 4 — see $lg"
+      [[ "$fdat" == "41424344" ]] || fail "cpio ($a): cpio-find data.bin's bytes are ${fdat:-<none>}, expected 41424344 (ABCD) — see $lg"
+      note "$a: cpio.fth walked the ${#CNAMES[@]}-member archive to TRAILER!!!, names and sizes byte-equal to cpio -itv, in order; cpio-find data.bin → 4 bytes ABCD"
+    }
+
+    # the lines every door types to walk then find. EACH LINE MUST BE
+    # STACK-NEUTRAL: the step-by-step doors wait for "0 > ", and the prompt
+    # prints the STACK DEPTH, so a line that leaves the walk's flag behind makes
+    # the prompt "1 > " and the driver waits forever (measured 2026-09-16). So
+    # cpio-walk's flag is consumed on its own line, and cpio-find's (adr size) is
+    # parked in `fda` and printed across two neutral lines. Each ≤ 80 columns.
+    CLINES=( 'load-base load-size 40 cpio-walk if ." WALKOK" else ." WALKBAD" then cr'
+             'variable fda'
+             'load-base load-size 40 s" data.bin" cpio-find swap fda ! ." FSZ=" .hx8 cr'
+             '." FDAT=" fda @ 4 bounds do i c@ .hx2 loop cr' )
+
+    # ── unix: the ISO door + the two refusal controls ────────────────────────
+    ( cd "$CWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\CPIO.FTH' 'load-base load-size evaluate' \
+        'load hd:\INITRD.CPI' "${CLINES[@]}" \
+        'load hd:\INITRD.CPI' '7 load-base c!' \
+        'load-base load-size 40 cpio-walk ." C1=" if ." OK" else ." REF" then cr' \
+        'load hd:\INITRD.CPI' \
+        'load-base 3c 40 cpio-walk ." C2=" if ." OK" else ." REF" then cr' 'bye' \
+      | "$CUBIN" -f "$CWD/cp.iso" "$CUDICT" 2>&1 | tr -d '\r' > "$CWD/unix.log" )
+    cp_grade "$CWD/unix.log" unix
+    CUG="$(cat "$CWD/unix.log")"
+    grep -qE 'BAD-MAGIC' <<<"$CUG" && grep -qE 'C1=REF' <<<"$CUG" \
+      || fail "cpio CONTROL (unix): a corrupted magic was not refused by name (wanted BAD-MAGIC and C1=REF): $(grep -aoE 'C1=[A-Z]*' <<<"$CUG" | head -1)"
+    grep -qE 'TRUNCATED' <<<"$CUG" && grep -qE 'C2=REF' <<<"$CUG" \
+      || fail "cpio CONTROL (unix): a buffer cut short was not refused by name (wanted TRUNCATED and C2=REF): $(grep -aoE 'C2=[A-Z]*' <<<"$CUG" | head -1)"
+    note "unix controls: a corrupted magic → BAD-MAGIC, false; a buffer cut to 0x3c → TRUNCATED, false — the reader refuses by name, it does not guess"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for CA in x86 amd64; do
+      if [[ $CA == x86 ]]; then CMB="$CXMB"; CDI="$CXDI"; else CMB="$CAMB"; CDI="$CADI"; fi
+      CSER="/tmp/cp-$CA-$$.sock"; CLOG="$CWD/$CA.log"; rm -f "$CSER" "$CLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$CMB" -initrd "$CDI" -nic none -cdrom "$CWD/cp.iso" \
+        -display none -serial "unix:$CSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      CQ=$!
+      CSENDS=(); for l in "${CLINES[@]}"; do CSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$CSER" "$CLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CPIO.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\INITRD.CPI\r' --expect "0 > " \
+        "${CSENDS[@]}"
+      CRC=$?
+      kill "$CQ" 2>/dev/null   # by PID, never by pattern
+      [[ $CRC -eq 0 ]] || fail "cpio ($CA): the prompt driver did not complete (rc=$CRC) — see $CLOG"
+      cp_grade "$CLOG" "$CA"
+    done
+
+    # ── ppc: the big-endian row — same parse, native reads, NOT a swap ───────
+    CPLOG="$CWD/ppc.log"; rm -f "$CPLOG"
+    CPSENDS=(); for l in "${CLINES[@]}"; do CPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$CPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CPIO.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\INITRD.CPI;1\r' --expect "0 > " \
+      "${CPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$CPELF" -nographic -vga none -cdrom "$CWD/cp.iso" >/dev/null 2>&1
+    CPRC=$?
+    [[ $CPRC -eq 0 ]] || fail "cpio (ppc): the prompt driver did not complete (rc=$CPRC) — see $CPLOG"
+    cp_grade "$CPLOG" ppc
+
+    pass "TODO §0.7 (dsl/cpio.fth): a newc cpio reader on the Spike-0 cursor, walked on unix, x86, amd64 AND ppc. The member names and sizes it prints equal the host's own \`cpio -itv\` on the same archive, IN ORDER, on every arch — a newc field is ASCII HEX, so there is no byte order to get wrong and ppc reads the same values as x86 rather than a byte-swap of them; cpio-find data.bin returns its 4 data bytes (ABCD). The reader refuses BY NAME (unix controls): a corrupted magic → cpio| BAD-MAGIC and false, a buffer cut short → cpio| TRUNCATED and false — a corrupt archive is refused, never read wrong. This is the build three plans converge on: the UKI workbench's .initrd grade, the firmware-edits note's initrd-append seam, and the reader fuzzer."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -7715,5 +7844,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac

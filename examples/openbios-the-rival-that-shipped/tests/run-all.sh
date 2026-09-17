@@ -59,6 +59,7 @@ tracks=(
     test-smoke-region-diff.sh
     test-smoke-fdt.sh
     test-smoke-fdt-import.sh
+    test-smoke-cpio.sh
     test-smoke-elf-gate.sh
     test-smoke-dict-budget.sh
     test-smoke-marker.sh

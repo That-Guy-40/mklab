@@ -755,6 +755,44 @@ which still cost a run. ppc's console is pty-only, so its row prints the buffer
 with the firmware's own `dump` (16 bytes a line, a double space mid-line) and
 the host parses it back — 10314 of 10314 bytes.
 
+### The `cpio` track — a newc archive walked, graded against `cpio -itv` (TODO §0.7)
+
+```console
+$ ./smoke-openbios.sh cpio
+  - subject: 512-byte newc archive, 3 members per cpio -itv: greet.txt data.bin etc/conf
+  - unix: cpio.fth walked the 3-member archive to TRAILER!!!, names and sizes byte-equal to cpio -itv, in order; cpio-find data.bin → 4 bytes ABCD
+  - unix controls: a corrupted magic → BAD-MAGIC, false; a buffer cut to 0x3c → TRUNCATED, false — the reader refuses by name, it does not guess
+  - x86:   … names and sizes byte-equal to cpio -itv, in order …
+  - amd64: … names and sizes byte-equal to cpio -itv, in order …
+  - ppc:   … names and sizes byte-equal to cpio -itv, in order …
+PASS: TODO §0.7 (dsl/cpio.fth): a newc cpio reader on the Spike-0 cursor …
+```
+
+[`dsl/cpio.fth`](dsl/cpio.fth) reads a `newc` cpio archive — a 110-byte header
+(a 6-byte ASCII `"070701"` magic then thirteen 8-char **ASCII-hex** fields), a
+NUL-terminated name padded so header+name is 4-aligned, the data padded to 4,
+and a `"TRAILER!!!"` sentinel. That is the Spike-0 cursor's own record
+(`>rec`/`+rec`/`alignto`/`cstr`) plus `hexdig`/`h8` for the one field the
+width/endian integer types cannot express. **There is no byte order to get
+wrong**, which is why ppc's row prints the *same* names and sizes as x86 rather
+than a byte-swap of them — the point of running the parse on all four arches.
+
+The oracle is the host's own `cpio -itv` on the same archive
+([`fixtures/cpio/build-cpio-fixture.sh`](fixtures/cpio/README.md) authors it at
+run time, so the listing and the firmware read identical bytes); the track
+asserts the member names **and** sizes match, in order, and that `cpio-find
+data.bin` returns its four data bytes (`ABCD`), not the header. The refusals are
+by name: a corrupted magic → `cpio| BAD-MAGIC`, a buffer cut short of a member →
+`cpio| TRUNCATED`, `max` members without a trailer → `cpio| NO-TRAILER`, each
+answering `false` — a corrupt archive is refused, never read wrong.
+
+**The gotcha it cost:** the OpenBIOS prompt prints the **stack depth** (`0 > `,
+`1 > `, …), so every line a step-by-step door (x86/amd64/ppc) types must be
+stack-neutral — a first draft left `cpio-walk`'s flag on the stack, the prompt
+became `1 > `, and `--expect "0 > "` waited until the timeout. `cpio-walk`'s flag
+is now consumed on its own line, and `cpio-find`'s `( adr size )` is parked in a
+scratch variable and printed across two neutral lines.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

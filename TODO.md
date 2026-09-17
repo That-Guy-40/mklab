@@ -65,11 +65,28 @@ watched to fail on a needle that never arrives.
       without gating them — the first draft flagged all 30 hits including its own
       documentation, which would have bred exemptions until it meant nothing.
 
-## 0.7 The next BUILD, not plan — `dsl/cpio.fth` (2026-09-16)
+## 0.7 The next BUILD, not plan — `dsl/cpio.fth` — ✅ DONE 2026-09-16
 
 *The firmware family is now fully planned and fully measured (§22–§34 all re-measured 2026-09-16,
-PRs #426–#436). The next actual **build** — code, not a plan — is the one thing three of those
-plans converge on and none of them has.*
+PRs #426–#436). The next actual **build** — code, not a plan — was the one thing three of those
+plans converge on and none of them had.*
+
+- [x] **✅ DONE 2026-09-16** — [`dsl/cpio.fth`](examples/openbios-the-rival-that-shipped/dsl/cpio.fth)
+      (`cpio-walk`/`cpio-find`, a `newc` reader on the Spike-0 cursor with `hexdig`/`h8` for the one
+      ASCII-hex field the integer types cannot express), the `cpio` track in `smoke-openbios.sh`,
+      its `tests/test-smoke-cpio.sh` wrapper, and the run-time fixture builder
+      [`fixtures/cpio/`](examples/openbios-the-rival-that-shipped/fixtures/cpio/README.md). **Green
+      on unix, x86, amd64 AND ppc**: the member names and sizes the firmware prints equal the host's
+      own `cpio -itv` on the same archive, in order, on every arch — ASCII hex, so ppc reads the
+      same values as x86, not a swap — and `cpio-find data.bin` returns its four data bytes (ABCD).
+      Controls (unix) bite by name: a corrupted magic → `cpio| BAD-MAGIC` and false, a buffer cut to
+      `0x3c` → `cpio| TRUNCATED` and false. Added to the CI `DEFAULT_TRACKS`. The three consumers
+      (UKI Spike 2, the handoff note's `initrd-append`, the reader fuzzer) now build on it rather
+      than re-implement it. *The build taught one thing worth keeping: the OpenBIOS prompt prints
+      the STACK DEPTH, so every line a step-by-step door types must be stack-neutral — a line that
+      left `cpio-walk`'s flag behind made the prompt `1 > ` and the driver waited forever.*
+
+The original plan follows, kept for the record.
 
 **`dsl/cpio.fth` — a `newc` cpio reader on the existing `struct.fth` cursor.** It is the cheapest
 high-leverage build in the family: a 110-byte ASCII-hex `newc` header (`070701`, then thirteen
