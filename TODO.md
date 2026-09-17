@@ -65,6 +65,37 @@ watched to fail on a needle that never arrives.
       without gating them — the first draft flagged all 30 hits including its own
       documentation, which would have bred exemptions until it meant nothing.
 
+## 0.8 The next CONSUMER, not a reader — wire `pe.fth` + `?bootparams` into the UKI workbench's Spike 2
+
+*Added 2026-09-17. With [`dsl/pe.fth`](examples/openbios-the-rival-that-shipped/dsl/pe.fth) (PR #439)
+and [`dsl/bootparams.fth`](examples/openbios-the-rival-that-shipped/dsl/bootparams.fth) (PR #440) both
+built and green on all four arches, the roadmap's genuinely-missing Tier 1 readers are all done
+(ELF, CBFS, FDT, `cpio` §0.7, PE, bootparams). The next actual work is no longer a **reader** but a
+**consumer**: the first lab that puts them to use. It is a NEW LAB, so its plan already exists
+([`UKI_WORKBENCH_LAB_PLAN.md`](UKI_WORKBENCH_LAB_PLAN.md), pointer at [§30](#30-the-uki-workbench--the-unified-kernel-image-as-the-subject-2026-09-14)),
+and its scope is confirmed with the user before building, per the usual rule for Spike/lab work.*
+
+- [ ] **NEXT — `examples/uki-workbench/`, realizing [Spike 2 of the UKI workbench](UKI_WORKBENCH_LAB_PLAN.md#spike-2--extract-and-grade-each-section-by-what-it-is):
+      extract each UKI section and grade it by *what it is*.** The two prerequisites Spike 2 named as
+      if built now exist and are merged: the `pe` track already reads a real UKI's section table and
+      hands `.initrd` to `cpio.fth` (the handoff, proven end to end on all four arches), and
+      `?bootparams` grades an x86 kernel's boot header. So Spike 2 becomes assembly, not new readers:
+      - `.linux` — an EFISTUB kernel: its PE magic checks via `pe.fth`, and **`?bootparams` refuses a
+        blob that is not a Linux x86 kernel** (the gate now exists);
+      - `.initrd` — a cpio walked by `cpio.fth` (§0.7, done — the `pe` track already demonstrates
+        `pe-find .initrd` → `cpio-walk`);
+      - `.cmdline` — the string (compared to the boot's `/proc/cmdline`);
+      - `.osrel` — parses as an `os-release` stanza; `.uname` — the built kernel version.
+      **Control (this repo's rule):** a section extracted with the *wrong length* fails its own
+      reader, not silently. **Oracles:** `objdump`/`ukify` for the section map, `file`/`?bootparams`
+      for the kernel, `cpio -itv` for the initrd — each foreign to the firmware.
+      This graduates to its own lab shape (spec, `README.md`, `MANUAL_TESTING.md`, `tests/`, a
+      00-INDEX row, a `learning-paths.toml` route) and its own plan, which is already written; the
+      **reader groundwork it consumes is all merged**: `cpio.fth` (#438), `pe.fth` (#439),
+      `bootparams.fth` (#440). Scope beyond Spike 2 — the `.pcrsig` self-prediction (Spike 3), the
+      Authenticode extract-and-host-verify (Spike 4), the edit-and-remeasure tool (Spike 5) — is
+      confirmed with the user before starting, not assumed here.
+
 ## 0.7 The next BUILD, not plan — `dsl/cpio.fth` — ✅ DONE 2026-09-16
 
 *The firmware family is now fully planned and fully measured (§22–§34 all re-measured 2026-09-16,
