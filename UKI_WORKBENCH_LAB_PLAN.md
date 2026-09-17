@@ -218,6 +218,140 @@ prediction, and the signature status; `uki-edit` replaces a section (`.cmdline`,
 Spike 3 predicts. This is the UKI half of the coreboot workbench's `rom-edit`: the firmware-image
 tool, pointed at the modern Linux boot artifact.
 
+### The rescue arc — editing a boot artifact: command line, initrd, config (Spikes 6–11, added 2026-09-17)
+
+*Motivation.* The everyday reason to open a boot artifact in anger is a **rescue boot**: add
+`init=/bin/bash`, `single`, `rd.break` or `systemd.unit=rescue.target` to a kernel command line
+without a USB stick, a chroot, or blind line-editing in GRUB over a serial port. The readers
+[`pe.fth`](examples/openbios-the-rival-that-shipped/dsl/pe.fth) (#439),
+[`bootparams.fth`](examples/openbios-the-rival-that-shipped/dsl/bootparams.fth) (#440) and
+[`cpio.fth`](examples/openbios-the-rival-that-shipped/dsl/cpio.fth) (#438) already *find* the
+command line; this arc is about **mutating** it. The write side is not new — `struct.fth` ships
+`t!`/`c!`/`t-set`, and `cbfs-write.fth`/the `rmw-fields` track already do graded in-place surgery —
+so these spikes are assembly, not new primitives.
+
+The arc grows past the command line: **swapping or appending to the initrd** (Spike 9), **editing
+any section or an embedded config blob** — e.g. a broken `/etc/fstab` *inside* the initramfs
+(Spike 10), and a **full rescue-scenario demo** that fails first and is rescued by these edits
+(Spike 11). The ambition is deliberate: this is *"never-before-fully-explored capability, to empower
+creativity and be a safety net greater than what exists today"* — held to the repo's rules, so each
+capability is graded against a foreign oracle and each claim that can't be measured is marked
+UNKNOWN rather than asserted.
+
+**Both persistence modes are in scope, on purpose** — every capability below has two forms and the
+demo shows each:
+- **In-RAM, one-shot** — patch the loaded image (or the pointers a loader reads) at the prompt and
+  jump to it; nothing on disk changes. This is the OpenFirmware/OpenBoot form (Spikes 6/7/9/10 in
+  their in-firmware variant).
+- **Persisted** — a modified artifact written back to disk/ESP that survives reboots. This is the
+  host-tool form (Spike 8, and the persisted variants of 9/10), and it is what a UEFI x86 box uses.
+
+**Two boundaries stated up front, so the arc is not oversold:**
+- **In-firmware editing lives in the OpenFirmware/OpenBoot world** (the `ok` prompt on SPARC, old
+  PowerMacs, POWER — this lab, in QEMU). It is *not* a rescue shell for a UEFI x86 laptop: OpenBIOS
+  is not that machine's firmware, so the in-firmware spikes prove the *technique* and grade it in
+  the OF world; the portable deliverable for a UEFI box is the **host tool** (Spike 8 and friends).
+- **Growing a fixed-size region needs a re-emit.** A UKI section (`.cmdline`, `.initrd`) and a
+  loaded initrd occupy a fixed extent; an in-place edit must fit the slack, and *growing* past it is
+  the host tool's re-emit. The arc keeps in-place (in-RAM) and re-emit (persisted) distinct.
+
+Build order is **6 → 7 → 8 → 9 → 10 → 11** (simplest proof first; the capstone demo last, once every
+capability it stitches together exists).
+
+### Spike 6 (#1) — in-firmware in-place `.cmdline` edit, the smallest real proof — BUILD FIRST
+At the OpenBIOS prompt: `pe-find .cmdline` → overwrite the bytes in the loaded UKI **in place**
+(`c!`/`t!`), replacing or **appending within the section's slack** (our fixture's `.cmdline` is
+`VirtualSize=24` inside a `SizeOfRawData=512` section — ~488 bytes of room), e.g. append
+`init=/bin/bash`. **Grade:** re-read the section and confirm the new string is there, and that a
+host `objcopy --only-section=.cmdline`/`objdump` sees the same bytes the firmware wrote — the edit
+is real on disk-image, not just in the firmware's claim. **The UNKNOWN this spike must MEASURE, not
+assume:** does the systemd EFI stub read `.cmdline` up to the section's `VirtualSize` or up to the
+first NUL? That decides whether a *grown* command line also needs the section header's `VirtualSize`
+bumped (`pe.fth`'s section fields can `t!` it) or whether a NUL-terminated write in the slack is
+enough. **Control:** a write that overruns `SizeOfRawData` is refused by name, not silently
+scribbled past the section. This is an in-RAM, one-shot edit — booting the result end to end is
+Spike 3's OVMF loop, reused.
+
+### Spike 7 (#3) — the bzImage `cmd_line_ptr` seam, the classic-kernel rescue path — BUILD SECOND
+Not every rescue target is a UKI. A plain `kernel + initrd` boot reads its command line from the
+boot_params field `cmd_line_ptr` (u32 @ `0x228`), which `bootparams.fth` already reads. This spike
+**writes the buffer that pointer names** — set up a command-line string in memory, point
+`cmd_line_ptr` at it (or edit the existing buffer in place), and confirm the kernel the firmware is
+about to boot would see the new line. It is the most direct *"edit at the firmware prompt, then
+boot"* seam: no UKI, no UEFI, no EFI stub — just the zero-page contract every x86 kernel honors.
+**Grade:** the byte the pointer resolves to holds the new string (read back through
+`bootparams.fth`); on a boot-capable arch, `/proc/cmdline` of the booted kernel is the ground truth
+(reusing the showcase's boot path), not the firmware's own read-back. **Control:** a command line
+longer than the protocol's `cmdline_size` (u32 @ `0x238`) is refused by name.
+
+### Spike 8 (#2) — the host-side `uki-edit` rescue tool, the deliverable — BUILD LAST
+The portable *"produce a rescue image without a chroot"* tool, and the rescue framing of Spike 5:
+`objcopy`/`ukify` rewrite `.cmdline` (growing it past the slack, re-laying the sections) and
+**re-sign**, emitting a patched UKI to drop on the ESP — a change that *persists* across reboots,
+which the in-RAM edits (6–7) deliberately do not. This is what a UEFI x86 box actually uses, since
+it cannot run the firmware-side edit. **Grade:** the re-emitted UKI's `.cmdline` reads back correct
+under `pe.fth` **and** `objdump`; it still boots under OVMF (Spike 3's loop) and — if built with a
+PCR key (Spike 3's prerequisite) — produces the *new* measurement the edited `.pcrsig` predicts.
+**Control:** an edit that would break the PE (a section overlap, a bad checksum) is refused before
+re-emit, not written out broken.
+
+### Spike 9 — swap or append to the initrd, in RAM and persisted
+This realizes the [firmware-edits note](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md)'s
+**§2.2 `initrd-append`** seam — a `cpio.fth` consumer named there and now buildable. Two operations,
+each in both persistence modes:
+- **Append a file** (drop a rescue tool / a fixed config into the initramfs). The clean mechanism is
+  the kernel's own: it unpacks **concatenated** cpio archives (this is exactly how CPU-microcode
+  early-initrd works), so appending needs no rewrite of the existing archive — build a *small* newc
+  cpio holding the one new member and concatenate it. `cpio.fth` walks the result to prove both the
+  old members and the new one are present, in order, and refuses a malformed join by name.
+  - *In-RAM:* concatenate in the loaded image and boot it (bzImage world: extend the `ramdisk_size`
+    the kernel unpacks; UKI world: within the `.initrd` section's slack).
+  - *Persisted:* the host builds the one-member cpio (`printf … | cpio -o -H newc`) and appends it,
+    or re-emits the UKI's `.initrd` (Spike 8's `objcopy`/`ukify`). The *ambitious* in-firmware
+    variant is a minimal `cpio-emit` word (a newc writer — 13 ASCII-hex fields, a name, 4-aligned);
+    named here as a stretch, not assumed.
+- **Swap the whole initrd** (boot a known-good rescue initramfs). bzImage world: load a different
+  initrd into memory and point `ramdisk_image`/`ramdisk_size` (u32 @ `0x218`/`0x21c`, via
+  `bootparams.fth`) at it — in-RAM, one-shot, and a genuinely strong rescue move. UKI world: replace
+  the `.initrd` section (in-place if it fits, else the host re-emit).
+**Grade:** `cpio.fth` walks the swapped/appended initrd and finds the new member; on a boot-capable
+arch, the booted system shows the appended file present (e.g. `/rescue.sh` exists) or the swapped
+rescue initramfs reaches its shell — `/proc` / the running system is the ground truth, not the
+firmware's read-back. **Control:** an append that overruns the ramdisk window (or the section slack)
+is refused by name, not concatenated past the end.
+
+### Spike 10 — edit any section, or a config blob *inside* the initrd (the "deeper" edit)
+The same read → mutate → (in-place | re-emit) discipline, aimed past `.cmdline` at **any** named
+section or embedded blob. The headline rescue use is the one that today needs a full USB-and-chroot:
+**fix a broken config that is blocking boot — a bad `/etc/fstab`, `/etc/crypttab`, a wrong
+`root=UUID`, a misfired systemd unit — while it sits *inside the initramfs*.** `cpio.fth`'s
+`cpio-find` already returns that file's bytes; a **same-length** in-place edit (comment a line out
+with `#`, flip `ro`→`rw`, blank a UUID) is a `c!` loop and needs no rebuild; a length change is the
+host re-emit. Other targets fall out for free: a UKI's `.osrel`/`.uname`, and — through the existing
+[`cbfs-write.fth`](examples/openbios-the-rival-that-shipped/dsl/cbfs-write.fth) — a **coreboot CBFS
+config**, the same idea one firmware layer down. **Grade:** the host re-parses the edited blob
+(`cpio -i` extracts the file and it holds the new bytes; `objdump` for a section) — the edit is real
+outside the firmware's own claim. **Control:** an edit whose new length ≠ old is refused in the
+in-place path (it must go through the re-emit), and an edit that would corrupt the container's own
+structure (a cpio header, a section table) is refused by name before it is written.
+
+### Spike 11 — the capstone: a full rescue scenario, failing first, then rescued
+The demo that ties the arc together and shows the safety net working end to end. A boot artifact is
+**deliberately broken** so the machine does **not** come up — a kernel `root=` pointing nowhere, or
+an `/etc/fstab` in the initramfs with a bad mount that hangs the boot. The operator then, *without a
+USB stick or a chroot*, uses the toolkit to rescue it, three ways the demo walks in turn:
+1. **cmdline** — add `rd.break` / `init=/bin/bash` (Spikes 6/7) to reach a shell;
+2. **config** — fix the offending line in the initramfs config in place (Spike 10);
+3. **initrd** — append a rescue script, or swap in a known-good rescue initramfs (Spike 9),
+each shown **in-RAM** (patch the loaded image at the OF prompt and boot) *and* **persisted** (the
+host tool writes a fixed artifact to the ESP/disk that survives a reboot). **The negative control is
+the point, not an afterthought** (the repo's rule): the demo first shows the *un-edited* artifact
+genuinely failing to boot — a recorded failure signature — so that reaching the rescue shell after
+the edit proves the edit is what rescued it, and not that it would have booted anyway. **Success
+signature:** the broken boot fails with its named signature; each edited boot reaches a rescue shell
+whose `/proc/cmdline` (or a marker file / the fixed mount) shows exactly the change made; the
+persisted artifact reproduces the rescue across a power-cycle.
+
 ## 6. What this is NOT (scope guards)
 - **Not a crypto library.** No PKCS#7/X.509 verification in Forth; extract-and-host-verify, named.
 - **Not a UKI builder.** `ukify` builds; this reads/checks/edits and grades against `ukify`.
@@ -238,6 +372,12 @@ UEFI workbench.
 | 3 | `.pcrsig` prediction == the OVMF+swtpm boot's actual PCR | a changed `.cmdline` predicts *and produces* a different PCR |
 | 4 | the signed-region hash matches `sbverify`; a signed UKI host-verifies | unsigned → no Certificate Table, named; tampered body fails |
 | 5 | `uki-inspect`/`uki-edit` drive the loop; the edited UKI measures as predicted | a bad edit refused before re-emit |
+| 6 (#1) | `pe-find .cmdline` edited in place; `objcopy`/`objdump` see the firmware's new bytes | a write past `SizeOfRawData` refused by name, not scribbled past the section |
+| 7 (#3) | the buffer `cmd_line_ptr` names holds the new line; the booted kernel's `/proc/cmdline` shows it | a line longer than `cmdline_size` refused by name |
+| 8 (#2) | `uki-edit` re-emits + re-signs a persistent patched UKI; it boots and measures as predicted | a PE-breaking edit refused before re-emit |
+| 9 | `cpio.fth` walks the swapped/appended initrd; the booted system shows the new member | an append past the ramdisk window / section slack refused by name |
+| 10 | the edited config/section reads back correct under a host re-parse (`cpio -i`/`objdump`) | a length-changing in-place edit, or one that corrupts the container, refused by name |
+| 11 | the broken boot fails with its named signature; each edited boot reaches a rescue shell showing the change; the persisted artifact survives a power-cycle | the *un-edited* artifact must fail first — no negative control, no proof the edit rescued anything |
 
 **Open questions.** (1) PE depth — Spike 0's A/B/C, decided by the signature path. (2) ~~Does the
 lab's `ukify` emit `.pcrsig` with a dev key here, and does OVMF measure the UKI without full secure
@@ -249,4 +389,10 @@ measures a directly-booted PE app into PCR4 with no secure boot (one
 package's file list, see §3). (3) Does this lab own
 `dsl/pe.fth` (yes) and the UEFI workbench consume it (yes) — stated, not duplicated. (4) **New:**
 `cpio.fth` is a prerequisite nobody had written down — this lab builds it (Spike 2), the fs note
-cites it.
+cites it. (5) **New (2026-09-17):** the rescue arc (Spikes 6–8) adds one UNKNOWN worth calling out
+— **does the systemd EFI stub read `.cmdline` up to the section's `VirtualSize` or up to the first
+NUL?** Spike 6 measures it (it decides whether a *grown* command line needs the section header's
+`VirtualSize` bumped, or a NUL-terminated write in the slack suffices); until measured it stays
+UNKNOWN, not assumed. (6) The rescue arc's honest boundary is stated in §5: in-firmware editing is
+the OpenFirmware/OpenBoot world (Spikes 6–7, in-RAM, one-shot); the UEFI-x86 deliverable is the
+host tool (Spike 8, persisted to the ESP).
