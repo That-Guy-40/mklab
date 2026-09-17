@@ -95,22 +95,32 @@ and its scope is confirmed with the user before building, per the usual rule for
       `bootparams.fth` (#440). Scope beyond Spike 2 — the `.pcrsig` self-prediction (Spike 3), the
       Authenticode extract-and-host-verify (Spike 4), the edit-and-remeasure tool (Spike 5) — is
       confirmed with the user before starting, not assumed here.
-- [ ] **Then the RESCUE ARC — [UKI plan Spikes 6–8](UKI_WORKBENCH_LAB_PLAN.md#the-rescue-arc--editing-a-boot-artifacts-command-line-spikes-68-added-2026-09-17),
-      mutating a boot artifact's command line (added 2026-09-17 at the user's request).** The motive is
-      an emergency **rescue boot** — add `init=/bin/bash`/`single`/`rd.break` without a USB stick, a
-      chroot, or blind GRUB-over-serial editing. The readers already *find* the command line; this arc
-      *mutates* it, on the write words that already exist (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields`
-      already do graded in-place surgery). **Build order 6 → 7 → 8** (simplest proof first, portable
-      deliverable last):
+- [ ] **Then the RESCUE ARC — [UKI plan Spikes 6–11](UKI_WORKBENCH_LAB_PLAN.md#the-rescue-arc--editing-a-boot-artifact-command-line-initrd-config-spikes-611-added-2026-09-17),
+      mutating a boot artifact — command line, initrd, and config blobs (added 2026-09-17 at the user's
+      request; expanded the same day to 9–11).** The motive is an emergency **rescue boot** — fix a
+      machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
+      readers already *find* these; this arc *mutates* them, on the write words that already exist
+      (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields` already do graded in-place surgery). **Build
+      order 6 → 7 → 8 → 9 → 10 → 11** (simplest proof first; the capstone demo last):
       - **Spike 6 (#1)** — in-firmware in-place `.cmdline` edit at the OpenBIOS prompt: `pe-find .cmdline`
         → overwrite within the section slack; grade that `objcopy`/`objdump` see the firmware's new bytes;
         **measure** the stub's `VirtualSize`-vs-NUL UNKNOWN. In-RAM, one-shot.
       - **Spike 7 (#3)** — the bzImage `cmd_line_ptr` seam via `bootparams.fth`: write the buffer the
-        pointer names, no UKI/UEFI; ground-truth is the booted kernel's `/proc/cmdline`. The most direct
-        edit-at-the-prompt path for a classic kernel+initrd.
-      - **Spike 8 (#2)** — the host-side `uki-edit` rescue tool: `objcopy`/`ukify` rewrite `.cmdline` +
-        re-sign, a **persistent** patched UKI for the ESP (what a UEFI x86 box uses, since it cannot run
-        the firmware-side edit). The rescue framing of the plan's Spike 5.
+        pointer names, no UKI/UEFI; ground-truth is the booted kernel's `/proc/cmdline`.
+      - **Spike 8 (#2)** — the host-side `uki-edit` tool: `objcopy`/`ukify` rewrite `.cmdline` + re-sign,
+        a **persistent** patched UKI for the ESP (what a UEFI x86 box uses).
+      - **Spike 9** — swap or append to the initrd (the firmware-edits note's §2.2 `initrd-append` seam):
+        append via the kernel's concatenated-cpio mechanism (no rewrite of the existing archive), or swap
+        the whole initrd by pointing `ramdisk_image`/`ramdisk_size` at a known-good rescue initramfs.
+        `cpio.fth` grades the result; both in-RAM and persisted.
+      - **Spike 10** — edit any section or a **config blob *inside* the initrd** (the "deeper" edit): fix
+        a broken `/etc/fstab`/`crypttab`/`root=UUID` that's blocking boot, in place via `cpio-find` +
+        `c!` (same-length) or a host re-emit (length change); CBFS configs come for free via `cbfs-write`.
+      - **Spike 11** — the **capstone rescue demo**: a deliberately-broken boot that fails first (the
+        negative control — recorded failure signature), then rescued three ways (cmdline / config /
+        initrd), each shown **in-RAM** (patch + boot at the prompt) *and* **persisted** (fixed artifact on
+        the ESP that survives a power-cycle).
+      **Both persistence modes are in scope** (in-RAM one-shot AND persisted to disk/ESP), per the user.
       **Honest boundary, stated in the plan:** in-firmware editing is the OpenFirmware/OpenBoot world
       (the `ok` prompt on SPARC/PowerMacs/POWER, this lab in QEMU) — *not* a rescue shell for a UEFI x86
       laptop; there the deliverable is the host tool. Scope confirmed with the user (this arc's order and
