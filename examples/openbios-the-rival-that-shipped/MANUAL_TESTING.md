@@ -793,6 +793,44 @@ became `1 > `, and `--expect "0 > "` waited until the timeout. `cpio-walk`'s fla
 is now consumed on its own line, and `cpio-find`'s `( adr size )` is parked in a
 scratch variable and printed across two neutral lines.
 
+### The `pe` track — a real UKI's PE section table walked, graded against `objdump -h` (roadmap Tier 1)
+
+```console
+$ ./smoke-openbios.sh pe
+  - subject: 138752-byte UKI, 10 sections per objdump -h; .initrd = 3-member cpio: greet.txt data.bin etc/conf
+  - unix: pe.fth walked the 10-section table, names/sizes/offsets byte-equal to objdump -h, in order (magic 0x0000020b, PE32+); pe-find .cmdline → the string; pe-find .initrd → cpio.fth walked its 3 members to TRAILER!!! — the Spike 2 handoff
+  - unix controls: a zeroed byte 0 → BAD-MZ; a flipped PE\0\0 → BAD-PESIG; a buffer cut to 0x3c → TRUNCATED — each false, refused by name, not guessed
+  - x86:   … names/sizes/offsets byte-equal to objdump -h, in order … the Spike 2 handoff
+  - amd64: … names/sizes/offsets byte-equal to objdump -h, in order … the Spike 2 handoff
+  - ppc:   … names/sizes/offsets byte-equal to objdump -h, in order … the Spike 2 handoff
+PASS: roadmap Tier 1 (dsl/pe.fth): a PE/COFF section-table reader on the Spike-0 types …
+```
+
+[`dsl/pe.fth`](dsl/pe.fth) reads a PE/COFF (`.efi`) image: the `MZ` stub's
+`e_lfanew`, the `PE\0\0` signature, the COFF file header (Machine, section count,
+`SizeOfOptionalHeader`), the optional-header **magic** (`0x20b` PE32+ for a UKI,
+read first because everything past it depends on it), and the **section table** —
+located by `SizeOfOptionalHeader`, never by walking the parsed optional header
+(the drift poke's `pe.pk` warns about; "assert the outcome, not the mechanism" in
+PE form). `pe-find` returns a named section's bytes. **Unlike cpio's ASCII-hex,
+PE fields are little-endian**, so this reader *does* have a byte order to get
+wrong: it reads every field through `struct.fth`'s `le-field:`, and ppc's row
+proves it reads the same section table as x86 rather than a native byte-swap of
+it — the reason the big-endian arch is not optional here.
+
+The subject is a **real UKI** built at run time by
+[`fixtures/pe/build-pe-fixture.sh`](fixtures/pe/README.md) with the host's own
+`ukify` (systemd's UKI builder, an independent author from the reader); the
+oracle is `objdump -h` (binutils, a *third* implementation), and the track
+asserts the section names, VirtualSizes and file offsets match **in order** on
+all four arches. Two sections are graded by what they *are*: `pe-find .cmdline`
+returns the exact string `objcopy` pulls from the section, and `pe-find .initrd`
+reads the initramfs **out of the PE** and hands it to `cpio.fth`, whose walk
+equals `cpio -itv` on the same bytes — the [UKI
+workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 2 handoff**, end to end. The
+refusals are by name: a zeroed byte 0 → `pe| BAD-MZ`, a flipped `PE\0\0` →
+`pe| BAD-PESIG`, a buffer cut before `e_lfanew` → `pe| TRUNCATED`, each `false`.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

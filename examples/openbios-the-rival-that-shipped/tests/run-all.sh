@@ -60,6 +60,7 @@ tracks=(
     test-smoke-fdt.sh
     test-smoke-fdt-import.sh
     test-smoke-cpio.sh
+    test-smoke-pe.sh
     test-smoke-elf-gate.sh
     test-smoke-dict-budget.sh
     test-smoke-marker.sh
