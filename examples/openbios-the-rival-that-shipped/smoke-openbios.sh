@@ -111,6 +111,14 @@ TRACK (default multiboot):
                               x86, not a swap); cpio-find returns a member's bytes;
                               BAD-MAGIC/TRUNCATED controls refuse a corrupt archive by
                               name (needs GNU cpio, genisoimage, both QEMUs)
+  pe                          roadmap Tier 1: dsl/pe.fth walks a REAL UKI's PE section
+                              table on the Spike-0 types — names, VirtualSizes and file
+                              offsets equal `objdump -h`, IN ORDER, on all four arches
+                              (PE fields are LITTLE-endian, so ppc must NOT byte-swap);
+                              pe-find reads .initrd OUT of the PE and cpio.fth walks it
+                              (the UKI workbench's Spike 2 handoff); BAD-MZ/BAD-PESIG/
+                              TRUNCATED controls refuse a malformed PE by name (needs
+                              ukify, binutils, GNU cpio, genisoimage, both QEMUs)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -5524,6 +5532,173 @@ PY
 
     pass "TODO §0.7 (dsl/cpio.fth): a newc cpio reader on the Spike-0 cursor, walked on unix, x86, amd64 AND ppc. The member names and sizes it prints equal the host's own \`cpio -itv\` on the same archive, IN ORDER, on every arch — a newc field is ASCII HEX, so there is no byte order to get wrong and ppc reads the same values as x86 rather than a byte-swap of them; cpio-find data.bin returns its 4 data bytes (ABCD). The reader refuses BY NAME (unix controls): a corrupted magic → cpio| BAD-MAGIC and false, a buffer cut short → cpio| TRUNCATED and false — a corrupt archive is refused, never read wrong. This is the build three plans converge on: the UKI workbench's .initrd grade, the firmware-edits note's initrd-append seam, and the reader fuzzer."
     ;;
+  pe)
+    # roadmap Tier 1 — dsl/pe.fth, a PE/COFF section-table reader on the Spike-0
+    # types, and the prerequisite the UKI workbench's Spike 2 names: a UKI is a PE
+    # with its kernel/initramfs/cmdline glued on as NAMED sections, so walking the
+    # section table is how you find and grade each. Depth is the plan's floor "A"
+    # (headers + section table + find-by-name); B/C grow along the signature path.
+    # UNLIKE cpio's ASCII-hex, PE fields are LITTLE-ENDIAN on every target, so
+    # here there IS a byte order to get wrong — a naive native l@ on ppc would
+    # byte-swap every field, and the four-arch matrix grades that ppc reads the
+    # SAME section table as x86, not a swap of it. The subject is a REAL UKI built
+    # by the host's own `ukify` (built at run time by fixtures/pe/, never cached);
+    # the oracles are `objdump -h` (binutils, a different author than the reader)
+    # for the section table and `objcopy | cpio -itv` for the .initrd. The money
+    # shot: pe-find reads .initrd OUT of the PE and cpio.fth walks it — the UKI
+    # workbench's Spike 2 handoff, end to end. Controls (unix): a zeroed byte 0 →
+    # pe| BAD-MZ; a flipped PE\0\0 → pe| BAD-PESIG; a buffer cut before e_lfanew →
+    # pe| TRUNCATED — a malformed PE is refused by name, not read wrong.
+    command -v ukify >/dev/null || skip "ukify not installed (systemd-ukify) — the UKI builder/oracle"
+    command -v objdump >/dev/null || skip "objdump not installed (binutils) — the section-table oracle"
+    command -v objcopy >/dev/null || skip "objcopy not installed (binutils) — extracts sections for the oracle"
+    command -v cpio >/dev/null || skip "cpio not installed (GNU cpio) — the .initrd handoff oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]] || skip "missing /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd-boot-efi) — the PE the UKI is built around"
+    PSTRUCT="$HERE/dsl/struct.fth"; PCPIO="$HERE/dsl/cpio.fth"; PPE="$HERE/dsl/pe.fth"; PBLD="$HERE/fixtures/pe/build-pe-fixture.sh"
+    for f in "$PSTRUCT" "$PCPIO" "$PPE" "$PBLD"; do [[ -f "$f" ]] || fail "pe: missing $f — this track stages the SHIPPED files"; done
+    PUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; PUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    PXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   PXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    PAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; PADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    PPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$PUBIN" "$PUDICT" "$PXMB" "$PXDI" "$PAMB" "$PADI" "$PPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    PWD_="$WORKDIR/pe"; rm -rf "$PWD_"; mkdir -p "$PWD_/stage"
+    bash "$PBLD" "$PWD_/uki.efi" >/dev/null 2>&1 || fail "pe: build-pe-fixture.sh failed to author the UKI"
+    [[ -s "$PWD_/uki.efi" ]] || fail "pe: the fixture UKI was not produced at $PWD_/uki.efi"
+    # oracles, DERIVED from the artifact at run time (never cached):
+    #  - the section table (name / VirtualSize / file offset), in order, per objdump -h
+    mapfile -t PNAMES < <(objdump -h "$PWD_/uki.efi" | awk '/^ +[0-9]+ /{print $2}')
+    mapfile -t PVSZ   < <(objdump -h "$PWD_/uki.efi" | awk '/^ +[0-9]+ /{print $3}')
+    mapfile -t PROFF  < <(objdump -h "$PWD_/uki.efi" | awk '/^ +[0-9]+ /{print $6}')
+    (( ${#PNAMES[@]} >= 4 )) || fail "pe: objdump -h listed ${#PNAMES[@]} sections — the oracle is empty"
+    #  - the .cmdline bytes, and the .initrd's members (the handoff oracle)
+    objcopy -O binary --only-section=.cmdline "$PWD_/uki.efi" "$PWD_/cmdline.bin" 2>/dev/null || fail "pe: objcopy could not extract .cmdline"
+    OCMD="$(tr -d '\000\n' < "$PWD_/cmdline.bin")"
+    objcopy -O binary --only-section=.initrd "$PWD_/uki.efi" "$PWD_/initrd.bin" 2>/dev/null || fail "pe: objcopy could not extract .initrd"
+    mapfile -t PINAMES < <(cpio -itv < "$PWD_/initrd.bin" 2>/dev/null | awk '{print $NF}')
+    (( ${#PINAMES[@]} >= 2 )) || fail "pe: cpio -itv read no members from the extracted .initrd — the handoff oracle is empty"
+    cp "$PSTRUCT" "$PWD_/stage/STRUCT.FTH"; cp "$PCPIO" "$PWD_/stage/CPIO.FTH"; cp "$PPE" "$PWD_/stage/PE.FTH"; cp "$PWD_/uki.efi" "$PWD_/stage/UKI.EFI"
+    genisoimage -quiet -o "$PWD_/pe.iso" -V PE -r -J "$PWD_/stage" 2>/dev/null || fail "pe: genisoimage failed"
+    note "subject: $(stat -c%s "$PWD_/uki.efi")-byte UKI, ${#PNAMES[@]} sections per objdump -h; .initrd = ${#PINAMES[@]}-member cpio: ${PINAMES[*]}"
+
+    # grade one arch's log: pe-walk lists PE32+ magic and every section (name /
+    # VirtualSize / file offset) equal to objdump -h's, IN ORDER; pe-find .cmdline
+    # returns the exact string; pe-find .initrd → cpio-walk walks the SAME members
+    # cpio -itv reads from the extracted section. <log> <arch>
+    pe_grade() {
+      local lg="$1" a="$2" g i magic fcmd
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'PE-END' <<<"$g" || fail "pe ($a): the walk did not finish (no PE-END): $(grep -aoE 'pe\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      grep -qE 'WALKOK' <<<"$g" || fail "pe ($a): pe-walk returned false on a valid PE (no WALKOK) — see $lg"
+      magic="$(grep -aoE 'magic=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$((16#${magic:-0}))" -eq "$((16#20b))" ]] || fail "pe ($a): optional-header magic 0x${magic:-<none>} != 0x020b (PE32+) — see $lg"
+      mapfile -t GSEC < <(grep -aoE 'name=[^ ]+ vaddr=[0-9a-f]+ vsize=[0-9a-f]+ rawoff=[0-9a-f]+ rawsize=[0-9a-f]+' <<<"$g")
+      [[ "${#GSEC[@]}" -eq "${#PNAMES[@]}" ]] || fail "pe ($a): the reader listed ${#GSEC[@]} sections, objdump -h lists ${#PNAMES[@]} — see $lg"
+      for i in "${!PNAMES[@]}"; do
+        local gn gv gr
+        gn="$(sed -E 's/^name=([^ ]+) .*/\1/' <<<"${GSEC[$i]}")"
+        gv="$(grep -oE 'vsize=[0-9a-f]+'  <<<"${GSEC[$i]}" | cut -d= -f2)"
+        gr="$(grep -oE 'rawoff=[0-9a-f]+' <<<"${GSEC[$i]}" | cut -d= -f2)"
+        [[ "$gn" == "${PNAMES[$i]}" ]] || fail "pe ($a): section $i is '$gn', objdump -h says '${PNAMES[$i]}' — see $lg"
+        [[ "$((16#$gv))" -eq "$((16#${PVSZ[$i]}))" ]] || fail "pe ($a): '${PNAMES[$i]}' VirtualSize 0x$gv != objdump's 0x${PVSZ[$i]} — see $lg"
+        [[ "$((16#$gr))" -eq "$((16#${PROFF[$i]}))" ]] || fail "pe ($a): '${PNAMES[$i]}' file offset 0x$gr != objdump's 0x${PROFF[$i]} — see $lg"
+      done
+      # pe-find .cmdline → the exact string objcopy pulled from the section. The
+      # marker is printed on its OWN line (a leading `cr` in the typed line) and
+      # anchored with ^ here, so the REPL's echo of the source `." CMD="` — which
+      # also contains "CMD=" — cannot be mistaken for the output (it is prefixed
+      # by the prompt, so it never starts a line with CMD=).
+      fcmd="$(grep -aE '^CMD=' <<<"$g" | head -1 | sed 's/^CMD=//')"
+      [[ "$fcmd" == "$OCMD" ]] || fail "pe ($a): pe-find .cmdline returned '$fcmd', objcopy's .cmdline is '$OCMD' — see $lg"
+      # pe-find .initrd → cpio-walk: the handoff, graded against cpio -itv on the same bytes
+      grep -qE 'IWALKOK' <<<"$g" || fail "pe ($a): pe-find .initrd → cpio-walk returned false (no IWALKOK) — see $lg"
+      grep -qE 'CPIO-END' <<<"$g" || fail "pe ($a): the extracted .initrd did not walk to TRAILER!!! (no CPIO-END) — see $lg"
+      mapfile -t GINAMES < <(grep -aoE 'cpio\| name=[^ ]+' <<<"$g" | sed 's/.*name=//')
+      [[ "${#GINAMES[@]}" -eq "${#PINAMES[@]}" ]] || fail "pe ($a): the extracted .initrd listed ${#GINAMES[@]} members, cpio -itv lists ${#PINAMES[@]} — see $lg"
+      for i in "${!PINAMES[@]}"; do
+        [[ "${GINAMES[$i]}" == "${PINAMES[$i]}" ]] || fail "pe ($a): .initrd member $i is '${GINAMES[$i]}', cpio -itv says '${PINAMES[$i]}' — see $lg"
+      done
+      note "$a: pe.fth walked the ${#PNAMES[@]}-section table, names/sizes/offsets byte-equal to objdump -h, in order (magic 0x$magic, PE32+); pe-find .cmdline → the string; pe-find .initrd → cpio.fth walked its ${#PINAMES[@]} members to TRAILER!!! — the Spike 2 handoff"
+    }
+
+    # the lines every door types to walk, find .cmdline, and hand .initrd to
+    # cpio.fth. EACH LINE MUST BE STACK-NEUTRAL: the step-by-step doors wait for
+    # "0 > " and the prompt prints the STACK DEPTH, so a line leaving a flag or a
+    # pair behind hangs the driver (the gotcha the cpio track paid, 2026-09-16).
+    # pe-walk's flag is consumed on its own line; pe-find's (adr size) is parked
+    # in pfa/pfl and used across neutral lines. Each ≤ 80 columns.
+    PLINES=( 'load-base load-size pe-walk if ." WALKOK" else ." WALKBAD" then cr'
+             'variable pfa variable pfl'
+             'load-base load-size s" .cmdline" pe-find pfl ! pfa ! cr'
+             '." CLEN=" pfl @ .hx8 cr'
+             'cr ." CMD=" pfa @ pfl @ type cr'
+             'load-base load-size s" .initrd" pe-find pfl ! pfa ! cr'
+             'pfa @ pfl @ 40 cpio-walk if ." IWALKOK" else ." IWALKBAD" then cr' )
+
+    # ── unix: the ISO door + the three refusal controls ──────────────────────
+    ( cd "$PWD_" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\CPIO.FTH' 'load-base load-size evaluate' \
+        'load hd:\PE.FTH' 'load-base load-size evaluate' \
+        'load hd:\UKI.EFI' "${PLINES[@]}" \
+        'load hd:\UKI.EFI' '0 load-base c!' \
+        'load-base load-size pe-walk ." C1=" if ." OK" else ." REF" then cr' \
+        'load hd:\UKI.EFI' '30 load-base 40 + c!' \
+        'load-base load-size pe-walk ." C2=" if ." OK" else ." REF" then cr' \
+        'load hd:\UKI.EFI' \
+        'load-base 3c pe-walk ." C3=" if ." OK" else ." REF" then cr' 'bye' \
+      | "$PUBIN" -f "$PWD_/pe.iso" "$PUDICT" 2>&1 | tr -d '\r' > "$PWD_/unix.log" )
+    pe_grade "$PWD_/unix.log" unix
+    PUG="$(cat "$PWD_/unix.log")"
+    grep -qE 'BAD-MZ' <<<"$PUG" && grep -qE 'C1=REF' <<<"$PUG" \
+      || fail "pe CONTROL (unix): a zeroed byte 0 was not refused by name (wanted BAD-MZ and C1=REF): $(grep -aoE 'C1=[A-Z]*' <<<"$PUG" | head -1)"
+    grep -qE 'BAD-PESIG' <<<"$PUG" && grep -qE 'C2=REF' <<<"$PUG" \
+      || fail "pe CONTROL (unix): a flipped PE\\0\\0 was not refused by name (wanted BAD-PESIG and C2=REF): $(grep -aoE 'C2=[A-Z]*' <<<"$PUG" | head -1)"
+    grep -qE 'TRUNCATED' <<<"$PUG" && grep -qE 'C3=REF' <<<"$PUG" \
+      || fail "pe CONTROL (unix): a buffer cut before e_lfanew was not refused by name (wanted TRUNCATED and C3=REF): $(grep -aoE 'C3=[A-Z]*' <<<"$PUG" | head -1)"
+    note "unix controls: a zeroed byte 0 → BAD-MZ; a flipped PE\\0\\0 → BAD-PESIG; a buffer cut to 0x3c → TRUNCATED — each false, refused by name, not guessed"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for PA in x86 amd64; do
+      if [[ $PA == x86 ]]; then PMB="$PXMB"; PDI="$PXDI"; else PMB="$PAMB"; PDI="$PADI"; fi
+      PSER="/tmp/pe-$PA-$$.sock"; PLOG="$PWD_/$PA.log"; rm -f "$PSER" "$PLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$PMB" -initrd "$PDI" -nic none -cdrom "$PWD_/pe.iso" \
+        -display none -serial "unix:$PSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      PQ=$!
+      PSENDS=(); for l in "${PLINES[@]}"; do PSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$PSER" "$PLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CPIO.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PE.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\UKI.EFI\r' --expect "0 > " \
+        "${PSENDS[@]}"
+      PRC=$?
+      kill "$PQ" 2>/dev/null   # by PID, never by pattern
+      [[ $PRC -eq 0 ]] || fail "pe ($PA): the prompt driver did not complete (rc=$PRC) — see $PLOG"
+      pe_grade "$PLOG" "$PA"
+    done
+
+    # ── ppc: the big-endian row — the SAME little-endian PE fields, read the
+    # same, NOT a native byte-swap. This is the row pe.fth exists to defend. ────
+    PPLOG="$PWD_/ppc.log"; rm -f "$PPLOG"
+    PPSENDS=(); for l in "${PLINES[@]}"; do PPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$PPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CPIO.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PE.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\UKI.EFI;1\r' --expect "0 > " \
+      "${PPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$PPELF" -nographic -vga none -cdrom "$PWD_/pe.iso" >/dev/null 2>&1
+    PPRC=$?
+    [[ $PPRC -eq 0 ]] || fail "pe (ppc): the prompt driver did not complete (rc=$PPRC) — see $PPLOG"
+    pe_grade "$PPLOG" ppc
+
+    pass "roadmap Tier 1 (dsl/pe.fth): a PE/COFF section-table reader on the Spike-0 types, walked on unix, x86, amd64 AND ppc against a REAL UKI built by the host's own \`ukify\`. The section names, VirtualSizes and file offsets it prints equal \`objdump -h\`'s, IN ORDER, on every arch, and the optional-header magic is 0x020b (PE32+); PE fields are LITTLE-ENDIAN, so — unlike cpio's ASCII-hex — there IS a byte order to get wrong, and ppc reads the same section table as x86 rather than a native byte-swap of it. pe-find .cmdline returns the exact string \`objcopy\` pulls from the section; pe-find .initrd is read OUT of the PE and cpio.fth walks its members to TRAILER!!!, equal to \`cpio -itv\` on the same bytes — the UKI workbench's Spike 2 handoff, end to end. The reader refuses BY NAME (unix controls): a zeroed byte 0 → pe| BAD-MZ, a flipped PE\\0\\0 → pe| BAD-PESIG, a buffer cut before e_lfanew → pe| TRUNCATED — a malformed PE is refused, never read wrong."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -7844,5 +8019,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac
