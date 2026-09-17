@@ -95,6 +95,26 @@ and its scope is confirmed with the user before building, per the usual rule for
       `bootparams.fth` (#440). Scope beyond Spike 2 — the `.pcrsig` self-prediction (Spike 3), the
       Authenticode extract-and-host-verify (Spike 4), the edit-and-remeasure tool (Spike 5) — is
       confirmed with the user before starting, not assumed here.
+- [ ] **Then the RESCUE ARC — [UKI plan Spikes 6–8](UKI_WORKBENCH_LAB_PLAN.md#the-rescue-arc--editing-a-boot-artifacts-command-line-spikes-68-added-2026-09-17),
+      mutating a boot artifact's command line (added 2026-09-17 at the user's request).** The motive is
+      an emergency **rescue boot** — add `init=/bin/bash`/`single`/`rd.break` without a USB stick, a
+      chroot, or blind GRUB-over-serial editing. The readers already *find* the command line; this arc
+      *mutates* it, on the write words that already exist (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields`
+      already do graded in-place surgery). **Build order 6 → 7 → 8** (simplest proof first, portable
+      deliverable last):
+      - **Spike 6 (#1)** — in-firmware in-place `.cmdline` edit at the OpenBIOS prompt: `pe-find .cmdline`
+        → overwrite within the section slack; grade that `objcopy`/`objdump` see the firmware's new bytes;
+        **measure** the stub's `VirtualSize`-vs-NUL UNKNOWN. In-RAM, one-shot.
+      - **Spike 7 (#3)** — the bzImage `cmd_line_ptr` seam via `bootparams.fth`: write the buffer the
+        pointer names, no UKI/UEFI; ground-truth is the booted kernel's `/proc/cmdline`. The most direct
+        edit-at-the-prompt path for a classic kernel+initrd.
+      - **Spike 8 (#2)** — the host-side `uki-edit` rescue tool: `objcopy`/`ukify` rewrite `.cmdline` +
+        re-sign, a **persistent** patched UKI for the ESP (what a UEFI x86 box uses, since it cannot run
+        the firmware-side edit). The rescue framing of the plan's Spike 5.
+      **Honest boundary, stated in the plan:** in-firmware editing is the OpenFirmware/OpenBoot world
+      (the `ok` prompt on SPARC/PowerMacs/POWER, this lab in QEMU) — *not* a rescue shell for a UEFI x86
+      laptop; there the deliverable is the host tool. Scope confirmed with the user (this arc's order and
+      contents), build not yet started.
 
 ## 0.7 The next BUILD, not plan — `dsl/cpio.fth` — ✅ DONE 2026-09-16
 
