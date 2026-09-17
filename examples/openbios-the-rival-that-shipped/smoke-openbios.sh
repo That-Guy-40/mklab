@@ -119,6 +119,14 @@ TRACK (default multiboot):
                               (the UKI workbench's Spike 2 handoff); BAD-MZ/BAD-PESIG/
                               TRUNCATED controls refuse a malformed PE by name (needs
                               ukify, binutils, GNU cpio, genisoimage, both QEMUs)
+  bootparams                  roadmap Tier 1: dsl/bootparams.fth reads the x86 boot
+                              protocol (boot_params/zero-page) setup header of a REAL
+                              bzImage — every field equals python's explicit-LE decode
+                              on all four arches (LITTLE-endian, so ppc must NOT swap:
+                              "HdrS"=0x53726448, not 0x48647253), and the version
+                              string it follows the pointer to == `file`'s; BAD-BOOTFLAG/
+                              BAD-HDRS/TRUNCATED controls refuse a non-kernel by name
+                              (needs file, python3, genisoimage, both QEMUs, a bzImage)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -5699,6 +5707,138 @@ PY
 
     pass "roadmap Tier 1 (dsl/pe.fth): a PE/COFF section-table reader on the Spike-0 types, walked on unix, x86, amd64 AND ppc against a REAL UKI built by the host's own \`ukify\`. The section names, VirtualSizes and file offsets it prints equal \`objdump -h\`'s, IN ORDER, on every arch, and the optional-header magic is 0x020b (PE32+); PE fields are LITTLE-ENDIAN, so — unlike cpio's ASCII-hex — there IS a byte order to get wrong, and ppc reads the same section table as x86 rather than a native byte-swap of it. pe-find .cmdline returns the exact string \`objcopy\` pulls from the section; pe-find .initrd is read OUT of the PE and cpio.fth walks its members to TRAILER!!!, equal to \`cpio -itv\` on the same bytes — the UKI workbench's Spike 2 handoff, end to end. The reader refuses BY NAME (unix controls): a zeroed byte 0 → pe| BAD-MZ, a flipped PE\\0\\0 → pe| BAD-PESIG, a buffer cut before e_lfanew → pe| TRUNCATED — a malformed PE is refused, never read wrong."
     ;;
+  bootparams)
+    # roadmap Tier 1 — dsl/bootparams.fth, an x86 boot-protocol reader: a bzImage
+    # begins with the real-mode "zero page" (struct boot_params + setup_header at
+    # 0x1f1), whose anchors — boot_flag 0xAA55 at 0x1fe and "HdrS" (0x53726448) at
+    # 0x202 — say "this is a Linux kernel". EVERY field is LITTLE-ENDIAN (the x86
+    # boot protocol is defined so), so — exactly unlike cpio's ASCII-hex — there IS
+    # a byte order to get wrong, and a native l@ on ppc would read "HdrS" as
+    # 0x48647253; the reader uses le-field:, and the four-arch matrix grades that
+    # ppc reads the SAME header as x86. The subject is the first 64 KiB (the setup)
+    # of a REAL bzImage (located at run time by fixtures/bootparams/, never cached).
+    # TWO independent oracles, neither sharing code with the reader: `file` follows
+    # the kernel_version pointer to the SAME version string the firmware reads, and
+    # python's struct.unpack('<…') decodes each numeric field explicitly LE.
+    # Controls (unix): a zeroed boot_flag → bp| BAD-BOOTFLAG; a zeroed "HdrS" →
+    # bp| BAD-HDRS; a buffer cut before the header → bp| TRUNCATED.
+    command -v file >/dev/null || skip "file not installed (libmagic) — the version-string oracle"
+    command -v python3 >/dev/null || skip "python3 not installed — the little-endian field oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    BPSTRUCT="$HERE/dsl/struct.fth"; BPBP="$HERE/dsl/bootparams.fth"; BPBLD="$HERE/fixtures/bootparams/build-bootparams-fixture.sh"
+    for f in "$BPSTRUCT" "$BPBP" "$BPBLD"; do [[ -f "$f" ]] || fail "bootparams: missing $f — this track stages the SHIPPED files"; done
+    BPUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; BPUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    BPXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   BPXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    BPAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; BPADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    BPPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$BPUBIN" "$BPUDICT" "$BPXMB" "$BPXDI" "$BPAMB" "$BPADI" "$BPPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    BPWD="$WORKDIR/bootparams"; rm -rf "$BPWD"; mkdir -p "$BPWD/stage"
+    bash "$BPBLD" "$BPWD/setup.bin" 2> "$BPWD/fixture.err" || skip "no readable bzImage for the bootparams fixture — $(cat "$BPWD/fixture.err") (set BZIMAGE=/path/to/bzImage)"
+    [[ -s "$BPWD/setup.bin" ]] || fail "bootparams: the setup fixture was not produced at $BPWD/setup.bin"
+    # oracles, DERIVED from the artifact at run time (never cached):
+    #  - the version string file(1) extracts by following the kernel_version pointer
+    BPVER="$(file -b "$BPWD/setup.bin" | sed -E 's/.*version ([^,]*),.*/\1/')"
+    [[ -n "$BPVER" ]] || fail "bootparams: file(1) reported no version string for the fixture — the oracle is empty"
+    #  - each numeric field, decoded EXPLICITLY little-endian by python's struct
+    declare -A BPO=()
+    while read -r k v; do BPO[$k]="$v"; done < <(python3 - "$BPWD/setup.bin" <<'PY'
+import struct,sys
+d=open(sys.argv[1],'rb').read()
+g=lambda off,f: struct.unpack_from(f,d,off)[0]
+for k,off,f in (("hdrs",0x202,'<I'),("bootflag",0x1fe,'<H'),("version",0x206,'<H'),
+                ("setup_sects",0x1f1,'<B'),("syssize",0x1f4,'<I'),("code32",0x214,'<I'),
+                ("kern_align",0x230,'<I'),("init_size",0x260,'<I')):
+    print(k, "%08x" % g(off,f))
+PY
+)
+    [[ "${BPO[hdrs]:-}" == "53726448" ]] || fail "bootparams: python's LE decode of \"HdrS\" is 0x${BPO[hdrs]:-<none>}, expected 0x53726448 — the oracle itself is wrong"
+    cp "$BPSTRUCT" "$BPWD/stage/STRUCT.FTH"; cp "$BPBP" "$BPWD/stage/BOOTPARM.FTH"; cp "$BPWD/setup.bin" "$BPWD/stage/BZSETUP.BIN"
+    genisoimage -quiet -o "$BPWD/bp.iso" -V BOOTPARAMS -r -J "$BPWD/stage" 2>/dev/null || fail "bootparams: genisoimage failed"
+    note "subject: $(stat -c%s "$BPWD/setup.bin")-byte bzImage setup; file(1) version: $BPVER"
+
+    # grade one arch's log: every numeric field equals python's explicit-LE decode,
+    # and the version string the reader followed the pointer to contains file(1)'s.
+    # <log> <arch>
+    bp_grade() {
+      local lg="$1" a="$2" g k gv
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'BP-END' <<<"$g" || fail "bootparams ($a): the walk did not finish (no BP-END): $(grep -aoE 'bp\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      grep -qE 'WALKOK' <<<"$g" || fail "bootparams ($a): bootparams returned false on a real kernel (no WALKOK) — see $lg"
+      for k in hdrs bootflag version setup_sects syssize code32 kern_align init_size; do
+        gv="$(grep -aoE "$k=[0-9a-f]+" <<<"$g" | head -1 | cut -d= -f2)"
+        [[ -n "$gv" ]] || fail "bootparams ($a): the reader did not print $k — see $lg"
+        [[ "$((16#$gv))" -eq "$((16#${BPO[$k]}))" ]] || fail "bootparams ($a): $k = 0x$gv, python's explicit-LE decode is 0x${BPO[$k]} — see $lg"
+      done
+      grep -qF "$BPVER" <<<"$g" || fail "bootparams ($a): the version string the reader followed the pointer to does not contain file(1)'s '$BPVER' — see $lg"
+      note "$a: bootparams read the setup header, all 8 fields byte-equal to python's explicit-LE decode (incl. \"HdrS\"=0x${BPO[hdrs]}), and the version string it followed the pointer to == file(1)'s"
+    }
+
+    # the one line every door types: the walk is stack-neutral (bootparams returns
+    # a single flag, consumed by if/else on the same line — the prompt prints the
+    # STACK DEPTH, so a leftover would hang the driver, the cpio/pe gotcha).
+    BPLINES=( 'load-base load-size bootparams if ." WALKOK" else ." WALKBAD" then cr' )
+
+    # ── unix: the ISO door + the three refusal controls ──────────────────────
+    ( cd "$BPWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\BOOTPARM.FTH' 'load-base load-size evaluate' \
+        'load hd:\BZSETUP.BIN' "${BPLINES[@]}" \
+        'load hd:\BZSETUP.BIN' '0 load-base 1fe + c!  0 load-base 1ff + c!' \
+        'load-base load-size bootparams ." C1=" if ." OK" else ." REF" then cr' \
+        'load hd:\BZSETUP.BIN' '0 load-base 202 + c!' \
+        'load-base load-size bootparams ." C2=" if ." OK" else ." REF" then cr' \
+        'load hd:\BZSETUP.BIN' \
+        'load-base 100 bootparams ." C3=" if ." OK" else ." REF" then cr' 'bye' \
+      | "$BPUBIN" -f "$BPWD/bp.iso" "$BPUDICT" 2>&1 | tr -d '\r' > "$BPWD/unix.log" )
+    bp_grade "$BPWD/unix.log" unix
+    BPUG="$(cat "$BPWD/unix.log")"
+    grep -qE 'BAD-BOOTFLAG' <<<"$BPUG" && grep -qE 'C1=REF' <<<"$BPUG" \
+      || fail "bootparams CONTROL (unix): a zeroed boot_flag was not refused by name (wanted BAD-BOOTFLAG and C1=REF): $(grep -aoE 'C1=[A-Z]*' <<<"$BPUG" | head -1)"
+    grep -qE 'BAD-HDRS' <<<"$BPUG" && grep -qE 'C2=REF' <<<"$BPUG" \
+      || fail "bootparams CONTROL (unix): a zeroed \"HdrS\" was not refused by name (wanted BAD-HDRS and C2=REF): $(grep -aoE 'C2=[A-Z]*' <<<"$BPUG" | head -1)"
+    grep -qE 'TRUNCATED' <<<"$BPUG" && grep -qE 'C3=REF' <<<"$BPUG" \
+      || fail "bootparams CONTROL (unix): a buffer cut before the header was not refused by name (wanted TRUNCATED and C3=REF): $(grep -aoE 'C3=[A-Z]*' <<<"$BPUG" | head -1)"
+    note "unix controls: a zeroed boot_flag → BAD-BOOTFLAG; a zeroed \"HdrS\" → BAD-HDRS; a buffer cut to 0x100 → TRUNCATED — each false, refused by name, not guessed"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for BPA in x86 amd64; do
+      if [[ $BPA == x86 ]]; then BPMB="$BPXMB"; BPDI="$BPXDI"; else BPMB="$BPAMB"; BPDI="$BPADI"; fi
+      BPSER="/tmp/bp-$BPA-$$.sock"; BPLOG="$BPWD/$BPA.log"; rm -f "$BPSER" "$BPLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$BPMB" -initrd "$BPDI" -nic none -cdrom "$BPWD/bp.iso" \
+        -display none -serial "unix:$BPSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      BPQ=$!
+      BPSENDS=(); for l in "${BPLINES[@]}"; do BPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$BPSER" "$BPLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\BOOTPARM.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\BZSETUP.BIN\r'  --expect "0 > " \
+        "${BPSENDS[@]}"
+      BPRC=$?
+      kill "$BPQ" 2>/dev/null   # by PID, never by pattern
+      [[ $BPRC -eq 0 ]] || fail "bootparams ($BPA): the prompt driver did not complete (rc=$BPRC) — see $BPLOG"
+      bp_grade "$BPLOG" "$BPA"
+    done
+
+    # ── ppc: the big-endian row — the SAME little-endian header, read the same,
+    # NOT a native byte-swap. This is the row bootparams.fth exists to defend. ──
+    BPPLOG="$BPWD/ppc.log"; rm -f "$BPPLOG"
+    BPPSENDS=(); for l in "${BPLINES[@]}"; do BPPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$BPPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\BOOTPARM.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\BZSETUP.BIN;1\r'  --expect "0 > " \
+      "${BPPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$BPPELF" -nographic -vga none -cdrom "$BPWD/bp.iso" >/dev/null 2>&1
+    BPPRC=$?
+    [[ $BPPRC -eq 0 ]] || fail "bootparams (ppc): the prompt driver did not complete (rc=$BPPRC) — see $BPPLOG"
+    bp_grade "$BPPLOG" ppc
+
+    pass "roadmap Tier 1 (dsl/bootparams.fth): an x86 boot-protocol (boot_params / zero-page) reader on the Spike-0 types, walked on unix, x86, amd64 AND ppc against the setup of a REAL bzImage. Every numeric field it prints equals python's EXPLICIT little-endian struct.unpack on the same bytes, on every arch — the boot protocol is LITTLE-ENDIAN, so (unlike cpio's ASCII-hex) there IS a byte order to get wrong, and ppc reads \"HdrS\" as 0x53726448 like every other arch rather than the 0x48647253 a native read would give. The version string the reader follows the kernel_version pointer to is the SAME one \`file\` extracts independently by the same protocol. The reader refuses BY NAME (unix controls): a zeroed boot_flag → bp| BAD-BOOTFLAG, a zeroed \"HdrS\" → bp| BAD-HDRS, a buffer cut before the header → bp| TRUNCATED — a non-kernel is refused, never read as a kernel. With this the roadmap's genuinely-missing Tier 1 readers are all built."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -8019,5 +8159,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac

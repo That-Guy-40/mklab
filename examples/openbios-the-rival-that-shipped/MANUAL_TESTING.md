@@ -831,6 +831,51 @@ workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 2 handoff**, end to end. T
 refusals are by name: a zeroed byte 0 → `pe| BAD-MZ`, a flipped `PE\0\0` →
 `pe| BAD-PESIG`, a buffer cut before `e_lfanew` → `pe| TRUNCATED`, each `false`.
 
+### The `bootparams` track — the x86 boot protocol read, graded against `file` + python (roadmap Tier 1)
+
+```console
+$ ./smoke-openbios.sh bootparams
+  - subject: 65536-byte bzImage setup; file(1) version: 6.12.30 (mklab@micro-linux) #1 SMP PREEMPT_DYNAMIC Tue Nov 14 22:13:20 UTC 2023
+  - unix: bootparams read the setup header, all 8 fields byte-equal to python's explicit-LE decode (incl. "HdrS"=0x53726448), and the version string it followed the pointer to == file(1)'s
+  - unix controls: a zeroed boot_flag → BAD-BOOTFLAG; a zeroed "HdrS" → BAD-HDRS; a buffer cut to 0x100 → TRUNCATED — each false, refused by name, not guessed
+  - x86:   … all 8 fields byte-equal to python's explicit-LE decode … version string == file(1)'s
+  - amd64: … all 8 fields byte-equal to python's explicit-LE decode … version string == file(1)'s
+  - ppc:   … all 8 fields byte-equal to python's explicit-LE decode … version string == file(1)'s
+PASS: roadmap Tier 1 (dsl/bootparams.fth): an x86 boot-protocol reader …
+```
+
+[`dsl/bootparams.fth`](dsl/bootparams.fth) reads a bzImage's real-mode *"zero
+page"* — `struct boot_params`, whose `setup_header` sits at `0x1f1`. Its two
+anchors say "this is a Linux kernel": `boot_flag` (u16 `@0x1fe`) `== 0xAA55` and
+`header` (u32 `@0x202`) `== "HdrS"` (`0x53726448`). It reads the fields a loader
+needs — protocol version, `code32_start`, the ramdisk window, `cmd_line_ptr`,
+`kernel_alignment`, `init_size` — and follows the `kernel_version` pointer (u16
+`@0x20e`, less `0x200`) to the NUL-terminated version string.
+
+**Every field is little-endian** (the x86 boot protocol is defined so), read
+through `struct.fth`'s `le-field:` — so this is the reader whose ppc row bites
+hardest. A native `l@` on ppc (big-endian) would read `"HdrS"` as `0x48647253`;
+the four-arch matrix asserts ppc reads `0x53726448` like every other arch, byte
+for byte. That is the whole reason the big-endian row is not optional here — and
+the complement to the `cpio` track, whose ASCII-hex has *no* byte order to get
+wrong.
+
+The subject is the first 64 KiB (the setup) of a **real bzImage**, located at run
+time by
+[`fixtures/bootparams/build-bootparams-fixture.sh`](fixtures/bootparams/README.md)
+(`BZIMAGE=` overrides; the track SKIPs if none is readable). **Two independent
+oracles** grade it, neither sharing code with the reader: `file`(1) follows the
+same version pointer to the same string, and `python3 struct.unpack('<…')`
+decodes each numeric field *explicitly* little-endian. The refusals are by name:
+a zeroed `boot_flag` → `bp| BAD-BOOTFLAG`, a zeroed `"HdrS"` → `bp| BAD-HDRS`, a
+buffer cut before the header → `bp| TRUNCATED`, each `false` — a non-kernel is
+refused, never read as a kernel.
+
+**The gotcha it re-taught** (a third time, and caught on unix first as intended):
+the last field line read `bp-init-size` *without* `dup`, consuming the base the
+following `drop` expected — a `Stack Underflow` after `WALKOK`. Every field on a
+shared base must `dup` it; the lone consumer is the explicit `drop`.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console
