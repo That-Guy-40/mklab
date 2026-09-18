@@ -56,6 +56,6 @@ ukify build \
 objdump -h "$OUT" >/dev/null 2>&1 || { echo "objdump cannot read $OUT as a PE" >&2; exit 1; }
 # prove the faithful sections are present, else the grade below has nothing to check.
 for s in .linux .initrd .cmdline .osrel .uname; do
-  objdump -h "$OUT" | grep -qE "[[:space:]]$s[[:space:]]" || { echo "the UKI is missing the $s section — ukify did not add it" >&2; exit 1; }
+  objdump -h "$OUT" | grep -qE "[[:space:]]${s}[[:space:]]" || { echo "the UKI is missing the ${s} section — ukify did not add it" >&2; exit 1; }
 done
 echo "source .linux: $SRC (64 KiB setup prefix)" >&2
