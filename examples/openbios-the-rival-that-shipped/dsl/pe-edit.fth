@@ -60,3 +60,10 @@ variable ss-src  variable ss-len  variable ss-entry  variable ss-data
 \ only interpret-time one and survives to the move.
 : cmdline-set ( adr len new-adr new-len -- ok? )
   s" .cmdline" 2swap pe-section-set ;
+
+\ initrd-set ( adr len new-adr new-len -- ok? ) — swap a UKI's whole .initrd for a
+\ replacement (a known-good rescue initramfs), same word, same guards: the new
+\ initrd must fit the section's raw capacity or it is refused edit| TOO-BIG,
+\ nothing written. cpio.fth walking the result back is what proves the swap took.
+: initrd-set ( adr len new-adr new-len -- ok? )
+  s" .initrd" 2swap pe-section-set ;

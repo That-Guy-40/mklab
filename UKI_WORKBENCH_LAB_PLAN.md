@@ -218,6 +218,30 @@ prediction, and the signature status; `uki-edit` replaces a section (`.cmdline`,
 Spike 3 predicts. This is the UKI half of the coreboot workbench's `rom-edit`: the firmware-image
 tool, pointed at the modern Linux boot artifact.
 
+### Dependency map — two strands, and where they meet (added 2026-09-18)
+
+The spikes are **not one linear chain**; they are two strands that cross at exactly one point.
+
+- **Spikes 0–2 ran in order and are BUILT.** Spike 0 (the PE-reader depth *decision*) and Spike 1
+  (dissect the section table) were satisfied by [`dsl/pe.fth`](examples/openbios-the-rival-that-shipped/dsl/pe.fth)
+  (#439, depth A) and its `pe` track — they never got their own tracks because the reader work *was*
+  the spike. Spike 2 (grade each section by what it is) is the [`uki` track](examples/openbios-the-rival-that-shipped/README.md)
+  (#443).
+- **Spikes 3–4–5 are the ATTESTATION / SIGNATURE strand** — the UKI's self-predicted TPM measurement
+  (`.pcrsig`), Authenticode extract-and-host-verify, and the edit-and-remeasure deliverable. **None is
+  built.** They need `pe.fth` depth **B/C** (the data directories / Certificate Table), a UKI built
+  with a PCR key, and an OVMF+swtpm boot — a *different theme* from rescue.
+- **Spikes 6–11 are the RESCUE / MUTATION strand**, and **they build on the READERS, not on 3/4/5.**
+  Spike 6 (`.cmdline` edit) is BUILT (#444). The rest depend only on already-merged readers:
+  **7** (bzImage `cmd_line_ptr`) → `bootparams.fth`; **9** (initrd swap/append) → `cpio.fth`
+  (+ `pe-edit.fth` for the UKI `.initrd` section); **10** (config-in-initrd) → `cpio.fth` + `pe-edit.fth`;
+  **11** (capstone) ties 6/7/9/10 together. So the jump from Spike 2 to Spike 6 is intentional, not a gap.
+- **The two strands meet at exactly one place: Spike 8's FULL form.** The host `uki-edit` tool's
+  *basic* form (host `objcopy` rewrite of a section) is independent, but re-signing and "measures as the
+  edited `.pcrsig` predicts" reach into Spike 4 (signature) and Spike 3 (the PCR key/measurement) — and
+  Spike 8 **subsumes Spike 5**. So Spike 8 is where 3/4/5 would be pulled in (or a basic Spike 8 ships
+  and defers the attestation loop). Everything else in the rescue arc needs nothing from 3/4/5.
+
 ### The rescue arc — editing a boot artifact: command line, initrd, config (Spikes 6–11, added 2026-09-17)
 
 *Motivation.* The everyday reason to open a boot artifact in anger is a **rescue boot**: add

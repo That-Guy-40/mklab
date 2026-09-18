@@ -955,6 +955,39 @@ extent*); the find-loop was duplicated (now the shared `pe-find-entry`); and a
 first `u<=` silently aborted compilation (this Forth has only `u<`/`u>`, so
 `u> 0=`). Caught on unix before any four-arch run, as intended.
 
+### The `initrd-swap` track — swap a UKI's whole `.initrd` for a rescue initramfs (Spike 9)
+
+```console
+$ ./smoke-openbios.sh initrd-swap
+  - subject: 138752-byte UKI; swap .initrd [greet.txt data.bin etc/conf] → the rescue initrd [rescue init] (512B)
+  - unix: .initrd swapped [greet.txt data.bin etc/conf] → [rescue init] — cpio.fth walks the new members after the swap
+  - unix foreign oracle: objcopy+cpio -itv read the swapped image's .initrd == the rescue members [rescue init] — the swap is real on the PE
+  - unix control: an oversized replacement → edit| TOO-BIG; .initrd UNCHANGED after (still the rescue members) — refused swaps write NOTHING
+  - x86 / amd64 / ppc: .initrd swapped … → [rescue init] — cpio.fth walks the new members after the swap
+PASS: UKI workbench Spike 9 (dsl/pe-edit.fth's initrd-set): swap a UKI's whole .initrd …
+```
+
+This is the [UKI workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 9**, and a
+lesson in how tight the integration became: `initrd-set` is **the same
+`pe-section-set` as Spike 6's `cmdline-set`**, pointed at `.initrd` instead of
+`.cmdline` — so the swap inherits the OOB / capacity / NUL-pad guards *for free*,
+and the whole spike adds no new mutation code, only a name. `cpio.fth` walking
+`.initrd` **before** (the UKI's own `[greet.txt data.bin etc/conf]`) and **after**
+(the rescue `[rescue init]`) is what proves the swap took — by the *reader*, not
+the editor's claim.
+
+**The replacement rides in the dictionary.** Getting a second blob (the rescue
+initramfs) into firmware memory can't use `$setenv load-base` + a second `load` —
+that's a unix-door-only trick, and x86 relocates its addresses — so
+[`fixtures/initrd-swap/`](fixtures/initrd-swap/README.md) generates a `rescue-cpio`
+Forth word that compiles the bytes into the dictionary (ordinary Forth memory on
+every arch), and the builder **asserts the emitted byte count** (an `od` without
+`-v` would collapse the cpio's NUL padding and drop bytes).
+
+**Control (unix):** an oversized replacement → `edit| TOO-BIG`, and `.initrd` is
+**unchanged** after (still the rescue members) — a refused swap writes nothing, the
+same guarantee `cmdline-edit` proves, here for `.initrd`.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console
