@@ -988,6 +988,38 @@ every arch), and the builder **asserts the emitted byte count** (an `od` without
 **unchanged** after (still the rescue members) — a refused swap writes nothing, the
 same guarantee `cmdline-edit` proves, here for `.initrd`.
 
+### The `config-edit` track — the DEEPER edit: fix a config *inside* the initramfs (Spike 10)
+
+```console
+$ ./smoke-openbios.sh config-edit
+  - subject: 138752-byte UKI; fix etc/conf INSIDE .initrd: 'x=1' → 'x=0' (same length, in place)
+  - unix: etc/conf INSIDE the initrd edited in place 'x=1' → 'x=0' — pe.fth found .initrd, cpio.fth found the file, cpio-edit.fth patched it
+  - unix foreign oracle: cpio -i pulled etc/conf back out of the swapped image's .initrd == 'x=0' — the nested edit is real on the PE
+  - unix controls: a different-length replacement → cpio| LEN-CHANGE; an absent member → cpio| NO-MEMBER; etc/conf UNCHANGED after — refused edits write NOTHING
+  - x86 / amd64 / ppc: etc/conf INSIDE the initrd edited in place 'x=1' → 'x=0' …
+PASS: UKI workbench Spike 10 (dsl/cpio-edit.fth): the DEEPER rescue edit …
+```
+
+This is the [UKI workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 10** — the
+edit that today needs a USB stick and a chroot: **fix a broken config *inside* the
+initramfs** (a bad `/etc/fstab`, `crypttab` or `root=` blocking boot). It is a
+**three-deep** edit, all three readers/editors cooperating on one nested artifact:
+[`pe.fth`](dsl/pe.fth) finds the UKI's `.initrd`, [`cpio.fth`](dsl/cpio.fth)'s
+`cpio-find` locates `etc/conf` within it, and
+[`cpio-edit.fth`](dsl/cpio-edit.fth)'s `cpio-patch` overwrites its bytes with a
+**same-length** replacement. Same-length is the constraint that keeps it in place:
+growing a member would shift every later member and the trailer — a rebuild, not
+an edit — so a length change is refused.
+
+**Proven off the PE, not the firmware's claim:** on unix the edited image is
+written back and `cpio -i` pulls `etc/conf` back out of its `.initrd` — the
+independent `cpio` reads the new bytes. The replacement and the member name ride
+in the dictionary (`fixtures/config-edit/` generates the Forth from the UKI's *own*
+config, flipping its value byte, so the edit is derived and same-length by
+construction). **Controls:** a different-length replacement → `cpio| LEN-CHANGE`;
+an absent member → `cpio| NO-MEMBER`; each refused by name, `etc/conf` unchanged
+after — the same no-partial-write guarantee, now one layer deeper.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console
