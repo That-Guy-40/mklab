@@ -155,6 +155,15 @@ TRACK (default multiboot):
                               load buffer on any arch. Control: an oversized replacement →
                               edit| TOO-BIG, .initrd unchanged (needs ukify, binutils, GNU
                               cpio, genisoimage, both QEMUs)
+  config-edit                 UKI workbench Spike 10: the DEEPER edit — fix a config
+                              blob (etc/conf) INSIDE the initramfs in place. THREE
+                              readers cooperate on one nested artifact: pe.fth finds
+                              .initrd, cpio.fth's cpio-find locates the file,
+                              cpio-edit.fth's cpio-patch overwrites it SAME-LENGTH;
+                              cpio -i pulls the edited config off the written-back PE.
+                              Controls: a length change → cpio| LEN-CHANGE, an absent
+                              member → cpio| NO-MEMBER, config unchanged after (needs
+                              ukify, binutils, GNU cpio, python3, genisoimage, both QEMUs)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -6308,6 +6317,150 @@ PY
 
     pass "UKI workbench Spike 9 (dsl/pe-edit.fth's initrd-set): swap a UKI's whole .initrd for a known-good rescue initramfs, in place at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. cpio.fth walks .initrd BEFORE the swap and reads the UKI's own members [${ISORIG[*]}]; initrd-set swaps in the rescue archive; cpio.fth walks it AFTER and reads the rescue members [${ISNAMES[*]}] — the swap took, proven by the reader, not the editor's claim. On unix the swapped image is written back and objcopy+cpio -itv read the rescue members off the PE. initrd-set IS Spike 6's pe-section-set pointed at .initrd, so it inherits the OOB / capacity / NUL-pad guards: the CONTROL swaps in something larger than the section → edit| TOO-BIG, and .initrd is UNCHANGED after (still the rescue members) — a refused swap writes NOTHING. The replacement rides in the dictionary (a generated rescue-cpio word) so no second load buffer is needed on any arch. This is the rescue seam: boot a known-good initramfs without a USB stick or a chroot."
     ;;
+  config-edit)
+    # UKI workbench Spike 10 (UKI_WORKBENCH_LAB_PLAN.md) — the "deeper" rescue edit:
+    # fix a config blob INSIDE the initramfs (the /etc/fstab / crypttab / root= that
+    # is blocking boot), in place, at the prompt. THREE readers/editors cooperate on
+    # one nested artifact: pe.fth finds the UKI's .initrd, cpio.fth's cpio-find
+    # locates the config file within it, and cpio-edit.fth's cpio-patch overwrites
+    # its bytes with a SAME-LENGTH replacement (a length change would shift the whole
+    # cpio — a rebuild, not an in-place edit, so it is refused). The replacement +
+    # the member name ride in the dictionary (fixtures/config-edit/ generates the
+    # Forth from the UKI's OWN config, flipping its value byte, so the edit is derived
+    # and same-length by construction). The foreign oracle: cpio -i pulls the edited
+    # config back out of the WRITTEN-BACK image and it holds the new bytes. Controls:
+    # a different-length replacement → cpio| LEN-CHANGE; an absent member → cpio|
+    # NO-MEMBER; each refused by name, the config UNCHANGED after.
+    command -v ukify >/dev/null || skip "ukify not installed (systemd-ukify) — the UKI builder"
+    command -v objdump >/dev/null || skip "objdump not installed (binutils)"
+    command -v objcopy >/dev/null || skip "objcopy not installed (binutils) — extracts .initrd/the config"
+    command -v cpio >/dev/null || skip "cpio not installed (GNU cpio) — the config oracle"
+    command -v python3 >/dev/null || skip "python3 not installed — the fixture builder needs it"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]] || skip "missing /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd-boot-efi)"
+    CGSTRUCT="$HERE/dsl/struct.fth"; CGPE="$HERE/dsl/pe.fth"; CGCPIO="$HERE/dsl/cpio.fth"; CGCE="$HERE/dsl/cpio-edit.fth"
+    CGUKIB="$HERE/fixtures/pe/build-pe-fixture.sh"; CGCB="$HERE/fixtures/config-edit/build-config-patch.sh"
+    for f in "$CGSTRUCT" "$CGPE" "$CGCPIO" "$CGCE" "$CGUKIB" "$CGCB"; do [[ -f "$f" ]] || fail "config-edit: missing $f — this track stages the SHIPPED files"; done
+    CGUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; CGUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    CGXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   CGXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    CGAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; CGADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    CGPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$CGUBIN" "$CGUDICT" "$CGXMB" "$CGXDI" "$CGAMB" "$CGADI" "$CGPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    CGWD="$WORKDIR/config-edit"; rm -rf "$CGWD"; mkdir -p "$CGWD/stage"
+    bash "$CGUKIB" "$CGWD/uki.efi" >/dev/null 2>&1 || fail "config-edit: build-pe-fixture.sh failed to author the UKI"
+    bash "$CGCB" "$CGWD/uki.efi" "$CGWD/stage/CONFIG.FTH" "$CGWD/new.bin" 2> "$CGWD/cfg.err" || skip "config-edit: could not build the config patch — $(cat "$CGWD/cfg.err")"
+    [[ -s "$CGWD/uki.efi" && -s "$CGWD/stage/CONFIG.FTH" && -s "$CGWD/new.bin" ]] || fail "config-edit: a fixture was not produced"
+    # oracles DERIVED at run time: the config file's OLD bytes (from the UKI) and its
+    # NEW bytes (the same-length replacement the builder made).
+    objcopy -O binary --only-section=.initrd "$CGWD/uki.efi" "$CGWD/orig.initrd" 2>/dev/null || fail "config-edit: objcopy could not extract .initrd"
+    CGOLD="$(cpio -i --to-stdout etc/conf < "$CGWD/orig.initrd" 2>/dev/null | tr -d '\n')"
+    CGNEW="$(tr -d '\n' < "$CGWD/new.bin")"
+    [[ -n "$CGOLD" && -n "$CGNEW" && "$CGOLD" != "$CGNEW" ]] || fail "config-edit: the config oracle is degenerate (old='$CGOLD', new='$CGNEW')"
+    cp "$CGSTRUCT" "$CGWD/stage/STRUCT.FTH"; cp "$CGPE" "$CGWD/stage/PE.FTH"; cp "$CGCPIO" "$CGWD/stage/CPIO.FTH"; cp "$CGCE" "$CGWD/stage/CPIOEDIT.FTH"; cp "$CGWD/uki.efi" "$CGWD/stage/UKI.EFI"
+    genisoimage -quiet -o "$CGWD/cg.iso" -V CONFIGEDIT -r -J "$CGWD/stage" 2>/dev/null || fail "config-edit: genisoimage failed"
+    note "subject: $(stat -c%s "$CGWD/uki.efi")-byte UKI; fix etc/conf INSIDE .initrd: '$CGOLD' → '$CGNEW' (same length, in place)"
+
+    # grade one arch's log: the config was found in the nested cpio and edited; the
+    # firmware re-reads OLD before and NEW after. <log> <arch>
+    cg_grade() {
+      local lg="$1" a="$2" g fold fnew
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'PATCHOK' <<<"$g" || fail "config-edit ($a): cpio-patch returned false on a valid edit (no PATCHOK): $(grep -aoE 'cpio\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      fold="$(grep -aE '^OLD=' <<<"$g" | head -1 | sed 's/^OLD=//')"
+      fnew="$(grep -aE '^NEW=' <<<"$g" | head -1 | sed 's/^NEW=//')"
+      [[ "$fold" == "$CGOLD" ]] || fail "config-edit ($a): BEFORE the edit etc/conf read '$fold', expected '$CGOLD' — see $lg"
+      [[ "$fnew" == "$CGNEW" ]] || fail "config-edit ($a): AFTER the edit etc/conf reads '$fnew', expected '$CGNEW' — see $lg"
+      note "$a: etc/conf INSIDE the initrd edited in place '$CGOLD' → '$CGNEW' — pe.fth found .initrd, cpio.fth found the file, cpio-edit.fth patched it"
+    }
+
+    # each line stack-neutral, ≤ 80 cols (hosted-unix stdin truncates at 80). The
+    # member name and the replacement are COMPILED (config-name / config-new), so no
+    # two transient s" are live at once (the string marker prints on its own line).
+    CFLINES=( 'variable ca variable cl variable fa variable fl variable pok'
+              'load-base load-size s" .initrd" pe-find cl ! ca ! cr'
+              'ca @ cl @ 40 s" etc/conf" cpio-find fl ! fa ! cr'
+              'cr ." OLD=" fa @ fl @ type cr'
+              'ca @ cl @ 40 config-name config-new cpio-patch pok !'
+              'pok @ if ." PATCHOK" else ." PATCHBAD" then cr'
+              'ca @ cl @ 40 s" etc/conf" cpio-find fl ! fa ! cr'
+              'cr ." NEW=" fa @ fl @ type cr' )
+
+    # ── unix: the ISO door + write-file foreign-oracle grade + the two controls ──
+    ( cd "$CGWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\PE.FTH' 'load-base load-size evaluate' \
+        'load hd:\CPIO.FTH' 'load-base load-size evaluate' \
+        'load hd:\CPIOEDIT.FTH' 'load-base load-size evaluate' \
+        'load hd:\CONFIG.FTH' 'load-base load-size evaluate' \
+        'load hd:\UKI.EFI' "${CFLINES[@]}" \
+        'load-base load-size s" EDITED.EFI" write-file drop' \
+        'ca @ cl @ 40 config-name config-new drop 3 cpio-patch drop' \
+        'ca @ cl @ 40 config-bogus config-new cpio-patch drop' \
+        'load-base load-size s" AFTER.EFI" write-file drop' 'bye' \
+      | "$CGUBIN" -f "$CGWD/cg.iso" "$CGUDICT" 2>&1 | tr -d '\r' > "$CGWD/unix.log" )
+    cg_grade "$CGWD/unix.log" unix
+    # FOREIGN oracle: the edited config, pulled back out of the written-back image
+    [[ -s "$CGWD/EDITED.EFI" ]] || fail "config-edit (unix): write-file produced no EDITED.EFI"
+    objcopy -O binary --only-section=.initrd "$CGWD/EDITED.EFI" "$CGWD/edited.initrd" 2>/dev/null || fail "config-edit (unix): objcopy could not read .initrd from the edited image"
+    CGGOT="$(cpio -i --to-stdout etc/conf < "$CGWD/edited.initrd" 2>/dev/null | tr -d '\n')"
+    [[ "$CGGOT" == "$CGNEW" ]] || fail "config-edit (unix): cpio -i read the edited etc/conf as '$CGGOT', the firmware wrote '$CGNEW' — the edit is not real inside the initrd on the PE"
+    note "unix foreign oracle: cpio -i pulled etc/conf back out of the swapped image's .initrd == '$CGNEW' — the nested edit is real on the PE"
+    CGUG="$(cat "$CGWD/unix.log")"
+    grep -qE 'cpio\| LEN-CHANGE' <<<"$CGUG" \
+      || fail "config-edit CONTROL (unix): a different-length replacement was not refused by name (wanted cpio| LEN-CHANGE) — see $CGWD/unix.log"
+    grep -qE 'cpio\| NO-MEMBER' <<<"$CGUG" \
+      || fail "config-edit CONTROL (unix): an absent member was not refused by name (wanted cpio| NO-MEMBER) — see $CGWD/unix.log"
+    [[ -s "$CGWD/AFTER.EFI" ]] || fail "config-edit (unix): write-file produced no AFTER.EFI"
+    objcopy -O binary --only-section=.initrd "$CGWD/AFTER.EFI" "$CGWD/after.initrd" 2>/dev/null || fail "config-edit (unix): objcopy could not read .initrd from AFTER.EFI"
+    CGAFT="$(cpio -i --to-stdout etc/conf < "$CGWD/after.initrd" 2>/dev/null | tr -d '\n')"
+    [[ "$CGAFT" == "$CGNEW" ]] || fail "config-edit CONTROL (unix): after the refused edits etc/conf is '$CGAFT', not '$CGNEW' — a refusal scribbled a PARTIAL write"
+    note "unix controls: a different-length replacement → cpio| LEN-CHANGE; an absent member → cpio| NO-MEMBER; etc/conf UNCHANGED after — refused edits write NOTHING"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for CGA in x86 amd64; do
+      if [[ $CGA == x86 ]]; then CGMB="$CGXMB"; CGDI="$CGXDI"; else CGMB="$CGAMB"; CGDI="$CGADI"; fi
+      CGSER="/tmp/cg-$CGA-$$.sock"; CGLOG="$CGWD/$CGA.log"; rm -f "$CGSER" "$CGLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$CGMB" -initrd "$CGDI" -nic none -cdrom "$CGWD/cg.iso" \
+        -display none -serial "unix:$CGSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      CGQ=$!
+      CGSENDS=(); for l in "${CFLINES[@]}"; do CGSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$CGSER" "$CGLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PE.FTH\r'       --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CPIO.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CPIOEDIT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CONFIG.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\UKI.EFI\r' --expect "0 > " \
+        "${CGSENDS[@]}"
+      CGRC=$?
+      kill "$CGQ" 2>/dev/null   # by PID, never by pattern
+      [[ $CGRC -eq 0 ]] || fail "config-edit ($CGA): the prompt driver did not complete (rc=$CGRC) — see $CGLOG"
+      cg_grade "$CGLOG" "$CGA"
+    done
+
+    # ── ppc: the big-endian row — pe.fth/cpio.fth locate the nested file via LE/
+    # ASCII-hex the same as x86; the byte overwrite is order-free ──────────────
+    CGPLOG="$CGWD/ppc.log"; rm -f "$CGPLOG"
+    CGPSENDS=(); for l in "${CFLINES[@]}"; do CGPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$CGPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PE.FTH;1\r'       --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CPIO.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CPIOEDIT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CONFIG.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\UKI.EFI;1\r' --expect "0 > " \
+      "${CGPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$CGPELF" -nographic -vga none -cdrom "$CGWD/cg.iso" >/dev/null 2>&1
+    CGPRC=$?
+    [[ $CGPRC -eq 0 ]] || fail "config-edit (ppc): the prompt driver did not complete (rc=$CGPRC) — see $CGPLOG"
+    cg_grade "$CGPLOG" ppc
+
+    pass "UKI workbench Spike 10 (dsl/cpio-edit.fth): the DEEPER rescue edit — fix a config blob INSIDE the initramfs, in place at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. THREE readers/editors cooperate on one nested artifact: pe.fth finds the UKI's .initrd, cpio.fth's cpio-find locates etc/conf within it, and cpio-edit.fth's cpio-patch overwrites its bytes with a SAME-LENGTH replacement ('$CGOLD' → '$CGNEW'). The firmware re-reads the old value before and the new after; on unix cpio -i pulls the edited config back out of the WRITTEN-BACK image and it holds '$CGNEW' — the nested edit is real on the PE. cpio-patch refuses BY NAME, writing NOTHING: a different-length replacement → cpio| LEN-CHANGE (a length change is a cpio rebuild, not an in-place edit), an absent member → cpio| NO-MEMBER; and etc/conf is UNCHANGED after both. This is the rescue seam that today needs a USB stick and a chroot: fix a broken /etc/fstab or root= inside the initramfs without either."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -8628,5 +8781,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|initrd-swap|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|initrd-swap|config-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac
