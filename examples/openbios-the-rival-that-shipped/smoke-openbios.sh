@@ -146,6 +146,15 @@ TRACK (default multiboot):
                               (the out-of-bounds-write guard), too-big → edit| TOO-BIG, a
                               non-PE → edit| NOT-PE; .cmdline unchanged after (no partial)
                               (needs ukify, binutils, genisoimage, both QEMUs)
+  initrd-swap                 UKI workbench Spike 9: swap a UKI's WHOLE .initrd for a
+                              known-good rescue initramfs in place — initrd-set is
+                              Spike 6's pe-section-set pointed at .initrd (same guards);
+                              cpio.fth walks the NEW members after, == cpio -itv (and,
+                              unix, off the written-back PE). The replacement rides in
+                              the dictionary (a generated rescue-cpio word), so no second
+                              load buffer on any arch. Control: an oversized replacement →
+                              edit| TOO-BIG, .initrd unchanged (needs ukify, binutils, GNU
+                              cpio, genisoimage, both QEMUs)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -6162,6 +6171,143 @@ PY
 
     pass "UKI workbench Spike 6 (dsl/pe-edit.fth): the rescue arc's smallest real proof — an in-firmware, in-place edit of a UKI's .cmdline at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. cmdline-set rewrote .cmdline to '$ENEW' (grown 24→32 within the section slack) and updated VirtualSize; on unix the edited image was written back and \`objcopy\`/\`objdump\` (foreign) read the new bytes AND the new VirtualSize — the edit is real on the PE, not the firmware's own claim — and every arch re-reads the new value. The byte copy is order-free but LOCATING the section and WRITING VirtualSize are little-endian, so ppc finds + writes the same header x86 does. SECURITY (unix controls), each refused BY NAME with NOTHING written: a section whose data runs past the image → edit| OOB (the out-of-bounds-write guard, added to pe.fth's sec-in-image?), a value larger than the section → edit| TOO-BIG, a non-PE → edit| NOT-PE; and .cmdline is UNCHANGED after all three (no partial scribble). This is the rescue seam: add init=/bin/bash to a kernel command line without a USB stick or a chroot."
     ;;
+  initrd-swap)
+    # UKI workbench Spike 9 (UKI_WORKBENCH_LAB_PLAN.md) — swap a UKI's WHOLE .initrd
+    # for a known-good rescue initramfs, in place at the prompt. This is ASSEMBLY:
+    # initrd-set is the same pe-section-set as Spike 6's cmdline-set (same OOB/
+    # capacity/NUL-pad guards, for free), pointed at .initrd; cpio.fth walking the
+    # result back is what proves the swap took. The replacement bytes ride in the
+    # DICTIONARY (fixtures/initrd-swap/ generates a `rescue-cpio` Forth word from the
+    # cpio), because a second load buffer needs `$setenv load-base` — a unix-door-only
+    # trick that x86's relocation would fight — while the dictionary is ordinary Forth
+    # memory on every arch. Oracles are foreign: cpio -itv on the rescue archive (the
+    # members the swap must produce) and, on unix, cpio -itv on the .initrd objcopy
+    # pulls from the WRITTEN-BACK image (the swap is real on the PE). Control: a
+    # replacement larger than the section → edit| TOO-BIG, .initrd UNCHANGED.
+    command -v ukify >/dev/null || skip "ukify not installed (systemd-ukify) — the UKI builder"
+    command -v objdump >/dev/null || skip "objdump not installed (binutils)"
+    command -v objcopy >/dev/null || skip "objcopy not installed (binutils) — extracts .initrd for the oracle"
+    command -v cpio >/dev/null || skip "cpio not installed (GNU cpio) — the initrd oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]] || skip "missing /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd-boot-efi)"
+    ISSTRUCT="$HERE/dsl/struct.fth"; ISPE="$HERE/dsl/pe.fth"; ISPEE="$HERE/dsl/pe-edit.fth"; ISCPIO="$HERE/dsl/cpio.fth"
+    ISUKIB="$HERE/fixtures/pe/build-pe-fixture.sh"; ISRB="$HERE/fixtures/initrd-swap/build-rescue-initrd.sh"
+    for f in "$ISSTRUCT" "$ISPE" "$ISPEE" "$ISCPIO" "$ISUKIB" "$ISRB"; do [[ -f "$f" ]] || fail "initrd-swap: missing $f — this track stages the SHIPPED files"; done
+    ISUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; ISUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    ISXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   ISXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    ISAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; ISADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    ISPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$ISUBIN" "$ISUDICT" "$ISXMB" "$ISXDI" "$ISAMB" "$ISADI" "$ISPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    ISWD="$WORKDIR/initrd-swap"; rm -rf "$ISWD"; mkdir -p "$ISWD/stage"
+    bash "$ISUKIB" "$ISWD/uki.efi" >/dev/null 2>&1 || fail "initrd-swap: build-pe-fixture.sh failed to author the UKI"
+    bash "$ISRB" "$ISWD/rescue.cpio" "$ISWD/stage/RESCUE.FTH" 2> "$ISWD/rescue.err" || skip "initrd-swap: could not build the rescue initrd — $(cat "$ISWD/rescue.err")"
+    [[ -s "$ISWD/uki.efi" && -s "$ISWD/rescue.cpio" && -s "$ISWD/stage/RESCUE.FTH" ]] || fail "initrd-swap: a fixture was not produced"
+    # oracles DERIVED at run time (never cached): the members BEFORE (the UKI's own
+    # .initrd) and AFTER (the rescue archive) the swap.
+    objcopy -O binary --only-section=.initrd "$ISWD/uki.efi" "$ISWD/orig.initrd" 2>/dev/null || fail "initrd-swap: objcopy could not extract the UKI's .initrd"
+    mapfile -t ISORIG   < <(cpio -itv < "$ISWD/orig.initrd" 2>/dev/null | awk '{print $NF}')
+    mapfile -t ISNAMES  < <(cpio -itv < "$ISWD/rescue.cpio" 2>/dev/null | awk '{print $NF}')
+    (( ${#ISORIG[@]} >= 2 && ${#ISNAMES[@]} >= 1 )) || fail "initrd-swap: an oracle listing is empty (orig=${#ISORIG[@]}, rescue=${#ISNAMES[@]})"
+    [[ "${ISORIG[*]}" != "${ISNAMES[*]}" ]] || fail "initrd-swap: the rescue initrd has the SAME members as the UKI's — the swap would not be observable"
+    cp "$ISSTRUCT" "$ISWD/stage/STRUCT.FTH"; cp "$ISPE" "$ISWD/stage/PE.FTH"; cp "$ISPEE" "$ISWD/stage/PEEDIT.FTH"; cp "$ISCPIO" "$ISWD/stage/CPIO.FTH"; cp "$ISWD/uki.efi" "$ISWD/stage/UKI.EFI"
+    genisoimage -quiet -o "$ISWD/is.iso" -V INITRDSWAP -r -J "$ISWD/stage" 2>/dev/null || fail "initrd-swap: genisoimage failed"
+    note "subject: $(stat -c%s "$ISWD/uki.efi")-byte UKI; swap .initrd [${ISORIG[*]}] → the rescue initrd [${ISNAMES[*]}] ($(stat -c%s "$ISWD/rescue.cpio")B)"
+
+    # grade one arch's log: the swap took, and cpio.fth walks the NEW members. The
+    # members BEFORE the swap == the UKI's own initrd, AFTER == the rescue's. <log> <arch>
+    is_grade() {
+      local lg="$1" a="$2" g
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'SWAPOK' <<<"$g" || fail "initrd-swap ($a): initrd-set returned false on a valid swap (no SWAPOK): $(grep -aoE 'edit\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      mapfile -t GB < <(awk '/BEFORE:/{f=1} f&&/cpio\| name=/{sub(/.*name=/,"");print $1} f&&/CPIO-END/{exit}' <<<"$g")
+      mapfile -t GA < <(awk '/AFTER:/{f=1}  f&&/cpio\| name=/{sub(/.*name=/,"");print $1} f&&/CPIO-END/{exit}' <<<"$g")
+      [[ "${GB[*]}" == "${ISORIG[*]}" ]] || fail "initrd-swap ($a): BEFORE the swap .initrd held [${GB[*]}], expected the UKI's original [${ISORIG[*]}] — see $lg"
+      [[ "${GA[*]}" == "${ISNAMES[*]}" ]] || fail "initrd-swap ($a): AFTER the swap .initrd holds [${GA[*]}], expected the rescue initrd [${ISNAMES[*]}] — see $lg"
+      note "$a: .initrd swapped [${ISORIG[*]}] → [${ISNAMES[*]}] — cpio.fth walks the new members after the swap"
+    }
+
+    # each line stack-neutral and ≤ 80 cols (the hosted-unix stdin truncates at 80).
+    SWLINES=( 'variable isa variable isl variable isok'
+              'load-base load-size s" .initrd" pe-find isl ! isa ! cr'
+              '." BEFORE:" cr isa @ isl @ 40 cpio-walk drop'
+              'load-base load-size rescue-cpio initrd-set isok !'
+              'isok @ if ." SWAPOK" else ." SWAPBAD" then cr'
+              'load-base load-size s" .initrd" pe-find isl ! isa ! cr'
+              '." AFTER:" cr isa @ isl @ 40 cpio-walk drop' )
+
+    # ── unix: the ISO door + write-file foreign-oracle grade + the TOO-BIG control ──
+    ( cd "$ISWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\PE.FTH' 'load-base load-size evaluate' \
+        'load hd:\PEEDIT.FTH' 'load-base load-size evaluate' \
+        'load hd:\CPIO.FTH' 'load-base load-size evaluate' \
+        'load hd:\RESCUE.FTH' 'load-base load-size evaluate' \
+        'load hd:\UKI.EFI' "${SWLINES[@]}" \
+        'load-base load-size s" EDITED.EFI" write-file drop' \
+        'load-base load-size s" .initrd" load-base load-size pe-section-set drop' \
+        'load-base load-size s" AFTER.EFI" write-file drop' 'bye' \
+      | "$ISUBIN" -f "$ISWD/is.iso" "$ISUDICT" 2>&1 | tr -d '\r' > "$ISWD/unix.log" )
+    is_grade "$ISWD/unix.log" unix
+    # FOREIGN oracle: the swapped image on disk, read by objcopy + cpio -itv
+    [[ -s "$ISWD/EDITED.EFI" ]] || fail "initrd-swap (unix): write-file produced no EDITED.EFI"
+    objcopy -O binary --only-section=.initrd "$ISWD/EDITED.EFI" "$ISWD/edited.initrd" 2>/dev/null || fail "initrd-swap (unix): objcopy could not read .initrd from the swapped image"
+    mapfile -t ISGOT < <(cpio -itv < "$ISWD/edited.initrd" 2>/dev/null | awk '{print $NF}')
+    [[ "${ISGOT[*]}" == "${ISNAMES[*]}" ]] || fail "initrd-swap (unix): objcopy+cpio read the swapped .initrd as [${ISGOT[*]}], the firmware swapped in [${ISNAMES[*]}] — the swap is not real on the PE"
+    note "unix foreign oracle: objcopy+cpio -itv read the swapped image's .initrd == the rescue members [${ISNAMES[*]}] — the swap is real on the PE"
+    ISUG="$(cat "$ISWD/unix.log")"
+    grep -qE 'edit\| TOO-BIG' <<<"$ISUG" \
+      || fail "initrd-swap CONTROL (unix): a replacement larger than the section was not refused by name (wanted edit| TOO-BIG) — see $ISWD/unix.log"
+    [[ -s "$ISWD/AFTER.EFI" ]] || fail "initrd-swap (unix): write-file produced no AFTER.EFI"
+    objcopy -O binary --only-section=.initrd "$ISWD/AFTER.EFI" "$ISWD/after.initrd" 2>/dev/null || fail "initrd-swap (unix): objcopy could not read .initrd from AFTER.EFI"
+    mapfile -t ISAFT < <(cpio -itv < "$ISWD/after.initrd" 2>/dev/null | awk '{print $NF}')
+    [[ "${ISAFT[*]}" == "${ISNAMES[*]}" ]] || fail "initrd-swap CONTROL (unix): after the refused oversized swap .initrd holds [${ISAFT[*]}], not the rescue [${ISNAMES[*]}] — a refusal scribbled a PARTIAL write"
+    note "unix control: an oversized replacement → edit| TOO-BIG; .initrd UNCHANGED after (still the rescue members) — refused swaps write NOTHING"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for ISA in x86 amd64; do
+      if [[ $ISA == x86 ]]; then ISMB="$ISXMB"; ISDI="$ISXDI"; else ISMB="$ISAMB"; ISDI="$ISADI"; fi
+      ISSER="/tmp/is-$ISA-$$.sock"; ISLOG="$ISWD/$ISA.log"; rm -f "$ISSER" "$ISLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$ISMB" -initrd "$ISDI" -nic none -cdrom "$ISWD/is.iso" \
+        -display none -serial "unix:$ISSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      ISQ=$!
+      ISSENDS=(); for l in "${SWLINES[@]}"; do ISSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$ISSER" "$ISLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PE.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PEEDIT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CPIO.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\RESCUE.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\UKI.EFI\r' --expect "0 > " \
+        "${ISSENDS[@]}"
+      ISRC=$?
+      kill "$ISQ" 2>/dev/null   # by PID, never by pattern
+      [[ $ISRC -eq 0 ]] || fail "initrd-swap ($ISA): the prompt driver did not complete (rc=$ISRC) — see $ISLOG"
+      is_grade "$ISLOG" "$ISA"
+    done
+
+    # ── ppc: the big-endian row — pe.fth locates .initrd via the LE table + writes
+    # VirtualSize via le-l!, the same as x86; the swapped cpio walk is byte-for-byte ──
+    ISPLOG="$ISWD/ppc.log"; rm -f "$ISPLOG"
+    ISPSENDS=(); for l in "${SWLINES[@]}"; do ISPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$ISPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PE.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PEEDIT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CPIO.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\RESCUE.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\UKI.EFI;1\r' --expect "0 > " \
+      "${ISPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$ISPELF" -nographic -vga none -cdrom "$ISWD/is.iso" >/dev/null 2>&1
+    ISPRC=$?
+    [[ $ISPRC -eq 0 ]] || fail "initrd-swap (ppc): the prompt driver did not complete (rc=$ISPRC) — see $ISPLOG"
+    is_grade "$ISPLOG" ppc
+
+    pass "UKI workbench Spike 9 (dsl/pe-edit.fth's initrd-set): swap a UKI's whole .initrd for a known-good rescue initramfs, in place at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. cpio.fth walks .initrd BEFORE the swap and reads the UKI's own members [${ISORIG[*]}]; initrd-set swaps in the rescue archive; cpio.fth walks it AFTER and reads the rescue members [${ISNAMES[*]}] — the swap took, proven by the reader, not the editor's claim. On unix the swapped image is written back and objcopy+cpio -itv read the rescue members off the PE. initrd-set IS Spike 6's pe-section-set pointed at .initrd, so it inherits the OOB / capacity / NUL-pad guards: the CONTROL swaps in something larger than the section → edit| TOO-BIG, and .initrd is UNCHANGED after (still the rescue members) — a refused swap writes NOTHING. The replacement rides in the dictionary (a generated rescue-cpio word) so no second load buffer is needed on any arch. This is the rescue seam: boot a known-good initramfs without a USB stick or a chroot."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -8482,5 +8628,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|initrd-swap|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac
