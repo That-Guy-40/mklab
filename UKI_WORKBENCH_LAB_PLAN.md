@@ -232,9 +232,11 @@ The spikes are **not one linear chain**; they are two strands that cross at exac
   built.** They need `pe.fth` depth **B/C** (the data directories / Certificate Table), a UKI built
   with a PCR key, and an OVMF+swtpm boot — a *different theme* from rescue.
 - **Spikes 6–11 are the RESCUE / MUTATION strand**, and **they build on the READERS, not on 3/4/5.**
-  Spike 6 (`.cmdline` edit) is BUILT (#444). The rest depend only on already-merged readers:
-  **7** (bzImage `cmd_line_ptr`) → `bootparams.fth`; **9** (initrd swap/append) → `cpio.fth`
-  (+ `pe-edit.fth` for the UKI `.initrd` section); **10** (config-in-initrd) → `cpio.fth` + `pe-edit.fth`;
+  Built so far: **Spike 6** (`.cmdline` edit, `cmdline-edit` track, #444), **Spike 9** (initrd
+  swap/append, `initrd-swap` track, #445), **Spike 10** (config-in-initrd, `config-edit` track, #446).
+  Still open, each depending only on already-merged readers: **7** (bzImage `cmd_line_ptr`) →
+  `bootparams.fth` (**oracle now measured 2026-09-18 — no longer deferred; see Spike 7**);
+  **8-basic** (host re-emit) → `pe.fth` + `objcopy`/`ukify` (fully tooled, independent);
   **11** (capstone) ties 6/7/9/10 together. So the jump from Spike 2 to Spike 6 is intentional, not a gap.
 - **The two strands meet at exactly one place: Spike 8's FULL form.** The host `uki-edit` tool's
   *basic* form (host `objcopy` rewrite of a section) is independent, but re-signing and "measures as the
@@ -296,28 +298,84 @@ enough. **Control:** a write that overruns `SizeOfRawData` is refused by name, n
 scribbled past the section. This is an in-RAM, one-shot edit — booting the result end to end is
 Spike 3's OVMF loop, reused.
 
-### Spike 7 (#3) — the bzImage `cmd_line_ptr` seam, the classic-kernel rescue path — BUILD SECOND
+### Spike 7 (#3) — the bzImage `cmd_line_ptr` seam, the classic-kernel rescue path — ORACLE MEASURED 2026-09-18
 Not every rescue target is a UKI. A plain `kernel + initrd` boot reads its command line from the
 boot_params field `cmd_line_ptr` (u32 @ `0x228`), which `bootparams.fth` already reads. This spike
-**writes the buffer that pointer names** — set up a command-line string in memory, point
-`cmd_line_ptr` at it (or edit the existing buffer in place), and confirm the kernel the firmware is
-about to boot would see the new line. It is the most direct *"edit at the firmware prompt, then
-boot"* seam: no UKI, no UEFI, no EFI stub — just the zero-page contract every x86 kernel honors.
-**Grade:** the byte the pointer resolves to holds the new string (read back through
-`bootparams.fth`); on a boot-capable arch, `/proc/cmdline` of the booted kernel is the ground truth
-(reusing the showcase's boot path), not the firmware's own read-back. **Control:** a command line
-longer than the protocol's `cmdline_size` (u32 @ `0x238`) is refused by name.
+**writes the buffer that pointer names**.
 
-### Spike 8 (#2) — the host-side `uki-edit` rescue tool, the deliverable — BUILD LAST
-The portable *"produce a rescue image without a chroot"* tool, and the rescue framing of Spike 5:
-`objcopy`/`ukify` rewrite `.cmdline` (growing it past the slack, re-laying the sections) and
-**re-sign**, emitting a patched UKI to drop on the ESP — a change that *persists* across reboots,
-which the in-RAM edits (6–7) deliberately do not. This is what a UEFI x86 box actually uses, since
-it cannot run the firmware-side edit. **Grade:** the re-emitted UKI's `.cmdline` reads back correct
-under `pe.fth` **and** `objdump`; it still boots under OVMF (Spike 3's loop) and — if built with a
-PCR key (Spike 3's prerequisite) — produces the *new* measurement the edited `.pcrsig` predicts.
-**Control:** an edit that would break the PE (a section overlap, a bad checksum) is refused before
-re-emit, not written out broken.
+**The obstacle, named precisely — and why it stalled the spike.** `cmd_line_ptr` is a *runtime* field:
+it is **zero in the on-disk bzImage** (the live `bootparams` fixture reads `cmdline_ptr=0`). Only a
+*bootloader* ever sets it, and it sets it in RAM. So there is no foreign on-disk decoder to grade the
+edit against, and minting the zero-page ourselves and reading it back would be a **round trip that hides
+a symmetric offset error** (the repo's rule). That, precisely, was the deferral.
+
+**Resolved — a foreign, non-round-trip oracle, measured 2026-09-18.** QEMU's own `-kernel` loader *is* a
+real, independent bootloader that sets `cmd_line_ptr`. Boot the real bzImage under
+`qemu-system-x86_64 -kernel … -append "<sentinel>"`, let the guest's `linuxboot` option ROM run ~0.15 s
+(**measured stable through 1.0 s** — a wide window, not a race), QMP `stop`, and `pmemsave` guest
+**physical memory from 0**. Measured: a genuine `boot_params` lands at phys `0x10000` — found by
+*scanning* for the reader's own anchors (`boot_flag`=0xAA55 @ +0x1fe **and** `HdrS` @ +0x202), never a
+hard-coded address — with `cmd_line_ptr=0x20000` pointing at the exact `-append` string and
+`cmdline_size=0x7ff`. Because the dump is **physical-0-indexed, `cmd_line_ptr` is a direct offset into
+it**: `bootparams.fth`'s `bp-cmdline-ptr t@` followed as an absolute offset lands on the string with **no
+pointer rebasing**, so the one fidelity compromise is gone. QEMU authored the pointer *and* the buffer;
+the reader and the oracle are different programs.
+
+**7a — read · edit · read-back (BUILDABLE, faithful).**
+- *Fixture* (`fixtures/cmdline-ptr/`, derived at run time, self-SKIP without a QEMU + a bzImage): the
+  freeze-and-dump above, sliced to phys `0..0x21000` (~132 KiB — carries boot_params @ 0x10000 through
+  the cmdline buffer @ 0x20000, and fits the firmware load window) plus the sentinel string it must hold.
+- *New words* (`dsl/bootparams-edit.fth`, on `struct.fth`, matching the `pe-edit`/`cpio-edit` shape):
+  `bp-cmdline ( -- adr len | 0 0 )` follows `cmd_line_ptr` into the image and returns the NUL-terminated
+  string; `bp-cmdline-set ( new-adr u -- ok? )` overwrites it in place, NUL-terminating and refusing **by
+  name** (`bp| CMDLINE-TOO-BIG`) a line longer than `cmdline_size` (u32 @ 0x238). In-place, same slot —
+  the rescue edit (`init=/bin/bash`, `single`, `rd.break`) is *shorter* than the original, so it fits.
+- *Grade:* `bp-cmdline` returns the sentinel (oracle = the string handed to `-append`, foreign, not a
+  round trip); after `bp-cmdline-set`, `bp-cmdline` returns the new line **and** the host re-reads it by
+  an independent python `struct` decode of the written-back dump's `cmd_line_ptr`. Four-arch — the field
+  is LE, so ppc earns its keep exactly as in `bootparams.fth`.
+- *Control:* a line longer than `cmdline_size` (0x7ff) refused by name, the buffer **unchanged** after.
+
+**7b — the runtime contract (UNKNOWN in this lab, stated not hidden).** That a kernel *booted* with the
+edited line shows it in `/proc/cmdline` is the field's whole meaning — but it needs a bootloader that
+consumes **our** edit, and this lab's firmware (OpenBIOS / OVMF) does not build a bzImage zero-page from a
+firmware-prompt edit (§5's honest boundary). So "our edit reached the kernel" stays **UNKNOWN** here,
+distinct from PASS. What *is* measured, as calibration + negative control: the on-disk `cmd_line_ptr` is 0
+(proving the field is runtime-only — why the spike exists), and a real `qemu -kernel -append X -initrd …`
+boot shows `X` in `/proc/cmdline` (proving the field's *semantics* are real). The runtime loop our edit
+**does** close is the UKI `.cmdline` path — Spike 6 under OVMF — not this one. Spike 7 proves the
+classic-BIOS *technique*, grades it against a foreign oracle, and names what it cannot boot.
+
+### Spike 8 (#2) — the host-side `uki-edit` rescue tool, the deliverable — TWO FORMS (toolchain measured 2026-09-18)
+The portable *"produce a rescue image without a chroot"* tool, and the rescue framing of Spike 5. This is
+the **one place the rescue strand touches the attestation strand** (dependency map), so it splits cleanly
+along that seam — and the split is what lets the rescue deliverable ship without waiting on 3/4/5.
+
+**8-basic — the rescue deliverable, buildable now (no attestation dependency).** `objcopy`/`ukify`
+rewrite `.cmdline` — **growing it past the in-place slack** the in-RAM Spike 6 cannot — re-lay the
+sections, and emit a patched UKI to drop on the ESP: a change that *persists* across reboots, which the
+in-RAM edits (6/7) deliberately do not. This is what a UEFI x86 box actually uses, since it cannot run
+the firmware-side edit. Toolchain **measured present 2026-09-18**: `objcopy`, `objdump`, `ukify`,
+`sbsign`, `sbverify`, `cpio`, `genisoimage`. **Grade:** the re-emitted UKI's `.cmdline` reads back correct
+under **both** `pe.fth` (the lab's reader) **and** `objdump -h` / `objcopy --dump-section` (foreign) — two
+decoders, one section. **Control:** an edit that would break the PE (a section overlap, a size past the
+file, a bad section count) is refused **before** re-emit, not written out broken. For a non-secure-boot
+rescue box this ships **unsigned** and is complete; re-signing is the bridge to 8-full. Needs nothing
+from Spikes 3/4/5.
+
+**8-full — re-sign + measures-as-predicted (gated behind the attestation strand 3→4→5).** Additionally
+`sbsign` re-signs the re-emitted UKI (verified by `sbverify`), and `systemd-measure` (**present** at
+`/usr/lib/systemd/systemd-measure`, off-PATH) predicts the post-edit PCR, proved against an OVMF+swtpm
+boot (both present). This reaches into **Spike 3** (a UKI built *with* a PCR key + `.pcrsig` — today's
+`build-uki.sh` passes none, §7 open-Q2, so this is a *fixture change, not a tool gap*) and **Spike 4**
+(Authenticode extract-and-host-verify). So 8-full is where 3/4/5 are pulled in, and **Spike 8 subsumes
+Spike 5**. **Grade:** the re-signed UKI host-verifies (`sbverify`), boots under OVMF (Spike 3's loop), and
+produces the *new* measurement the edited `.pcrsig` predicts. **Control:** a re-emit whose `.pcrsig` no
+longer matches the measured PCR is refused / flagged, not shipped as "attested".
+
+Build order: **8-basic is buildable immediately** (fully tooled, independent); **8-full waits on the
+attestation strand** — a different theme and a larger build (a PCR-keyed UKI, an OVMF+swtpm PCR read). The
+rescue arc needs only 8-basic; 8-full is the attestation payoff.
 
 ### Spike 9 — swap or append to the initrd, in RAM and persisted
 This realizes the [firmware-edits note](DESIGN-NOTES-the-firmware-edits-the-boot-it-makes.md)'s
@@ -419,4 +477,11 @@ NUL?** Spike 6 measures it (it decides whether a *grown* command line needs the 
 `VirtualSize` bumped, or a NUL-terminated write in the slack suffices); until measured it stays
 UNKNOWN, not assumed. (6) The rescue arc's honest boundary is stated in §5: in-firmware editing is
 the OpenFirmware/OpenBoot world (Spikes 6–7, in-RAM, one-shot); the UEFI-x86 deliverable is the
-host tool (Spike 8, persisted to the ESP).
+host tool (Spike 8, persisted to the ESP). (7) **Resolved 2026-09-18 (Spike 7):** the "no clean on-disk
+oracle for `cmd_line_ptr`" deferral is lifted — QEMU's `-kernel` loader, frozen just after its
+`linuxboot` ROM runs and dumped from physical 0 (QMP `pmemsave`), is a *foreign* producer of a real
+`boot_params` (measured: `boot_params`@0x10000, `cmd_line_ptr=0x20000`→the `-append` string,
+`cmdline_size=0x7ff`, stable 0.15–1.0 s). What stays UNKNOWN is only **7b**: our *firmware-prompt* edit
+reaching a booted kernel's `/proc/cmdline`, which this lab's firmware cannot drive for a bzImage. (8)
+Spike 8 splits at the strand seam: **8-basic** (host re-emit, fully tooled 2026-09-18) ships the rescue
+deliverable now; **8-full** (re-sign + measures-as-predicted) waits on the attestation strand 3→4→5.
