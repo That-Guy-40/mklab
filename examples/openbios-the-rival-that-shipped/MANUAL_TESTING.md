@@ -913,6 +913,48 @@ to load, real enough that `?bootparams` accepts it).
 section is graded by what it *is*, never rubber-stamped — the plan's Spike 2
 control, made to bite.
 
+### The `cmdline-edit` track — the rescue arc's first mutation: edit a UKI's `.cmdline` in place (Spike 6)
+
+```console
+$ ./smoke-openbios.sh cmdline-edit
+  - subject: 138752-byte UKI; edit .cmdline → 'root=/dev/sda1 rw init=/bin/bash' (0x20 bytes), grown within the section slack
+  - unix: cmdline-set rewrote .cmdline to 'root=/dev/sda1 rw init=/bin/bash' and set VirtualSize to 0x20 (the firmware re-reads both)
+  - unix foreign oracle: objcopy reads the edited image's .cmdline == 'root=/dev/sda1 rw init=/bin/bash' and objdump reads its VirtualSize == 0x20 — the edit is real on the PE, not the firmware's own claim
+  - unix controls: edit| TOO-BIG / edit| OOB / edit| NOT-PE each refused by name; .cmdline UNCHANGED after all three — refused edits write NOTHING (no partial scribble)
+  - x86 / amd64 / ppc: cmdline-set rewrote .cmdline … and set VirtualSize to 0x20 (the firmware re-reads both)
+PASS: UKI workbench Spike 6 (dsl/pe-edit.fth): the rescue arc's smallest real proof …
+```
+
+This is the [UKI workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 6** — where
+the toolkit stops *reading* and starts *editing*. [`dsl/pe-edit.fth`](dsl/pe-edit.fth)'s
+`cmdline-set` rewrites a UKI's `.cmdline` **in place at the `0 >` prompt** — here to
+`root=/dev/sda1 rw init=/bin/bash`, a rescue edit **grown 24→32 bytes within the
+section's 512-byte slack** — and updates `VirtualSize`, so the change is honored
+whether a loader reads to `VirtualSize` or the first NUL (the NUL-pad also erases
+the old command line). It is **assembly, not new machinery**: the section is
+located by `pe.fth`'s own `pe-find-entry` and written through `struct.fth`'s typed
+fields.
+
+**The edit is proven real on the PE, not the firmware's own claim.** On unix the
+edited image is written back with `write-file` and `objcopy`/`objdump` (foreign)
+read the new bytes *and* the new `VirtualSize`; the QEMU arches re-read `.cmdline`
+in-firmware (write-file is unix-only). Four arches matter because two steps are
+little-endian — locating the section (the LE table) and writing `VirtualSize` (an
+`le-l!`) — so ppc must find and write the same header x86 does.
+
+**The security controls are the point** (each refuses BY NAME, writing *nothing*):
+`edit| TOO-BIG` (a value larger than `SizeOfRawData`), **`edit| OOB`** (a section
+whose raw data runs past the loaded image — the out-of-bounds-write guard
+`pe.fth`'s `sec-in-image?` provides, which now hardens `pe-find` too), and
+`edit| NOT-PE`. After all three refusals `.cmdline` is **unchanged** — the bait
+`AAAA…` never lands, proving a refused edit is not a partial one.
+
+**The re-evaluation that produced it** (in light of Spike 2): the OOB write was a
+real hole (`pe-open` validates the section *table*, not each section's *data
+extent*); the find-loop was duplicated (now the shared `pe-find-entry`); and a
+first `u<=` silently aborted compilation (this Forth has only `u<`/`u>`, so
+`u> 0=`). Caught on unix before any four-arch run, as intended.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

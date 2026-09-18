@@ -136,6 +136,16 @@ TRACK (default multiboot):
                               .linux == file's. Controls refuse the WRONG section by
                               name (needs ukify, binutils, file, GNU cpio, genisoimage,
                               both QEMUs, a bzImage)
+  cmdline-edit                UKI workbench Spike 6: the rescue arc's smallest proof —
+                              dsl/pe-edit.fth rewrites a UKI's .cmdline IN PLACE at the
+                              prompt (add init=/bin/bash, grown within the section slack)
+                              and updates VirtualSize; on unix the edited image is written
+                              back and objcopy/objdump (foreign) read the new bytes — real
+                              on the PE, not the firmware's claim. SECURITY controls refuse
+                              BY NAME writing nothing: a section past the image → edit| OOB
+                              (the out-of-bounds-write guard), too-big → edit| TOO-BIG, a
+                              non-PE → edit| NOT-PE; .cmdline unchanged after (no partial)
+                              (needs ukify, binutils, genisoimage, both QEMUs)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -6009,6 +6019,149 @@ PY
 
     pass "UKI workbench Spike 2: the first CONSUMER of the reader set, on unix, x86, amd64 AND ppc against a REAL UKI built by \`ukify\`. Every section is graded BY WHAT IT IS, three readers cooperating on one artifact: pe.fth walks the section table; .linux is graded a Linux $UKLVER kernel by \`?bootparams\` (file agrees); .initrd is handed to cpio.fth and walks to its members (== \`cpio -itv\`); .cmdline/.osrel/.uname read back == \`objcopy\`. The SELF-CONSISTENCY proof: ukify wrote .uname FROM .linux's version, so the firmware's .uname == the version bootparams.fth reads out of .linux == file(1)'s — one artifact, one answer. Controls (unix): each grader refuses the WRONG section BY NAME — bootparams on .text → bp| BAD-BOOTFLAG, cpio on .text → cpio| BAD-MAGIC, a wrong-length .initrd → cpio| TRUNCATED — graded by what it is, never rubber-stamped."
     ;;
+  cmdline-edit)
+    # UKI workbench Spike 6 (UKI_WORKBENCH_LAB_PLAN.md) — the rescue arc's smallest
+    # real proof: the readers FIND a boot artifact's parts; dsl/pe-edit.fth MUTATES
+    # one, in place, at the OpenBIOS prompt. cmdline-set rewrites a UKI's .cmdline
+    # (here to "root=/dev/sda1 rw init=/bin/bash" — a rescue edit, GROWN 24→32 within
+    # the 512-byte slack) and updates VirtualSize. THE EDIT IS REAL ON THE PE, not the
+    # firmware's own claim: on unix the edited image is written back with write-file and
+    # `objcopy`/`objdump` (foreign) read the new bytes AND the new VirtualSize; on the
+    # QEMU arches the firmware re-reads .cmdline and prints it back (write-file is
+    # unix-only). Four arches: the byte copy is order-free, but LOCATING the section (the
+    # LE table) and WRITING VirtualSize (an le-l! through the typed field) are little-
+    # endian, so ppc must find + write the same header x86 does. SECURITY controls: the
+    # write is bounded on both ends and refuses BY NAME, writing NOTHING — a section
+    # whose data runs past the image → edit| OOB (the out-of-bounds-write guard), a new
+    # value larger than the section → edit| TOO-BIG, a non-PE → edit| NOT-PE; and after
+    # the refusals the .cmdline is UNCHANGED (no partial scribble).
+    command -v ukify >/dev/null || skip "ukify not installed (systemd-ukify) — the UKI builder"
+    command -v objdump >/dev/null || skip "objdump not installed (binutils) — the VirtualSize oracle"
+    command -v objcopy >/dev/null || skip "objcopy not installed (binutils) — extracts .cmdline for the oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]] || skip "missing /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd-boot-efi)"
+    ESTRUCT="$HERE/dsl/struct.fth"; EPE="$HERE/dsl/pe.fth"; EPEE="$HERE/dsl/pe-edit.fth"; EBLD="$HERE/fixtures/pe/build-pe-fixture.sh"
+    for f in "$ESTRUCT" "$EPE" "$EPEE" "$EBLD"; do [[ -f "$f" ]] || fail "cmdline-edit: missing $f — this track stages the SHIPPED files"; done
+    EUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; EUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    EXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   EXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    EAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; EADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    EPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$EUBIN" "$EUDICT" "$EXMB" "$EXDI" "$EAMB" "$EADI" "$EPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    EWD="$WORKDIR/cmdline-edit"; rm -rf "$EWD"; mkdir -p "$EWD/stage"
+    bash "$EBLD" "$EWD/uki.efi" >/dev/null 2>&1 || fail "cmdline-edit: build-pe-fixture.sh failed to author the UKI"
+    [[ -s "$EWD/uki.efi" ]] || fail "cmdline-edit: the fixture UKI was not produced"
+    # the rescue edit, and oracles DERIVED from the artifact (never cached):
+    ENEW='root=/dev/sda1 rw init=/bin/bash'
+    ENEWLEN="$(printf '%08x' "${#ENEW}")"           # VirtualSize the edit must write (0x20)
+    EOOB="$(objdump -h "$EWD/uki.efi" | awk '/[[:space:]]\.cmdline[[:space:]]/{print $6}')"   # .cmdline file offset — a len that cuts the buffer at the section start → OOB
+    [[ -n "$EOOB" ]] || fail "cmdline-edit: could not read .cmdline's file offset from objdump — the OOB control cannot be aimed"
+    cp "$ESTRUCT" "$EWD/stage/STRUCT.FTH"; cp "$EPE" "$EWD/stage/PE.FTH"; cp "$EPEE" "$EWD/stage/PEEDIT.FTH"; cp "$EWD/uki.efi" "$EWD/stage/UKI.EFI"
+    genisoimage -quiet -o "$EWD/ce.iso" -V CMDLINEEDIT -r -J "$EWD/stage" 2>/dev/null || fail "cmdline-edit: genisoimage failed"
+    note "subject: $(stat -c%s "$EWD/uki.efi")-byte UKI; edit .cmdline → '$ENEW' (0x$ENEWLEN bytes), grown within the section slack"
+
+    # grade one arch's log: the firmware set .cmdline and re-reads the new value +
+    # its new VirtualSize. <log> <arch>
+    ce_grade() {
+      local lg="$1" a="$2" g fnew fnlen
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'EDITOK' <<<"$g" || fail "cmdline-edit ($a): cmdline-set returned false on a valid edit (no EDITOK): $(grep -aoE 'edit\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      fnew="$(grep -aE '^NEW=' <<<"$g" | head -1 | sed 's/^NEW=//')"
+      [[ "$fnew" == "$ENEW" ]] || fail "cmdline-edit ($a): after the edit .cmdline reads '$fnew', expected '$ENEW' — see $lg"
+      fnlen="$(grep -aoE 'NLEN=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$((16#${fnlen:-0}))" -eq "${#ENEW}" ]] || fail "cmdline-edit ($a): the edit set VirtualSize to 0x${fnlen:-<none>}, expected 0x$ENEWLEN — the LE length write did not land — see $lg"
+      note "$a: cmdline-set rewrote .cmdline to '$ENEW' and set VirtualSize to 0x$ENEWLEN (the firmware re-reads both)"
+    }
+
+    # each line stack-neutral; the string marker prints on its OWN line (leading cr)
+    # so the REPL's echo of `." NEW="` is never mistaken for the output (the pe
+    # track's lesson). EACH LINE ≤ 80 COLS — the hosted unix door's stdin truncates
+    # at 80, and with ENEW injected the edit+report does not fit one line, so the
+    # edit parks its result in `ceok` and a separate short line reports it.
+    CELINES=( 'variable cea variable cel variable ceok'
+              "load-base load-size s\" $ENEW\" cmdline-set ceok !"
+              'ceok @ if ." EDITOK" else ." EDITBAD" then cr'
+              'load-base load-size s" .cmdline" pe-find cel ! cea ! cr'
+              'cr ." NEW=" cea @ cel @ type cr'
+              'cr ." NLEN=" cel @ .hx8 cr' )
+
+    # ── unix: the ISO door + write-file foreign-oracle grade + the 3 refusal controls ──
+    ( cd "$EWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\PE.FTH' 'load-base load-size evaluate' \
+        'load hd:\PEEDIT.FTH' 'load-base load-size evaluate' \
+        'load hd:\UKI.EFI' "${CELINES[@]}" \
+        'load-base load-size s" EDITED.EFI" write-file drop' \
+        'load-base load-size s" .cmdline" load-base 258 pe-section-set drop' \
+        "load-base $EOOB s\" AAAAAAAAAAAAAAAA\" cmdline-set drop" \
+        'load-base 8 s" z" cmdline-set drop' \
+        'load-base load-size s" AFTER.EFI" write-file drop' 'bye' \
+      | "$EUBIN" -f "$EWD/ce.iso" "$EUDICT" 2>&1 | tr -d '\r' > "$EWD/unix.log" )
+    ce_grade "$EWD/unix.log" unix
+    # the FOREIGN oracle: the edited image on disk, read by objcopy/objdump — not the firmware's own re-read
+    [[ -s "$EWD/EDITED.EFI" ]] || fail "cmdline-edit (unix): write-file produced no EDITED.EFI — the firmware persisted nothing"
+    objcopy -O binary --only-section=.cmdline "$EWD/EDITED.EFI" "$EWD/edited.bin" 2>/dev/null || fail "cmdline-edit (unix): objcopy could not read .cmdline from the edited image"
+    EGOT="$(tr -d '\000' < "$EWD/edited.bin")"
+    [[ "$EGOT" == "$ENEW" ]] || fail "cmdline-edit (unix): objcopy reads .cmdline as '$EGOT', the firmware wrote '$ENEW' — the edit is not real on the PE"
+    EVS="$(objdump -h "$EWD/EDITED.EFI" | awk '/[[:space:]]\.cmdline[[:space:]]/{print $3}')"
+    [[ "$((16#$EVS))" -eq "${#ENEW}" ]] || fail "cmdline-edit (unix): objdump reads .cmdline VirtualSize 0x$EVS, expected 0x$ENEWLEN — the header edit is not real on the PE"
+    note "unix foreign oracle: objcopy reads the edited image's .cmdline == '$ENEW' and objdump reads its VirtualSize == 0x$ENEWLEN — the edit is real on the PE, not the firmware's own claim"
+    # each control invokes the editor and drops its flag; pe-section-set prints the
+    # refusal BY NAME right before it returns false, so the named line IS the assertion.
+    EUG="$(cat "$EWD/unix.log")"
+    grep -qE 'edit\| TOO-BIG' <<<"$EUG" \
+      || fail "cmdline-edit CONTROL (unix): a new value larger than the section was not refused by name (wanted edit| TOO-BIG) — see $EWD/unix.log"
+    grep -qE 'edit\| OOB' <<<"$EUG" \
+      || fail "cmdline-edit CONTROL (unix): a section whose data runs past the image was not refused by name (wanted edit| OOB) — the out-of-bounds-write guard did not fire — see $EWD/unix.log"
+    grep -qE 'edit\| NOT-PE' <<<"$EUG" \
+      || fail "cmdline-edit CONTROL (unix): a non-PE buffer was not refused by name (wanted edit| NOT-PE) — see $EWD/unix.log"
+    # NO PARTIAL WRITE: after the three refused edits, .cmdline is UNCHANGED (still the rescue edit, not 'AAAA…')
+    [[ -s "$EWD/AFTER.EFI" ]] || fail "cmdline-edit (unix): write-file produced no AFTER.EFI"
+    objcopy -O binary --only-section=.cmdline "$EWD/AFTER.EFI" "$EWD/after.bin" 2>/dev/null || fail "cmdline-edit (unix): objcopy could not read .cmdline from AFTER.EFI"
+    EAFTER="$(tr -d '\000' < "$EWD/after.bin")"
+    [[ "$EAFTER" == "$ENEW" ]] || fail "cmdline-edit CONTROL (unix): after the refused edits .cmdline is '$EAFTER', not '$ENEW' — a refusal scribbled a PARTIAL write"
+    note "unix controls: edit| TOO-BIG / edit| OOB / edit| NOT-PE each refused by name; .cmdline UNCHANGED after all three — refused edits write NOTHING (no partial scribble)"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven (re-read grade) ─────
+    for EA in x86 amd64; do
+      if [[ $EA == x86 ]]; then EMB="$EXMB"; EDI="$EXDI"; else EMB="$EAMB"; EDI="$EADI"; fi
+      ESER="/tmp/ce-$EA-$$.sock"; ELOG="$EWD/$EA.log"; rm -f "$ESER" "$ELOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$EMB" -initrd "$EDI" -nic none -cdrom "$EWD/ce.iso" \
+        -display none -serial "unix:$ESER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      EQ=$!
+      ESENDS=(); for l in "${CELINES[@]}"; do ESENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$ESER" "$ELOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PE.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PEEDIT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\UKI.EFI\r' --expect "0 > " \
+        "${ESENDS[@]}"
+      ERC=$?
+      kill "$EQ" 2>/dev/null   # by PID, never by pattern
+      [[ $ERC -eq 0 ]] || fail "cmdline-edit ($EA): the prompt driver did not complete (rc=$ERC) — see $ELOG"
+      ce_grade "$ELOG" "$EA"
+    done
+
+    # ── ppc: the big-endian row — pe.fth locates .cmdline via the LE table and
+    # cmdline-set writes VirtualSize via an le-l!, the same as x86, NOT a swap ──
+    EPLOG="$EWD/ppc.log"; rm -f "$EPLOG"
+    EPSENDS=(); for l in "${CELINES[@]}"; do EPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$EPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PE.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PEEDIT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\UKI.EFI;1\r' --expect "0 > " \
+      "${EPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$EPELF" -nographic -vga none -cdrom "$EWD/ce.iso" >/dev/null 2>&1
+    EPRC=$?
+    [[ $EPRC -eq 0 ]] || fail "cmdline-edit (ppc): the prompt driver did not complete (rc=$EPRC) — see $EPLOG"
+    ce_grade "$EPLOG" ppc
+
+    pass "UKI workbench Spike 6 (dsl/pe-edit.fth): the rescue arc's smallest real proof — an in-firmware, in-place edit of a UKI's .cmdline at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. cmdline-set rewrote .cmdline to '$ENEW' (grown 24→32 within the section slack) and updated VirtualSize; on unix the edited image was written back and \`objcopy\`/\`objdump\` (foreign) read the new bytes AND the new VirtualSize — the edit is real on the PE, not the firmware's own claim — and every arch re-reads the new value. The byte copy is order-free but LOCATING the section and WRITING VirtualSize are little-endian, so ppc finds + writes the same header x86 does. SECURITY (unix controls), each refused BY NAME with NOTHING written: a section whose data runs past the image → edit| OOB (the out-of-bounds-write guard, added to pe.fth's sec-in-image?), a value larger than the section → edit| TOO-BIG, a non-PE → edit| NOT-PE; and .cmdline is UNCHANGED after all three (no partial scribble). This is the rescue seam: add init=/bin/bash to a kernel command line without a USB stick or a chroot."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -8329,5 +8482,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac

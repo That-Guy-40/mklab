@@ -159,19 +159,41 @@ variable q-adr  variable q-len
   loop
   ." PE-END" cr true ;
 
+\ ── locate a section-table entry by name (the shared primitive) ──────
+\ Both pe-find (data+size) and the editor (dsl/pe-edit.fth) build on THIS, so the
+\ editor reuses the reader's table walk rather than re-implementing it (Spike 2's
+\ "assembly, not reimplementation"). pe-entry-of assumes pe-open has already
+\ succeeded and scans for the name in peq-a/peq-l; pe-find-entry is the one-shot
+\ (stash the name, open, scan) for a caller starting from raw bytes.
+variable peq-a  variable peq-l
+: pe-entry-of ( -- entry | 0 )                 \ AFTER pe-open
+  pe-nsecs @ 0 ?do
+    pe-sectab @ i pe-sec[]                      ( entry )
+    dup peq-a @ peq-l @ sec-name=               ( entry flag )
+    if unloop exit then
+    drop
+  loop  0 ;
+: pe-find-entry ( adr len caddr u -- entry | 0 )
+  peq-l ! peq-a !                              ( adr len )   \ stash the name
+  pe-open if 0 exit then
+  pe-entry-of ;
+
+\ A section's raw data must lie WITHIN the loaded image. pe-open validates that the
+\ section TABLE fits, but NOT each section's data extent — a malformed PE can name a
+\ rawoff/rawsize that runs past the buffer. A reader that trusted it would read past
+\ the end; an EDITOR (dsl/pe-edit.fth) would WRITE past it. This gate closes both.
+\ in-image = the section's data end does NOT run past the buffer end; `u> 0=` is
+\ the same "not beyond" test pe-open uses (this Forth has u</u>, not u<=).
+: sec-in-image? ( entry -- flag )
+  dup sec-rawoff t@  swap sec-rawsize t@  +  pe-img @ +  pe-end @ u> 0= ;
+
 \ ── pe-find ( adr len caddr u -- data-adr size | 0 0 ) ────────────────
 \ The named section's DATA address (image base + PointerToRawData) and its
-\ meaningful length (sec-len). 0 0 if the section is absent or the PE refused.
-\ This is the Spike 2 seam: `s" .initrd" pe-find` hands the initramfs straight to
-\ cpio.fth's cpio-walk, and `s" .cmdline" pe-find` hands the string to `type`.
-variable f-adr  variable f-len
+\ meaningful length (sec-len). 0 0 if the section is absent, its data lies outside
+\ the image, or the PE refused. This is the Spike 2 seam: `s" .initrd" pe-find`
+\ hands the initramfs straight to cpio.fth's cpio-walk, and `s" .cmdline" pe-find`
+\ hands the string to `type`.
 : pe-find ( adr len caddr u -- data-adr size | 0 0 )
-  f-len !  f-adr !                          ( adr len )
-  pe-open if 0 0 exit then                   \ any refusal → 0 0
-  pe-nsecs @ 0 ?do
-    pe-sectab @ i pe-sec[]                    ( entry )
-    dup f-adr @ f-len @ sec-name=             ( entry flag )
-    if  dup sec-rawoff t@ pe-img @ +  swap sec-len  unloop exit  then
-    drop
-  loop
-  0 0 ;
+  pe-find-entry ?dup 0= if 0 0 exit then       ( entry )
+  dup sec-in-image? 0= if drop 0 0 exit then    \ a section outside the image → 0 0
+  dup sec-rawoff t@ pe-img @ +  swap sec-len ;
