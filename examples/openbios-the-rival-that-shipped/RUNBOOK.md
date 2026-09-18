@@ -26,6 +26,11 @@ Now the real thing:
 $ ./run-openbios-qemu.sh          # 0 > prompt on this terminal; Ctrl-A X quits QEMU
 ```
 
+> This line — and its `coreboot`, `ppc` and `amd64` flavors — is typed on a real
+> pty by `./smoke-openbios.sh launcher` on every run: it reaches the prompt,
+> answers `3 4 + .`, and quits with Ctrl-A X, so the launcher cannot rot the way
+> the `openbios-unix` line above once did.
+
 The prompt is **`0 >`** — that leading number is the **stack depth** (0 items
 right now). It's a full Forth interpreter on the bare machine: a language, a
 debugger, and a boot loader at once.

@@ -132,6 +132,69 @@ passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with
 `multiboot` PASS, **`amd64` PASS (2026-08-25)**, `coreboot` SKIP for the same
 ROM reason.
 
+### The `launcher` track — the command a human actually types, run 2026-09-18
+
+Every other track hand-builds its own `qemu-system-*` line; none ran
+`run-openbios-qemu.sh`, the launcher [`RUNBOOK.md`](RUNBOOK.md) and §6 below hand
+to a person. So the launcher was covered only by `--help`, and its transcript was
+one nobody re-typed — the exact shape the `openbios-unix` story (§5) is about. The
+`launcher` track drives the shipped script on a **real pty** (`tools/drive-pty-repl.py`,
+`--echo-gate`), the seam a human uses, for every flavor it can:
+
+```console
+$ ./smoke-openbios.sh launcher
+  - refusals: pointed at …/launcher/empty, every flavor names the missing image and exits 1 before any QEMU starts; an unknown flavor prints usage
+  - multiboot: 0 > prompt, '3 4 + .' answered 7, Ctrl-A x ended QEMU (built on Sep  5 2026 06:38)
+  - amd64: 0 > prompt, '3 4 + .' answered 7, Ctrl-A x ended QEMU (built on Sep  5 2026 06:39)
+  - ppc: 0 > prompt, '3 4 + .' answered 7, Ctrl-A x ended QEMU (built on Sep  5 2026 06:38)
+  - coreboot: 0 > prompt, '3 4 + .' answered 7, Ctrl-A x ended QEMU (built on Sep  5 2026 06:38)
+PASS: the launcher a human is handed … does what RUNBOOK.md and MANUAL_TESTING.md §6 say it does …
+```
+
+It asserts the documented interaction **whole** (prompt → `3 4 + .` = 7 → Ctrl-A x
+quits, seen as QEMU's own `Terminated`), and the refusals **first**: pointed at an
+empty directory, each flavor must exit 1 *naming the path it looked at* before any
+QEMU starts — a launcher that fell through to qemu's error, or on ppc to the distro
+firmware QEMU ships, would leave a human at the wrong prompt. The amd64 flavor's
+persistent NVRAM image is steered to a scratch file the track owns (and that
+redirection is checked), so a run never formats the store a person keeps settings
+in. Runtime ≈ 40 s (four boots). The `coreboot` flavor is named **UNVERIFIED**, not
+skipped silently, when its ROM is absent. Two negative controls were watched to
+bite: removing the multiboot image guard made the refusal come from qemu instead
+(caught by the "its own no-image line" assertion), and making the launcher ignore
+`OPENBIOS_PMEM_IMG` failed the scratch-redirection check.
+
+### The `test-dsl-defs-present.sh` headless check — every reader loads whole, run 2026-09-18
+
+A missing word inside `evaluate` of a `dsl/` file fails **silently**: the evaluate
+stops there and every definition after it is simply absent, with nothing at the
+prompt but a deeper stack (measured 2026-09-17 — `u<=` is not a word here, so
+`pe.fth` compiled only as far as `sec-in-image?` and `pe-find` was never defined).
+Each smoke track calls only the words it uses, so a definition no track calls can
+rot undefined unnoticed. This headless test loads every `dsl/*.fth` on the hosted
+firmware (no QEMU) in a **fresh process** — its own short dependency chain plus the
+file, well under the hosted grubfs's 16-`load`-per-process ceiling — and asserts
+every `: word` it defines is in the dictionary afterward **and** was made by that
+load (its xt above a pre-load mark, not a pre-existing collision):
+
+```console
+$ bash tests/test-dsl-defs-present.sh
+  - control: bk-b after an undefined word → MISSING, bk-a before it → present, firmware dup → PRE — the instrument sees both halves
+  - dsl/pe.fth: all 13 colon definitions present and made by this load (deps: struct)
+  …
+PASS: every dsl reader loads whole on the hosted firmware: all 243 colon definitions across 17 files …
+```
+
+The control fires **first**, every run: a definition placed after an undefined word
+must read MISSING, one before it must be found, and the firmware's own `dup` must
+read PRE — so an all-present result cannot come from a probe checking nothing.
+`lbregion` and `optrom` are UNKNOWN here (they bind x86/amd64-only and PCI words the
+hosted target lacks) and left to the four-arch tracks. The file set is derived from
+disk: a `dsl/` file the dependency map does not know **fails by name**, so a new
+reader with no coverage trips it. Two negative controls bit: injecting an undefined
+word before `pe.fth`'s last definition reported `pe-find` missing (the 2026-09-17
+bug reproduced), and an unmapped `dsl/newreader.fth` failed by name. Runtime ≈ 9 s.
+
 **2026-08-26, patch 24 (TODO §13.3(A)):** nine tracks re-run after the trampoline fix —
 `client-forth multiboot dict-identity amd64 amd64-ctx property-abi vga diagnostics ppc`,
 all PASS, 0 SKIP. The other six (`nvram amd64-fault amd64-pmem amd64-linux floppy

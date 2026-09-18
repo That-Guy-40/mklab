@@ -230,6 +230,12 @@ TRACK (default multiboot):
   unix                        the firmware as a PLAIN PROCESS (openbios-unix,
                               no QEMU) — the one target with 64-bit host
                               pointers, where 1275's 4-byte int cannot hold one
+  launcher                    the command a HUMAN types: run-openbios-qemu.sh, every
+                              flavor (multiboot coreboot ppc amd64), driven on a pty
+                              exactly as RUNBOOK.md says — reaches 0 >, answers 7,
+                              Ctrl-A x quits; a missing image is refused BY NAME
+                              before any QEMU starts (needs both QEMUs; the coreboot
+                              flavor needs the ROM and is named UNVERIFIED without it)
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -8835,6 +8841,90 @@ PYX
     done
     pass "mudge's read-modify-write idiom (Phrack 53:9, 1998 — upstream-tutorial/), generalised to t-set/t-clr/t-tog over a TYPED field and NOT named for an LED, measured on BOTH arches. The property that makes RMW different from a store is that it PRESERVES THE OTHER BITS — which is why mudge wrote 'aux@ or aux!' and not '1 aux!' — so every positive row is paired with a bare 't!' control that destroys the neighbour: t-set/t-clr hold bit 7 at 81/80 where t! clobbers it to 01, t-tog round-trips, and the mask applies to the DECODED value in BOTH byte orders — a little-endian field keeps its high byte (bytes [1 0 0 ff]) and the 1275-native big-endian field lays the same value down exactly reversed (bytes [ff 0 0 1]), which is the row that makes 'the byte order rides along' a measurement rather than a claim: before it, field: was exercised here only at width 1, where order is a no-op, so l@-be/l!-be never ran under t-set at all. And it works on a real DEVICE register: through a dev-field over the VGA aperture at b8000 >virt, setting an fg bit leaves attr 0x11 at PHYSICAL 0xb8000 — read by QEMU's monitor, an observer outside the firmware — where a bare store leaves 0x01, the bg nibble preserved versus destroyed. The Forth read-back cannot see that difference because it uses the same rb@ path the store did"
     ;;
+  launcher)
+    # THE COMMAND A HUMAN TYPES. Every other track builds its own QEMU command
+    # line; none of them runs run-openbios-qemu.sh, the launcher RUNBOOK.md ("now
+    # the real thing") and MANUAL_TESTING.md §6 hand to a person. So the only
+    # thing exercising the launcher was `--help` (test-usage-is-data.sh), and the
+    # RUNBOOK's transcript was one nobody re-typed — the shape the unix track's
+    # own origin story names: a thing documented, then broken for days unnoticed
+    # because no test drove it.
+    #
+    # DRIVEN ON A PTY, because that is the seam a human uses: the launcher puts
+    # the prompt on THIS terminal (-serial mon:stdio; -nographic on ppc), so a
+    # socket driver would be exercising a different program from the one shipped.
+    # tools/drive-pty-repl.py is what the ppc tracks already use; --echo-gate
+    # because the console has no flow control (the launcher's own header warns
+    # that a pasted line loses characters).
+    #
+    # ASSERTED, per flavor: the documented interaction, WHOLE — the 0 > prompt
+    # arrives, `3 4 + .` answers 7, and Ctrl-A x (the documented way out) ends
+    # QEMU, observed as its own "QEMU: Terminated". Then the refusals, run FIRST
+    # because they cost nothing and a launcher that cannot refuse makes every
+    # boot below ambiguous: pointed at a directory with no images, each flavor
+    # must exit 1 NAMING the path it looked at, before any QEMU starts. A launcher
+    # that fell through to qemu's own error — or, on ppc, to the distro firmware
+    # QEMU ships — would leave a human at the wrong prompt; the ppc smoke track's
+    # banner comparison is what tells OUR firmware from QEMU's, and that stays its
+    # assertion, not this one's.
+    #
+    # SIDE EFFECTS ARE STEERED AWAY FROM THE HUMAN'S STATE. The amd64 flavor
+    # attaches a persistent NVRAM image (pmem-nvram.img) by default and the first
+    # boot on a fresh one formats it. OPENBIOS_PMEM_IMG is pointed at this track's
+    # own scratch file, so a test run can never format or dirty the store a person
+    # keeps settings in — and the run asserts that redirection actually took.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed"
+    LN="$HERE/run-openbios-qemu.sh"
+    [[ -x "$LN" ]] || fail "launcher: $LN is missing or not executable — this track drives the SHIPPED launcher"
+    for f in "$WORKDIR/openbios/obj-x86/openbios.multiboot" "$WORKDIR/openbios/obj-amd64/openbios.multiboot" "$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first (the launcher's three firmware flavors; a missing one is an UNKNOWN, not a pass)"
+    done
+    LWD="$WORKDIR/launcher"; rm -rf "$LWD"; mkdir -p "$LWD/empty"
+    LROM="$CB/build-openbios/coreboot.rom"
+    LFLAVORS=(multiboot amd64 ppc); LUNVER=""
+    if [[ -f "$LROM" ]]; then LFLAVORS+=(coreboot)
+    else LUNVER="the coreboot flavor (no ROM at $LROM — run ./build-coreboot-openbios.sh)"; fi
+
+    # ── the refusals. `timeout` bounds the case this exists to catch: a guard
+    #    that did NOT fire would exec QEMU on a stdin that is not a terminal and
+    #    hang (124), which is a different and louder failure than the wrong text.
+    for LF in multiboot amd64 ppc coreboot; do
+      LOUT="$(cd "$LWD" && OPENBIOS_WORKDIR="$LWD/empty" COREBOOT_DIR="$LWD/empty" timeout 20 "$LN" "$LF" 2>&1 </dev/null)"; LRC=$?
+      [[ $LRC -eq 1 ]] || fail "launcher: with no images at all, '$LF' exited $LRC instead of refusing with 1 (124 = it started something and hung instead of refusing) — $(head -1 <<<"$LOUT")"
+      grep -qF "$LWD/empty" <<<"$LOUT" \
+        || fail "launcher: '$LF' refused without NAMING the path it looked at (expected $LWD/empty/… in the message): $(head -1 <<<"$LOUT")"
+      grep -qE '^no (image|amd64 image|ROM) at ' <<<"$LOUT" \
+        || fail "launcher: '$LF' did not refuse with its own 'no … at …' line, so the refusal came from somewhere else: $(head -1 <<<"$LOUT")"
+    done
+    LOUT="$(timeout 20 "$LN" no-such-flavor 2>&1 </dev/null)"; LRC=$?
+    { [[ $LRC -eq 1 ]] && grep -q '^usage:' <<<"$LOUT"; } \
+      || fail "launcher: an unknown flavor exited $LRC (want 1 with a usage line): $(head -1 <<<"$LOUT")"
+    note "refusals: pointed at $LWD/empty, every flavor names the missing image and exits 1 before any QEMU starts; an unknown flavor prints usage"
+
+    # ── the boots: the launcher itself, on a pty, the documented keystrokes ──
+    for LF in "${LFLAVORS[@]}"; do
+      LLOG="$LWD/$LF.log"
+      LEXP=(--expect "0 > "); [[ $LF == ppc ]] && LEXP=(--expect "Welcome to OpenBIOS" --expect "0 > ")
+      note "$LF: ./run-openbios-qemu.sh $LF on a pty → $LLOG"
+      python3 "$REPO/tools/drive-pty-repl.py" "$LLOG" --timeout 120 --echo-gate --echo-timeout 8 \
+        "${LEXP[@]}" --send '3 4 + .\r' --expect "7 " --expect "0 > " \
+        --send '\x01x' --expect "QEMU: Terminated" \
+        -- env OPENBIOS_PMEM_IMG="$LWD/pmem-$LF.img" "$LN" "$LF" >"$LLOG.driver" 2>&1
+      LRC=$?
+      case $LRC in
+        0)   ;;
+        124) fail "launcher: './run-openbios-qemu.sh $LF' did not complete the documented interaction within 120 s — the log stops where a human would have been left waiting: see $LLOG" ;;
+        125) fail "launcher: './run-openbios-qemu.sh $LF' — the console dropped typed bytes even under the echo gate — see $LLOG" ;;
+        *)   fail "launcher: './run-openbios-qemu.sh $LF' — the pty driver failed (rc=$LRC) — see $LLOG and $LLOG.driver" ;;
+      esac
+      note "$LF: 0 > prompt, '3 4 + .' answered 7, Ctrl-A x ended QEMU ($(grep -ao 'built on [0-9A-Za-z: ]*' "$LLOG" | head -1 || true))"
+    done
+    [[ -e "$LWD/pmem-amd64.img" ]] \
+      || fail "launcher: the amd64 flavor did not create the scratch NVRAM image this track pointed it at (OPENBIOS_PMEM_IMG=$LWD/pmem-amd64.img) — the override was not honoured, so the boot may have formatted $WORKDIR/pmem-nvram.img, the store a human keeps settings in"
+
+    pass "the launcher a human is handed, run-openbios-qemu.sh, does what RUNBOOK.md and MANUAL_TESTING.md §6 say it does, on a real terminal: ${LFLAVORS[*]} each reach the 0 > prompt, answer 7 to '3 4 + .', and end on Ctrl-A x — the documented interaction whole, driven through tools/drive-pty-repl.py on the pty a person would be typing at, with no track-private QEMU command line standing in for the shipped script. Refusals are BY NAME before any QEMU starts: pointed at a directory with no images, every flavor exits 1 naming the path it looked at, and an unknown flavor prints usage. amd64's persistent NVRAM image was steered to a scratch file this track owns and that redirection was checked, so no human's store was formatted by a test${LUNVER:+. UNVERIFIED: $LUNVER}"
+    ;;
   unix)
     # THE ONE TARGET WITH NO QEMU: the firmware as an ordinary process.
     #
@@ -9099,5 +9189,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|unix|launcher]" >&2; exit 1 ;;
 esac

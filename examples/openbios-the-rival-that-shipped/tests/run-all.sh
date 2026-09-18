@@ -36,7 +36,7 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
 headless=(test-harness-net.sh test-usage-is-data.sh test-patch-scope.sh
           test-track-list.sh test-patch-hygiene.sh test-vsprintf-ub.sh
-          test-every-track-has-a-wrapper.sh)
+          test-every-track-has-a-wrapper.sh test-dsl-defs-present.sh)
 
 # One per track in ../smoke-openbios.sh. tools/check-track-list.sh guards the names
 # themselves; tests/test-every-track-has-a-wrapper.sh guards that this list and the
@@ -98,6 +98,7 @@ tracks=(
     test-smoke-struct-layer.sh
     test-smoke-tlv-primitives.sh
     test-smoke-unix.sh
+    test-smoke-launcher.sh
     test-smoke-vga.sh
 )
 
