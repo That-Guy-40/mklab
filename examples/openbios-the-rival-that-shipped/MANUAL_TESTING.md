@@ -1063,6 +1063,42 @@ by name, the command line unchanged after.
 boot a bzImage from a prompt edit — so that half stays UNKNOWN. The runtime loop the
 toolkit *does* close is the UKI `.cmdline` path (Spike 6, under OVMF).
 
+### The `uki-edit` track — the persisted host rescue tool: produce a rescue UKI without a chroot (Spike 8-basic)
+
+```console
+$ ./smoke-openbios.sh uki-edit
+  - host: uki-edit.sh re-emitted a persisted UKI; objcopy reads .cmdline == the 605-byte rescue line, objdump VirtualSize 0x0000025d (> 0x200, past the in-place slack) — the re-emit did what Spike 6 cannot
+  - host controls: a non-PE → uki-edit| NOT-PE; a PE with no .cmdline → uki-edit| NO-CMDLINE; each refused by name, no output written
+  - unix / x86 / amd64 / ppc: pe.fth read the re-emitted UKI's grown .cmdline — size 0x25d (> the 512 slack) and prefix 'init=/bin/bash rd.break=pre-moun'
+PASS: UKI workbench Spike 8-basic (uki-edit.sh): the PERSISTED, host-side rescue deliverable …
+```
+
+This is the [UKI workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 8-basic** — the
+**portable, persisted** rescue tool a UEFI x86 box actually uses, the counterpart to
+the in-firmware in-RAM edits. [`uki-edit.sh`](uki-edit.sh) produces a rescue UKI with a
+new kernel command line — `init=/bin/bash`, `rd.break`, `systemd.unit=rescue.target` —
+**without a chroot, a USB stick, or blind GRUB-over-serial editing**, and the change
+**survives reboots** (which Spikes 6/7 deliberately do not).
+
+**How, and why not `objcopy --update-section`:** that command leaves the section's
+`VirtualSize` header unchanged while overwriting the raw bytes, so a grown command line
+silently overflows the 512-byte slot and the PE the firmware reads is broken (measured).
+So `uki-edit.sh` **rebuilds with `ukify`** — it extracts `.linux`/`.initrd`/`.osrel` and
+rebuilds with the new `--cmdline`, so ukify lays out a correct PE and sizes `.cmdline` to
+fit — **growing it past the in-place slack** the in-RAM Spike 6 is bounded by (here to
+605 bytes of real rescue/debug params). It then **validates the re-emit** (its `.cmdline`
+reads back exactly under a foreign `objcopy`) before writing anything.
+
+**Graded under both readers**, as the plan asks: the lab's own [`pe.fth`](dsl/pe.fth) —
+in firmware, on **unix, x86, amd64 and ppc** — reads the grown section's size (`0x25d`,
+past `0x200`) and its rescue prefix out of the re-emitted UKI (locating it is the LE
+section-table walk, so ppc reads the same header x86 does), and host `objdump`/`objcopy`
+(a different author) read the full new command line. **Controls** (host), each refused by
+name with **no output**: a non-PE input → `uki-edit| NOT-PE`; a PE with no `.cmdline` →
+`uki-edit| NO-CMDLINE`. It ships **unsigned** (a non-secure-boot rescue box); re-signing
+and "measures as the edited `.pcrsig` predicts" is **Spike 8-full**'s bridge to the
+attestation strand (3/4/5) — a different theme, not built here.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

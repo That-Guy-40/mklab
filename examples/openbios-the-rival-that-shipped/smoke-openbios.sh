@@ -175,6 +175,17 @@ TRACK (default multiboot):
                               Controls: a length change → cpio| LEN-CHANGE, an absent
                               member → cpio| NO-MEMBER, config unchanged after (needs
                               ukify, binutils, GNU cpio, python3, genisoimage, both QEMUs)
+  uki-edit                    UKI workbench Spike 8-basic: the PERSISTED host tool —
+                              uki-edit.sh produces a rescue UKI with a new kernel command
+                              line (no chroot, no USB stick) that survives reboots. It
+                              rebuilds with ukify, GROWING .cmdline past the 512-byte
+                              in-place slack Spike 6 is bounded by, and validates the
+                              re-emit before writing. Graded under BOTH readers: pe.fth
+                              (firmware, 4 arches) reads the grown section's size + rescue
+                              prefix, and host objdump/objcopy read the full new .cmdline.
+                              Controls (host): a non-PE → uki-edit| NOT-PE, a PE with no
+                              .cmdline → uki-edit| NO-CMDLINE (needs ukify, binutils,
+                              genisoimage, the systemd EFI stub, both QEMUs)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -6634,6 +6645,140 @@ PY
 
     pass "UKI workbench Spike 10 (dsl/cpio-edit.fth): the DEEPER rescue edit — fix a config blob INSIDE the initramfs, in place at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. THREE readers/editors cooperate on one nested artifact: pe.fth finds the UKI's .initrd, cpio.fth's cpio-find locates etc/conf within it, and cpio-edit.fth's cpio-patch overwrites its bytes with a SAME-LENGTH replacement ('$CGOLD' → '$CGNEW'). The firmware re-reads the old value before and the new after; on unix cpio -i pulls the edited config back out of the WRITTEN-BACK image and it holds '$CGNEW' — the nested edit is real on the PE. cpio-patch refuses BY NAME, writing NOTHING: a different-length replacement → cpio| LEN-CHANGE (a length change is a cpio rebuild, not an in-place edit), an absent member → cpio| NO-MEMBER; and etc/conf is UNCHANGED after both. This is the rescue seam that today needs a USB stick and a chroot: fix a broken /etc/fstab or root= inside the initramfs without either."
     ;;
+  uki-edit)
+    # UKI workbench Spike 8-basic (UKI_WORKBENCH_LAB_PLAN.md) — the PERSISTED,
+    # host-side rescue tool. Produce a rescue UKI with a new kernel command line
+    # WITHOUT a chroot or a USB stick — a change that survives reboots, which the
+    # in-RAM Spikes 6/7 deliberately do not. uki-edit.sh rewrites .cmdline by
+    # REBUILDING with ukify (objcopy --update-section leaves VirtualSize stale and
+    # overflows the slot — measured), GROWING it PAST the 512-byte in-place slack
+    # that Spike 6 is bounded by, then VALIDATES the re-emit (its .cmdline reads
+    # back exactly under a foreign objcopy) before it writes anything.
+    #
+    # GRADED UNDER BOTH READERS, exactly as the plan asks: the lab's own pe.fth (in
+    # firmware, four arches — locating the grown .cmdline is the LE section-table
+    # walk, so ppc earns its row) reads the new section's size and its rescue prefix
+    # out of the re-emitted UKI; and the host objdump/objcopy (a different author)
+    # read the full new .cmdline. CONTROLS (host), refused BY NAME with NO output: a
+    # non-PE input → uki-edit| NOT-PE, a PE with no .cmdline → uki-edit| NO-CMDLINE.
+    command -v ukify >/dev/null || skip "ukify not installed (systemd-ukify) — the re-emit tool AND the fixture builder"
+    command -v objdump >/dev/null || skip "objdump not installed (binutils) — the VirtualSize oracle"
+    command -v objcopy >/dev/null || skip "objcopy not installed (binutils) — reads .cmdline for the oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]] || skip "missing /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd-boot-efi)"
+    UESTR="$HERE/dsl/struct.fth"; UEPE="$HERE/dsl/pe.fth"; UETOOL="$HERE/uki-edit.sh"; UEBLD="$HERE/fixtures/pe/build-pe-fixture.sh"
+    for f in "$UESTR" "$UEPE" "$UETOOL" "$UEBLD"; do [[ -f "$f" ]] || fail "uki-edit: missing $f — this track stages the SHIPPED files"; done
+    [[ -x "$UETOOL" ]] || fail "uki-edit: $UETOOL is not executable — this track drives the SHIPPED tool"
+    UEUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; UEUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    UEXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   UEXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    UEAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; UEADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    UEPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$UEUBIN" "$UEUDICT" "$UEXMB" "$UEXDI" "$UEAMB" "$UEADI" "$UEPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    UEWD="$WORKDIR/uki-edit"; rm -rf "$UEWD"; mkdir -p "$UEWD/stage"
+    bash "$UEBLD" "$UEWD/uki.efi" >/dev/null 2>&1 || fail "uki-edit: build-pe-fixture.sh failed to author the UKI"
+    [[ -s "$UEWD/uki.efi" ]] || fail "uki-edit: the fixture UKI was not produced"
+    # the rescue command line: real kernel/dracut/systemd rescue+debug params,
+    # DELIBERATELY longer than the .cmdline section's 512-byte raw slack, so the
+    # re-emit does what the in-place Spike 6 edit provably cannot.
+    UERESC="init=/bin/bash rd.break=pre-mount systemd.unit=rescue.target systemd.log_level=debug systemd.log_target=console ignore_loglevel earlyprintk=serial,ttyS0,115200 console=ttyS0,115200 console=tty0 rd.udev.log_level=debug rd.debug loglevel=7 panic=0 rd.systemd.unit=emergency.target enforcing=0 selinux=0 audit=0 nosplash plymouth.enable=0 nomodeset acpi=off noapic nolapic edd=off nompath rd.luks=0 rd.lvm=0 rd.md=0 rd.dm=0 net.ifnames=0 biosdevname=0 fsck.mode=skip rd.shell systemd.mask=systemd-remount-fs.service rd.driver.blacklist=nouveau vga=normal video=vesafb:off i8042.nomux=1 usbcore.autosuspend=-1"
+    [[ ${#UERESC} -gt 512 ]] || fail "uki-edit: the rescue cmdline (${#UERESC}B) must exceed the 512-byte in-place slack to prove the point"
+
+    # run the SHIPPED tool on the host → a persisted rescue UKI
+    "$UETOOL" "$UEWD/uki.efi" "$UEWD/rescue.efi" "$UERESC" > "$UEWD/tool.log" 2>&1 \
+      || fail "uki-edit: the tool refused a valid edit: $(cat "$UEWD/tool.log")"
+    [[ -s "$UEWD/rescue.efi" ]] || fail "uki-edit: the tool produced no rescue.efi"
+    # HOST oracle: objcopy reads the FULL new .cmdline; objdump shows it grew past the slack
+    UEGOT="$(objcopy -O binary --only-section=.cmdline "$UEWD/rescue.efi" /dev/stdout 2>/dev/null | tr -d '\000')"
+    [[ "$UEGOT" == "$UERESC" ]] || fail "uki-edit (host oracle): objcopy reads .cmdline as '${UEGOT:0:40}…' (${#UEGOT}B), the tool wrote ${#UERESC}B — the re-emit is not what was asked"
+    UEVS="$(objdump -h "$UEWD/rescue.efi" | awk '/[[:space:]]\.cmdline[[:space:]]/{print $3}')"
+    [[ -n "$UEVS" ]] || fail "uki-edit (host oracle): objdump found no .cmdline in the re-emitted UKI"
+    [[ "$((16#$UEVS))" -eq "${#UERESC}" ]] || fail "uki-edit (host oracle): objdump .cmdline VirtualSize 0x$UEVS != ${#UERESC} — the header disagrees with the content"
+    [[ "$((16#$UEVS))" -gt 512 ]] || fail "uki-edit: the re-emitted .cmdline (0x$UEVS) did not exceed the 512-byte slack — nothing distinguishes it from the in-place edit"
+    note "host: uki-edit.sh re-emitted a persisted UKI; objcopy reads .cmdline == the ${#UERESC}-byte rescue line, objdump VirtualSize 0x$UEVS (> 0x200, past the in-place slack) — the re-emit did what Spike 6 cannot"
+
+    # CONTROLS (host): a non-PE and a PE with no .cmdline, each refused BY NAME, no output
+    head -c 256 /dev/urandom > "$UEWD/garbage.bin"
+    "$UETOOL" "$UEWD/garbage.bin" "$UEWD/no1.efi" "$UERESC" > "$UEWD/c1.log" 2>&1
+    { grep -qE 'uki-edit\| NOT-PE' "$UEWD/c1.log" && [[ ! -e "$UEWD/no1.efi" ]]; } \
+      || fail "uki-edit CONTROL: a non-PE input was not refused by name (wanted uki-edit| NOT-PE, no output) — see $UEWD/c1.log"
+    objcopy --remove-section=.cmdline "$UEWD/uki.efi" "$UEWD/nocmd.efi" 2>/dev/null || fail "uki-edit: could not build the no-.cmdline control input"
+    "$UETOOL" "$UEWD/nocmd.efi" "$UEWD/no2.efi" "$UERESC" > "$UEWD/c2.log" 2>&1
+    { grep -qE 'uki-edit\| NO-CMDLINE' "$UEWD/c2.log" && [[ ! -e "$UEWD/no2.efi" ]]; } \
+      || fail "uki-edit CONTROL: a PE with no .cmdline was not refused by name (wanted uki-edit| NO-CMDLINE, no output) — see $UEWD/c2.log"
+    note "host controls: a non-PE → uki-edit| NOT-PE; a PE with no .cmdline → uki-edit| NO-CMDLINE; each refused by name, no output written"
+
+    # stage struct + pe + the re-emitted UKI for the firmware read
+    cp "$UESTR" "$UEWD/stage/STRUCT.FTH"; cp "$UEPE" "$UEWD/stage/PE.FTH"; cp "$UEWD/rescue.efi" "$UEWD/stage/RESCUE.EFI"
+    genisoimage -quiet -o "$UEWD/ue.iso" -V UKIEDIT -r -J "$UEWD/stage" 2>/dev/null || fail "uki-edit: genisoimage failed"
+    UECLEN="$(printf '%x' "${#UERESC}")"   # the size pe-find must report
+    UEPFX="${UERESC:0:32}"                  # the first 32 bytes pe.fth must read back
+    note "subject: re-emitted $(stat -c%s "$UEWD/rescue.efi")-byte UKI; firmware pe.fth must read .cmdline size 0x$UECLEN and prefix '$UEPFX'"
+
+    # grade one arch's log: pe.fth located the grown .cmdline (CLEN == the new size)
+    # and read its content (CPFX == the rescue prefix). <log> <arch>
+    ue_grade() {
+      local lg="$1" a="$2" g clen cpfx
+      g="$(tr -d '\r\000' < "$lg")"
+      clen="$(grep -aoE '^CLEN=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$((16#${clen:-0}))" -eq "${#UERESC}" ]] || fail "uki-edit ($a): pe.fth reads .cmdline size 0x${clen:-<none>}, expected 0x$UECLEN (${#UERESC}) — the re-emit's grown section did not read back — see $lg"
+      cpfx="$(grep -aE '^CPFX=' <<<"$g" | head -1 | sed 's/^CPFX=//')"
+      [[ "$cpfx" == "$UEPFX" ]] || fail "uki-edit ($a): pe.fth reads .cmdline prefix '$cpfx', expected '$UEPFX' — see $lg"
+      note "$a: pe.fth read the re-emitted UKI's grown .cmdline — size 0x$UECLEN (> the 512 slack) and prefix '$UEPFX'"
+    }
+    # each line stack-neutral, markers on their own line (leading cr) so the REPL's
+    # echo of `." CLEN="` is never mistaken for the output (the pe track's lesson).
+    UELINES=( 'variable cea variable cel'
+              'load-base load-size s" .cmdline" pe-find cel ! cea !'
+              'cr ." CLEN=" cel @ .hx8 cr'
+              'cr ." CPFX=" cea @ 20 type cr' )
+
+    # ── unix: the ISO door ───────────────────────────────────────────────────
+    ( cd "$UEWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\PE.FTH' 'load-base load-size evaluate' \
+        'load hd:\RESCUE.EFI' "${UELINES[@]}" 'bye' \
+      | "$UEUBIN" -f "$UEWD/ue.iso" "$UEUDICT" 2>&1 | tr -d '\r' > "$UEWD/unix.log" )
+    ue_grade "$UEWD/unix.log" unix
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for UEA in x86 amd64; do
+      if [[ $UEA == x86 ]]; then UEMB="$UEXMB"; UEDI="$UEXDI"; else UEMB="$UEAMB"; UEDI="$UEADI"; fi
+      UESER="/tmp/ue-$UEA-$$.sock"; UELOG="$UEWD/$UEA.log"; rm -f "$UESER" "$UELOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$UEMB" -initrd "$UEDI" -nic none -cdrom "$UEWD/ue.iso" \
+        -display none -serial "unix:$UESER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      UEQ=$!
+      UESENDS=(); for l in "${UELINES[@]}"; do UESENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$UESER" "$UELOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PE.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\RESCUE.EFI\r' --expect "0 > " \
+        "${UESENDS[@]}"
+      UERC=$?
+      kill "$UEQ" 2>/dev/null   # by PID, never by pattern
+      [[ $UERC -eq 0 ]] || fail "uki-edit ($UEA): the prompt driver did not complete (rc=$UERC) — see $UELOG"
+      ue_grade "$UELOG" "$UEA"
+    done
+
+    # ── ppc: the big-endian row — pe.fth locates the grown .cmdline via the LE
+    # section table, the SAME as x86, NOT a native byte-swap ──
+    UEPLOG="$UEWD/ppc.log"; rm -f "$UEPLOG"
+    UEPSENDS=(); for l in "${UELINES[@]}"; do UEPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$UEPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PE.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\RESCUE.EFI;1\r' --expect "0 > " \
+      "${UEPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$UEPELF" -nographic -vga none -cdrom "$UEWD/ue.iso" >/dev/null 2>&1
+    UEPRC=$?
+    [[ $UEPRC -eq 0 ]] || fail "uki-edit (ppc): the prompt driver did not complete (rc=$UEPRC) — see $UEPLOG"
+    ue_grade "$UEPLOG" ppc
+
+    pass "UKI workbench Spike 8-basic (uki-edit.sh): the PERSISTED, host-side rescue deliverable — produce a rescue UKI with a new kernel command line without a chroot or a USB stick, a change that survives reboots (which the in-RAM Spikes 6/7 do not). The tool REBUILDS with ukify (not objcopy --update-section, which leaves VirtualSize stale and overflows the slot — measured), GROWING .cmdline to ${#UERESC} bytes — PAST the 512-byte in-place slack that Spike 6 is bounded by — and validates the re-emit (its .cmdline reads back exactly under objcopy) before writing it. Graded under BOTH readers, as the plan asks: the lab's pe.fth read the grown .cmdline out of the re-emitted UKI on unix, x86, amd64 AND ppc (size 0x$UECLEN and the rescue prefix — locating it is the LE section-table walk, so ppc reads the same header x86 does), and the host objdump/objcopy (a different author) read the full new command line. CONTROLS (host), each refused BY NAME with NO output: a non-PE input → uki-edit| NOT-PE, a PE with no .cmdline → uki-edit| NO-CMDLINE. This is the portable rescue tool a UEFI x86 box actually uses; it ships unsigned (a non-secure-boot rescue), and re-signing + measures-as-predicted is Spike 8-full's bridge to the attestation strand (3/4/5)."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -8954,5 +9099,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac
