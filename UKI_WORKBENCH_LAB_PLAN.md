@@ -286,17 +286,31 @@ capability it stitches together exists).
 
 ### Spike 6 (#1) — in-firmware in-place `.cmdline` edit, the smallest real proof — BUILD FIRST
 At the OpenBIOS prompt: `pe-find .cmdline` → overwrite the bytes in the loaded UKI **in place**
-(`c!`/`t!`), replacing or **appending within the section's slack** (our fixture's `.cmdline` is
-`VirtualSize=24` inside a `SizeOfRawData=512` section — ~488 bytes of room), e.g. append
-`init=/bin/bash`. **Grade:** re-read the section and confirm the new string is there, and that a
-host `objcopy --only-section=.cmdline`/`objdump` sees the same bytes the firmware wrote — the edit
-is real on disk-image, not just in the firmware's claim. **The UNKNOWN this spike must MEASURE, not
-assume:** does the systemd EFI stub read `.cmdline` up to the section's `VirtualSize` or up to the
-first NUL? That decides whether a *grown* command line also needs the section header's `VirtualSize`
-bumped (`pe.fth`'s section fields can `t!` it) or whether a NUL-terminated write in the slack is
-enough. **Control:** a write that overruns `SizeOfRawData` is refused by name, not silently
-scribbled past the section. This is an in-RAM, one-shot edit — booting the result end to end is
-Spike 3's OVMF loop, reused.
+(`c!`/`t!`), e.g. append `init=/bin/bash`. **Grade:** re-read the section and confirm the new string
+is there, and that a host `objcopy --only-section=.cmdline`/`objdump` sees the same bytes the firmware
+wrote — the edit is real on disk-image, not just in the firmware's claim. **Control:** a write that
+overruns `SizeOfRawData` is refused by name, not silently scribbled past the section. This is an
+in-RAM, one-shot edit — booting the result end to end is Spike 3's OVMF loop, reused.
+
+**MEASURED 2026-09-18 (the read contract — was an open UNKNOWN).** The systemd EFI stub reads
+`.cmdline` up to **the first NUL, bounded by the section's `VirtualSize`** — *both* bounds. Foreign
+oracle (systemd v255): `efi-string.c:189` `xstrn8_to_16` loops `while (n > 0 && *str8 != '\0')`, and
+`pe.c:164` sets that `n` to the section's `VirtualSize` (not `SizeOfRawData`). Measured end to end
+under OVMF with an AlmaLinux EFISTUB kernel, the kernel's own `Kernel command line:` line as the
+oracle and the negative control biting:
+
+| `.cmdline` shape | kernel command line |
+|---|---|
+| embedded NUL at byte 21, `VirtualSize`=37 | truncated at the NUL (`console=ttyS0 Q5AAA=1`) |
+| grown past `VirtualSize`, header **not** bumped | grown text **absent** (bounded by `VirtualSize`) |
+| grown, `VirtualSize` bumped to cover it | grown text **present** |
+
+**Consequence for this spike (a correction to the earlier draft):** `ukify` emits `.cmdline` with
+`VirtualSize` == the exact string length, **no NUL and no slack** — the `SizeOfRawData`=512 padding is
+**invisible to the stub**, so "append within the section's slack" is wrong. A same-length or shorter
+replacement works in place with a NUL terminator (the NUL truncates the tail). **Growing the command
+line requires bumping the section header's `VirtualSize`** (`pe.fth`'s section fields `t!` it), and the
+overrun to refuse is against `VirtualSize`/`SizeOfRawData`, not a mythical slack.
 
 ### Spike 7 (#3) — the bzImage `cmd_line_ptr` seam, the classic-kernel rescue path — ORACLE MEASURED 2026-09-18
 Not every rescue target is a UKI. A plain `kernel + initrd` boot reads its command line from the
@@ -336,15 +350,31 @@ the reader and the oracle are different programs.
   is LE, so ppc earns its keep exactly as in `bootparams.fth`.
 - *Control:* a line longer than `cmdline_size` (0x7ff) refused by name, the buffer **unchanged** after.
 
-**7b — the runtime contract (UNKNOWN in this lab, stated not hidden).** That a kernel *booted* with the
-edited line shows it in `/proc/cmdline` is the field's whole meaning — but it needs a bootloader that
-consumes **our** edit, and this lab's firmware (OpenBIOS / OVMF) does not build a bzImage zero-page from a
-firmware-prompt edit (§5's honest boundary). So "our edit reached the kernel" stays **UNKNOWN** here,
-distinct from PASS. What *is* measured, as calibration + negative control: the on-disk `cmd_line_ptr` is 0
-(proving the field is runtime-only — why the spike exists), and a real `qemu -kernel -append X -initrd …`
-boot shows `X` in `/proc/cmdline` (proving the field's *semantics* are real). The runtime loop our edit
-**does** close is the UKI `.cmdline` path — Spike 6 under OVMF — not this one. Spike 7 proves the
-classic-BIOS *technique*, grades it against a foreign oracle, and names what it cannot boot.
+**7b — the runtime contract (MEASURED 2026-09-18; the boundary is now precise, not a blanket UNKNOWN).**
+That a kernel *booted* with the edited line shows it splits into two questions, and the split is the
+finding:
+
+- **The boot-*line* reaches the kernel — MEASURED.** Booting Linux through this lab's OpenBIOS with a
+  marker on the boot line (`boot …:\v console=ttyS0 S7B=rescue initrd=…`), the **kernel itself** prints
+  `Kernel command line: console=ttyS0 S7B=rescue` and `Unknown kernel command line parameters
+  "S7B=rescue", will be passed to user space` — i.e. the marker reached the kernel's command line
+  (`Kernel command line:` is exactly what `/proc/cmdline` exposes). The path is `linux_load()` →
+  `parse_command_line(cmdline, COMMAND_LINE_LOC=0x91000)` → `set_command_line_loc` sets
+  `cmd_line_ptr = 0x91000` (`arch/x86/linux_load.c:685-686`, protocol ≥ 0x202). `initrd=` is stripped by
+  the loader as the initrd filename, standard.
+- **A firmware-*prompt* edit of the LIVE `cmd_line_ptr` does NOT reach the kernel — structural, from the
+  loader source.** `linux_load()` builds the 0x91000 buffer and sets `cmd_line_ptr` from the boot-line
+  string at `boot` time, then jumps to the kernel with **no return to the `0 >` prompt**. There is no
+  prompt window in which the live buffer exists and control is at the prompt, so `bootparams-edit.fth`
+  (Spike 7a) necessarily edits a **foreign captured `boot_params` dump**, not the live boot — which is
+  exactly what it does. Lifting this would require a **loader hook** (patch `linux_load` to consult a
+  Forth-editable buffer, or to drop to the prompt after `parse_command_line` and before the jump) — a
+  firmware change, not available today. That, not "unknown whether it reaches," is the honest boundary.
+
+The runtime loop our *edit* closes is the UKI `.cmdline` path — Spike 6 under OVMF, where the edit is a
+section the stub re-reads (Q5 above) — not the classic-bzImage prompt path. Spike 7 proves the
+classic-BIOS *technique* on a foreign dump, grades it against a foreign oracle, and now names precisely
+what it cannot boot and why.
 
 ### Spike 8 (#2) — the host-side `uki-edit` rescue tool, the deliverable — TWO FORMS (toolchain measured 2026-09-18)
 The portable *"produce a rescue image without a chroot"* tool, and the rescue framing of Spike 5. This is
@@ -434,6 +464,27 @@ signature:** the broken boot fails with its named signature; each edited boot re
 whose `/proc/cmdline` (or a marker file / the fixed mount) shows exactly the change made; the
 persisted artifact reproduces the rescue across a power-cycle.
 
+**STARTED 2026-09-18 — measured anchors and one design constraint discovered (all on this lab's
+OpenBIOS bzImage path, `payload-bzImage` + `uroot.cpio`):**
+- **The negative control is real and named — MEASURED.** Booting with **no initrd** panics with
+  `Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)` (preceded by
+  `VFS: Cannot open root device "(null)" … error -6`). Supplying the good initrd
+  (`initrd=/ide@1/cdrom@0:\u`) rescues it to `Welcome to u-root!`. That is the **initrd** rescue's
+  break/rescue pair, ready to build.
+- **Design constraint — an `init=` break does NOT fail with an initramfs.** `init=/nonesuch` was
+  measured to fall through to `Run /init as init process` (the kernel's initramfs default) and u-root
+  booted anyway — so a bad-`init=` cmdline break is silently rescued by the kernel and is **not** a
+  valid negative control here. The genuine **cmdline** rescue therefore belongs to the **UKI
+  `.cmdline`** path under OVMF (Spike 6, where the stub re-reads the section per Q5's read contract),
+  not the classic bzImage prompt. The classic-kernel rescue narrative is the boot-**line** (7b: it
+  reaches the kernel) plus the **config** (Spike 10) and **initrd** (above) paths.
+- **The cmdline-grow mechanics are settled by Q5:** growing a UKI `.cmdline` needs the section's
+  `VirtualSize` bumped (no slack); a same-or-shorter rescue param works in place with a NUL.
+- **Next to build:** a narrated `showcase-rescue.sh` (sibling of `showcase-preboot-toolkit.sh`) + a
+  one-verdict `smoke-openbios.sh` track, walking the three break→fail→rescue pairs (cmdline via the
+  UKI/OVMF loop; config via `cpio-edit.fth`; initrd via the VFS-panic pair above), each in-RAM and
+  persisted, each with its unedited artifact failing first.
+
 ## 6. What this is NOT (scope guards)
 - **Not a crypto library.** No PKCS#7/X.509 verification in Forth; extract-and-host-verify, named.
 - **Not a UKI builder.** `ukify` builds; this reads/checks/edits and grades against `ukify`.
@@ -471,17 +522,25 @@ measures a directly-booted PE app into PCR4 with no secure boot (one
 package's file list, see §3). (3) Does this lab own
 `dsl/pe.fth` (yes) and the UEFI workbench consume it (yes) — stated, not duplicated. (4) **New:**
 `cpio.fth` is a prerequisite nobody had written down — this lab builds it (Spike 2), the fs note
-cites it. (5) **New (2026-09-17):** the rescue arc (Spikes 6–8) adds one UNKNOWN worth calling out
-— **does the systemd EFI stub read `.cmdline` up to the section's `VirtualSize` or up to the first
-NUL?** Spike 6 measures it (it decides whether a *grown* command line needs the section header's
-`VirtualSize` bumped, or a NUL-terminated write in the slack suffices); until measured it stays
-UNKNOWN, not assumed. (6) The rescue arc's honest boundary is stated in §5: in-firmware editing is
+cites it. (5) **Resolved 2026-09-18 (was: does the stub read `.cmdline` to `VirtualSize` or the first
+NUL?).** **Both bounds: up to the first NUL, bounded by `VirtualSize`.** Foreign oracle systemd v255
+(`efi-string.c:189` `while (n>0 && *str8!='\0')`, `n`=`VirtualSize` from `pe.c:164`) and measured end to
+end under OVMF with the negative control biting (see Spike 6). `ukify` emits `VirtualSize` == exact
+string length with **no NUL and no slack**, so **growing the command line requires bumping the section's
+`VirtualSize`** — the `SizeOfRawData` padding is invisible to the stub; a same-or-shorter replacement
+works in place with a NUL terminator. (6) The rescue arc's honest boundary is stated in §5: in-firmware editing is
 the OpenFirmware/OpenBoot world (Spikes 6–7, in-RAM, one-shot); the UEFI-x86 deliverable is the
 host tool (Spike 8, persisted to the ESP). (7) **Resolved 2026-09-18 (Spike 7):** the "no clean on-disk
 oracle for `cmd_line_ptr`" deferral is lifted — QEMU's `-kernel` loader, frozen just after its
 `linuxboot` ROM runs and dumped from physical 0 (QMP `pmemsave`), is a *foreign* producer of a real
 `boot_params` (measured: `boot_params`@0x10000, `cmd_line_ptr=0x20000`→the `-append` string,
-`cmdline_size=0x7ff`, stable 0.15–1.0 s). What stays UNKNOWN is only **7b**: our *firmware-prompt* edit
-reaching a booted kernel's `/proc/cmdline`, which this lab's firmware cannot drive for a bzImage. (8)
+`cmdline_size=0x7ff`, stable 0.15–1.0 s). **7b resolved 2026-09-18 — the boundary is now precise, not a
+blanket UNKNOWN:** the boot-*line* cmdline **does** reach the booted kernel (measured — with a marker on
+this lab's OpenBIOS `boot` line the kernel prints `Kernel command line: … S7B=rescue` and `Unknown kernel
+command line parameters "S7B=rescue", will be passed to user space`); what is structurally *not*
+available is a firmware-*prompt* edit of the live `cmd_line_ptr` reaching the kernel — `linux_load()`
+(`arch/x86/linux_load.c:685`) builds the 0x91000 buffer from the boot line at `boot` and jumps with no
+prompt re-entry, so Spike 7a edits a foreign dump by necessity and closing the loop would need a loader
+hook (see Spike 7b block). (8)
 Spike 8 splits at the strand seam: **8-basic** (host re-emit, fully tooled 2026-09-18) ships the rescue
 deliverable now; **8-full** (re-sign + measures-as-predicted) waits on the attestation strand 3→4→5.
