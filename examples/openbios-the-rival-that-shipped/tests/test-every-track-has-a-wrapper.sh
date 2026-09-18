@@ -69,5 +69,23 @@ done
 (( ${#unlisted[@]} == 0 )) \
     || fail "${#unlisted[@]} wrapper(s) exist but are not listed in run-all.sh, so the ratio is measured against a shorter list than the driver has tracks: ${unlisted[*]}"
 
-note "${#TRACKS[@]} tracks, ${#WRAPPERS[@]} wrappers, all listed in run-all.sh and all delegating to the driver"
-pass "every track ../smoke-openbios.sh dispatches on has exactly one tests/test-smoke-<track>.sh, each execs the driver rather than reimplementing it, and every one is listed in run-all.sh — the driver stays the single implementation and the suite's ratio is measured against the full set of ${#TRACKS[@]} tracks"
+# And the Tier B workflow's DEFAULT_TRACKS must name arms the driver HAS. That
+# list is a cached fact by its own admission (the workflow says so), guarded so
+# far only against being EMPTY (tools/tests/test-tier-b-refuses-an-empty-track-
+# list.sh). A track renamed in the driver and not there would fail the weekly run
+# on the driver's usage error — a week later, blaming firmware. Read here from
+# the shipped workflow, not re-typed.
+TIERB="$REPO/.github/workflows/openbios-tier-b.yml"
+[[ -f "$TIERB" ]] || fail "$TIERB is missing — its DEFAULT_TRACKS is the list this test checks against the driver's arms"
+mapfile -t DEFT < <(sed -nE 's/^[[:space:]]*DEFAULT_TRACKS:[[:space:]]*//p' "$TIERB" | tr ' ' '\n' | grep -v '^$')
+(( ${#DEFT[@]} > 0 )) \
+    || fail "could not read DEFAULT_TRACKS out of $TIERB — the key was renamed or reshaped, and this check would otherwise compare an empty list and pass"
+ghost=()
+for t in "${DEFT[@]}"; do
+    [[ " ${TRACKS[*]} " == *" $t "* ]] || ghost+=("$t")
+done
+(( ${#ghost[@]} == 0 )) \
+    || fail "${#ghost[@]} name(s) in Tier B's DEFAULT_TRACKS are not tracks the driver dispatches on, so the weekly run would fail on the driver's usage error rather than on firmware: ${ghost[*]}"
+
+note "${#TRACKS[@]} tracks, ${#WRAPPERS[@]} wrappers, all listed in run-all.sh and all delegating to the driver; Tier B's ${#DEFT[@]} default tracks are all real arms"
+pass "every track ../smoke-openbios.sh dispatches on has exactly one tests/test-smoke-<track>.sh, each execs the driver rather than reimplementing it, every one is listed in run-all.sh, and every name in Tier B's DEFAULT_TRACKS is one of them — the driver stays the single implementation and the suite's ratio is measured against the full set of ${#TRACKS[@]} tracks"
