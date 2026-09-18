@@ -876,6 +876,43 @@ the last field line read `bp-init-size` *without* `dup`, consuming the base the
 following `drop` expected — a `Stack Underflow` after `WALKOK`. Every field on a
 shared base must `dup` it; the lone consumer is the explicit `drop`.
 
+### The `uki` track — the reader set's first CONSUMER: grade every UKI section by what it is (Spike 2)
+
+```console
+$ ./smoke-openbios.sh uki
+  - subject: 136192-byte UKI, 11 sections; .linux=Linux 6.12.30 (file), .uname=6.12.30 (self-consistent), .initrd=3-member cpio
+  - unix: every section graded by what it is — .linux is Linux 6.12.30 (bootparams), .initrd walks to its 3 cpio members, .cmdline/.osrel/.uname read back == objcopy; .uname == .linux's version (self-consistent)
+  - unix controls: bootparams on .text → BAD-BOOTFLAG; cpio on .text → BAD-MAGIC; .initrd at a wrong length → TRUNCATED — each grader refuses the wrong section BY NAME, never rubber-stamps
+  - x86 / amd64 / ppc: … every section graded by what it is … .uname == .linux's version (self-consistent)
+PASS: UKI workbench Spike 2: the first CONSUMER of the reader set …
+```
+
+This is the [UKI workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 2**, and the
+first place the three readers built this cycle work *together* on one artifact. A
+Unified Kernel Image is a PE with the kernel/initramfs/cmdline glued on as named
+sections; the track loads `struct.fth`, `pe.fth`, `cpio.fth` **and**
+`bootparams.fth`, then grades each section **by what it is**:
+
+- `.linux` — `pe-find` extracts it and **`?bootparams` grades it a real x86 kernel**
+  (its `"HdrS"`/`boot_flag` check; `file`(1) agrees it is Linux 6.12.30);
+- `.initrd` — handed to `cpio.fth`, which walks it to its members (`== cpio -itv`) —
+  the Spike 2 handoff;
+- `.cmdline` / `.osrel` / `.uname` — read back byte-for-byte `== objcopy`'s extraction.
+
+**The headline is the self-consistency proof.** `ukify` writes `.uname` *from*
+`.linux`'s version, so the firmware's read of `.uname` equals the version
+`bootparams.fth` reads out of `.linux` equals `file`(1)'s — one artifact, three
+readers, one answer. The fixture
+([`fixtures/uki/build-uki-fixture.sh`](fixtures/uki/README.md)) is a small but
+faithful UKI whose `.linux` is a real bzImage's 64 KiB setup prefix (small enough
+to load, real enough that `?bootparams` accepts it).
+
+**Controls (unix), each a grader refusing the *wrong* section by name:**
+`bootparams` on `.text` → `bp| BAD-BOOTFLAG`; `cpio-walk` on `.text` →
+`cpio| BAD-MAGIC`; a section handed the wrong length → `cpio| TRUNCATED`. A
+section is graded by what it *is*, never rubber-stamped — the plan's Spike 2
+control, made to bite.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

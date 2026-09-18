@@ -127,6 +127,15 @@ TRACK (default multiboot):
                               string it follows the pointer to == `file`'s; BAD-BOOTFLAG/
                               BAD-HDRS/TRUNCATED controls refuse a non-kernel by name
                               (needs file, python3, genisoimage, both QEMUs, a bzImage)
+  uki                         UKI workbench Spike 2: the first CONSUMER of the reader
+                              set — a real UKI's sections each graded BY WHAT IT IS,
+                              three readers cooperating: pe.fth walks the table, .linux
+                              → ?bootparams (a Linux kernel), .initrd → cpio.fth, and
+                              .cmdline/.osrel/.uname == objcopy; the SELF-CONSISTENCY
+                              proof is .uname == the version bootparams reads out of
+                              .linux == file's. Controls refuse the WRONG section by
+                              name (needs ukify, binutils, file, GNU cpio, genisoimage,
+                              both QEMUs, a bzImage)
   elf-gate                    the gleanings' loose gold: the gABI phdr ORDERING rule
                               joins ?phdrs (PT_PHDR/PT_INTERP once, before any LOAD;
                               readelf is the oracle) and elf-hash, the SysV symbol
@@ -5839,6 +5848,167 @@ PY
 
     pass "roadmap Tier 1 (dsl/bootparams.fth): an x86 boot-protocol (boot_params / zero-page) reader on the Spike-0 types, walked on unix, x86, amd64 AND ppc against the setup of a REAL bzImage. Every numeric field it prints equals python's EXPLICIT little-endian struct.unpack on the same bytes, on every arch — the boot protocol is LITTLE-ENDIAN, so (unlike cpio's ASCII-hex) there IS a byte order to get wrong, and ppc reads \"HdrS\" as 0x53726448 like every other arch rather than the 0x48647253 a native read would give. The version string the reader follows the kernel_version pointer to is the SAME one \`file\` extracts independently by the same protocol. The reader refuses BY NAME (unix controls): a zeroed boot_flag → bp| BAD-BOOTFLAG, a zeroed \"HdrS\" → bp| BAD-HDRS, a buffer cut before the header → bp| TRUNCATED — a non-kernel is refused, never read as a kernel. With this the roadmap's genuinely-missing Tier 1 readers are all built."
     ;;
+  uki)
+    # UKI workbench Spike 2 (UKI_WORKBENCH_LAB_PLAN.md) — the first CONSUMER of the
+    # reader set: extract each of a real UKI's sections and grade it BY WHAT IT IS,
+    # all three readers cooperating on one artifact. The UKI is a PE with the
+    # kernel/initramfs/cmdline glued on as named sections; here pe.fth finds them,
+    # and then:
+    #   .linux   → ?bootparams ACCEPTS it (a real x86 kernel setup; file names it)
+    #   .initrd  → cpio.fth walks it (== cpio -itv) — the Spike 2 handoff
+    #   .cmdline → the string   .osrel → an os-release stanza   .uname → the version
+    # THE SELF-CONSISTENCY PROOF: ukify wrote .uname FROM .linux's version, so the
+    # firmware's read of .uname == the version bootparams.fth reads out of .linux ==
+    # file(1)'s — three readers, one artifact, one answer. Oracles are all foreign:
+    # objdump (section map), file/?bootparams (kernel), cpio -itv (initrd), objcopy
+    # (each blob). Control (the plan's): a grader refuses the WRONG section by name —
+    # bootparams on .text → BAD-BOOTFLAG, cpio on .text → BAD-MAGIC, and a section
+    # handed the WRONG LENGTH → TRUNCATED — graded by what it is, never rubber-stamped.
+    command -v ukify >/dev/null || skip "ukify not installed (systemd-ukify) — the UKI builder/oracle"
+    command -v objdump >/dev/null || skip "objdump not installed (binutils)"
+    command -v objcopy >/dev/null || skip "objcopy not installed (binutils)"
+    command -v file >/dev/null || skip "file not installed (libmagic) — the .linux/.uname oracle"
+    command -v cpio >/dev/null || skip "cpio not installed (GNU cpio) — the .initrd oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]] || skip "missing /usr/lib/systemd/boot/efi/linuxx64.efi.stub (systemd-boot-efi)"
+    UKSTRUCT="$HERE/dsl/struct.fth"; UKPE="$HERE/dsl/pe.fth"; UKCPIO="$HERE/dsl/cpio.fth"; UKBP="$HERE/dsl/bootparams.fth"; UKBLD="$HERE/fixtures/uki/build-uki-fixture.sh"
+    for f in "$UKSTRUCT" "$UKPE" "$UKCPIO" "$UKBP" "$UKBLD"; do [[ -f "$f" ]] || fail "uki: missing $f — this track stages the SHIPPED files"; done
+    UKUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; UKUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    UKXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   UKXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    UKAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; UKADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    UKPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$UKUBIN" "$UKUDICT" "$UKXMB" "$UKXDI" "$UKAMB" "$UKADI" "$UKPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    UKWD="$WORKDIR/uki"; rm -rf "$UKWD"; mkdir -p "$UKWD/stage"
+    bash "$UKBLD" "$UKWD/uki.efi" 2> "$UKWD/fixture.err" || skip "no readable bzImage for the UKI fixture — $(cat "$UKWD/fixture.err") (set BZIMAGE=/path/to/bzImage)"
+    [[ -s "$UKWD/uki.efi" ]] || fail "uki: the fixture UKI was not produced at $UKWD/uki.efi"
+    # oracles, DERIVED from the artifact at run time (never cached):
+    mapfile -t UKNAMES < <(objdump -h "$UKWD/uki.efi" | awk '/^ +[0-9]+ /{print $2}')
+    (( ${#UKNAMES[@]} >= 8 )) || fail "uki: objdump -h listed ${#UKNAMES[@]} sections — the oracle is empty"
+    objcopy -O binary --only-section=.cmdline "$UKWD/uki.efi" "$UKWD/cmdline.bin" 2>/dev/null || fail "uki: objcopy could not extract .cmdline"
+    UKOCMD="$(tr -d '\000\n' < "$UKWD/cmdline.bin")"
+    objcopy -O binary --only-section=.uname   "$UKWD/uki.efi" "$UKWD/uname.bin"   2>/dev/null || fail "uki: objcopy could not extract .uname"
+    UKUNAME="$(tr -d '\000\n' < "$UKWD/uname.bin")"
+    objcopy -O binary --only-section=.osrel   "$UKWD/uki.efi" "$UKWD/osrel.bin"   2>/dev/null || fail "uki: objcopy could not extract .osrel"
+    UKOSREL_ID="$(tr -d '\000' < "$UKWD/osrel.bin" | grep -aoE '^ID=[^ ]+' | head -1)"
+    objcopy -O binary --only-section=.initrd  "$UKWD/uki.efi" "$UKWD/initrd.bin"  2>/dev/null || fail "uki: objcopy could not extract .initrd"
+    mapfile -t UKINAMES < <(cpio -itv < "$UKWD/initrd.bin" 2>/dev/null | awk '{print $NF}')
+    (( ${#UKINAMES[@]} >= 2 )) || fail "uki: cpio -itv read no members from .initrd"
+    objcopy -O binary --only-section=.linux   "$UKWD/uki.efi" "$UKWD/linux.bin"   2>/dev/null || fail "uki: objcopy could not extract .linux"
+    UKLVER="$(file -b "$UKWD/linux.bin" | sed -E 's/.*version ([0-9][^ ]*) .*/\1/')"
+    file -b "$UKWD/linux.bin" | grep -q 'Linux kernel x86 boot executable bzImage' || fail "uki: .linux is not a bzImage per file(1) — the fixture's kernel section is wrong"
+    # THE HOST-SIDE SELF-CONSISTENCY INVARIANT: ukify wrote .uname from .linux's version.
+    [[ -n "$UKUNAME" && "$UKUNAME" == "$UKLVER" ]] || fail "uki: the fixture is not self-consistent — .uname='$UKUNAME' but file(.linux) reads version '$UKLVER'"
+    cp "$UKSTRUCT" "$UKWD/stage/STRUCT.FTH"; cp "$UKPE" "$UKWD/stage/PE.FTH"; cp "$UKCPIO" "$UKWD/stage/CPIO.FTH"; cp "$UKBP" "$UKWD/stage/BOOTPARM.FTH"; cp "$UKWD/uki.efi" "$UKWD/stage/UKI.EFI"
+    genisoimage -quiet -o "$UKWD/uki.iso" -V UKI -r -J "$UKWD/stage" 2>/dev/null || fail "uki: genisoimage failed"
+    note "subject: $(stat -c%s "$UKWD/uki.efi")-byte UKI, ${#UKNAMES[@]} sections; .linux=Linux $UKLVER (file), .uname=$UKUNAME (self-consistent), .initrd=${#UKINAMES[@]}-member cpio"
+
+    # grade one arch's log: every section graded by its own reader, and the UKI
+    # proven self-consistent (.uname == the version bootparams read out of .linux ==
+    # file's). <log> <arch>
+    uki_grade() {
+      local lg="$1" a="$2" g fcmd fosrel funame
+      g="$(tr -d '\r\000' < "$lg")"
+      grep -qE 'WALKOK'  <<<"$g" || fail "uki ($a): pe-walk returned false on the UKI (no WALKOK) — see $lg"
+      # .linux graded as a kernel by bootparams.fth, and its version == .uname
+      grep -qE 'LINUXOK' <<<"$g" || fail "uki ($a): ?bootparams refused the .linux section (no LINUXOK) — the UKI's kernel did not grade as a kernel — see $lg"
+      grep -qF "version-string=$UKLVER" <<<"$g" || fail "uki ($a): bootparams read .linux's version as something other than file(1)'s '$UKLVER' — see $lg"
+      # .initrd handed to cpio.fth — the handoff, == cpio -itv
+      grep -qE 'IWALKOK' <<<"$g" || fail "uki ($a): .initrd → cpio-walk returned false (no IWALKOK) — see $lg"
+      grep -qE 'CPIO-END' <<<"$g" || fail "uki ($a): the .initrd did not walk to TRAILER!!! — see $lg"
+      local i; mapfile -t GIN < <(grep -aoE 'cpio\| name=[^ ]+' <<<"$g" | sed 's/.*name=//')
+      [[ "${#GIN[@]}" -eq "${#UKINAMES[@]}" ]] || fail "uki ($a): .initrd listed ${#GIN[@]} members, cpio -itv lists ${#UKINAMES[@]} — see $lg"
+      for i in "${!UKINAMES[@]}"; do [[ "${GIN[$i]}" == "${UKINAMES[$i]}" ]] || fail "uki ($a): .initrd member $i is '${GIN[$i]}', cpio -itv says '${UKINAMES[$i]}' — see $lg"; done
+      # .cmdline / .osrel / .uname, each == its objcopy oracle
+      fcmd="$(grep -aE '^CMD=' <<<"$g" | head -1 | sed 's/^CMD=//')"
+      [[ "$fcmd" == "$UKOCMD" ]] || fail "uki ($a): .cmdline read '$fcmd', objcopy's is '$UKOCMD' — see $lg"
+      [[ -z "$UKOSREL_ID" ]] || grep -qF "$UKOSREL_ID" <<<"$g" || fail "uki ($a): .osrel did not read back objcopy's '$UKOSREL_ID' — see $lg"
+      funame="$(grep -aE '^UNAME=' <<<"$g" | head -1 | sed 's/^UNAME=//')"
+      [[ "$funame" == "$UKUNAME" ]] || fail "uki ($a): .uname read '$funame', objcopy's is '$UKUNAME' — see $lg"
+      note "$a: every section graded by what it is — .linux is Linux $UKLVER (bootparams), .initrd walks to its ${#UKINAMES[@]} cpio members, .cmdline/.osrel/.uname read back == objcopy; .uname == .linux's version (self-consistent)"
+    }
+
+    # each line stack-neutral (the prompt prints the STACK DEPTH); the string
+    # markers print on their OWN line (leading cr) so the REPL's echo of `." CMD="`
+    # is never mistaken for the output (the pe track's lesson). Each ≤ 80 cols.
+    UKLINES=( 'variable usa variable usl'
+              'load-base load-size pe-walk if ." WALKOK" else ." WALKBAD" then cr'
+              'load-base load-size s" .linux" pe-find usl ! usa ! cr'
+              'usa @ usl @ bootparams if ." LINUXOK" else ." LINUXBAD" then cr'
+              'load-base load-size s" .initrd" pe-find usl ! usa ! cr'
+              'usa @ usl @ 40 cpio-walk if ." IWALKOK" else ." IWALKBAD" then cr'
+              'load-base load-size s" .cmdline" pe-find usl ! usa ! cr'
+              'cr ." CMD=" usa @ usl @ type cr'
+              'load-base load-size s" .osrel" pe-find usl ! usa ! cr'
+              'cr ." OSREL=" usa @ usl @ type cr'
+              'load-base load-size s" .uname" pe-find usl ! usa ! cr'
+              'cr ." UNAME=" usa @ usl @ type cr' )
+
+    # ── unix: the ISO door + the three "wrong section / wrong length" controls ──
+    ( cd "$UKWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\PE.FTH' 'load-base load-size evaluate' \
+        'load hd:\CPIO.FTH' 'load-base load-size evaluate' \
+        'load hd:\BOOTPARM.FTH' 'load-base load-size evaluate' \
+        'load hd:\UKI.EFI' "${UKLINES[@]}" \
+        'load-base load-size s" .text" pe-find usl ! usa ! cr' \
+        'usa @ usl @ bootparams ." KCTL=" if ." OK" else ." REF" then cr' \
+        'usa @ usl @ 40 cpio-walk ." CCTL=" if ." OK" else ." REF" then cr' \
+        'load-base load-size s" .initrd" pe-find usl ! usa ! cr' \
+        'usa @ 10 40 cpio-walk ." LENCTL=" if ." OK" else ." REF" then cr' 'bye' \
+      | "$UKUBIN" -f "$UKWD/uki.iso" "$UKUDICT" 2>&1 | tr -d '\r' > "$UKWD/unix.log" )
+    uki_grade "$UKWD/unix.log" unix
+    UKUG="$(cat "$UKWD/unix.log")"
+    grep -qE 'BAD-BOOTFLAG' <<<"$UKUG" && grep -qE 'KCTL=REF' <<<"$UKUG" \
+      || fail "uki CONTROL (unix): bootparams did not refuse .text by name (wanted BAD-BOOTFLAG and KCTL=REF): $(grep -aoE 'KCTL=[A-Z]*' <<<"$UKUG" | head -1)"
+    grep -qE 'BAD-MAGIC' <<<"$UKUG" && grep -qE 'CCTL=REF' <<<"$UKUG" \
+      || fail "uki CONTROL (unix): cpio-walk did not refuse .text by name (wanted BAD-MAGIC and CCTL=REF): $(grep -aoE 'CCTL=[A-Z]*' <<<"$UKUG" | head -1)"
+    grep -qE 'TRUNCATED' <<<"$UKUG" && grep -qE 'LENCTL=REF' <<<"$UKUG" \
+      || fail "uki CONTROL (unix): a wrong-length .initrd was not refused by name (wanted TRUNCATED and LENCTL=REF): $(grep -aoE 'LENCTL=[A-Z]*' <<<"$UKUG" | head -1)"
+    note "unix controls: bootparams on .text → BAD-BOOTFLAG; cpio on .text → BAD-MAGIC; .initrd at a wrong length → TRUNCATED — each grader refuses the wrong section BY NAME, never rubber-stamps"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven ────────────────────
+    for UKA in x86 amd64; do
+      if [[ $UKA == x86 ]]; then UKMB="$UKXMB"; UKDI="$UKXDI"; else UKMB="$UKAMB"; UKDI="$UKADI"; fi
+      UKSER="/tmp/uk-$UKA-$$.sock"; UKLOG="$UKWD/$UKA.log"; rm -f "$UKSER" "$UKLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$UKMB" -initrd "$UKDI" -nic none -cdrom "$UKWD/uki.iso" \
+        -display none -serial "unix:$UKSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      UKQ=$!
+      UKSENDS=(); for l in "${UKLINES[@]}"; do UKSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$UKSER" "$UKLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\PE.FTH\r'       --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CPIO.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\BOOTPARM.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\UKI.EFI\r' --expect "0 > " \
+        "${UKSENDS[@]}"
+      UKRC=$?
+      kill "$UKQ" 2>/dev/null   # by PID, never by pattern
+      [[ $UKRC -eq 0 ]] || fail "uki ($UKA): the prompt driver did not complete (rc=$UKRC) — see $UKLOG"
+      uki_grade "$UKLOG" "$UKA"
+    done
+
+    # ── ppc: the big-endian row — pe.fth locates every section via the LE table
+    # the same as x86, so the readers cooperate identically here ──────────────
+    UKPLOG="$UKWD/ppc.log"; rm -f "$UKPLOG"
+    UKPSENDS=(); for l in "${UKLINES[@]}"; do UKPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$UKPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\PE.FTH;1\r'       --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CPIO.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\BOOTPARM.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\UKI.EFI;1\r' --expect "0 > " \
+      "${UKPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$UKPELF" -nographic -vga none -cdrom "$UKWD/uki.iso" >/dev/null 2>&1
+    UKPRC=$?
+    [[ $UKPRC -eq 0 ]] || fail "uki (ppc): the prompt driver did not complete (rc=$UKPRC) — see $UKPLOG"
+    uki_grade "$UKPLOG" ppc
+
+    pass "UKI workbench Spike 2: the first CONSUMER of the reader set, on unix, x86, amd64 AND ppc against a REAL UKI built by \`ukify\`. Every section is graded BY WHAT IT IS, three readers cooperating on one artifact: pe.fth walks the section table; .linux is graded a Linux $UKLVER kernel by \`?bootparams\` (file agrees); .initrd is handed to cpio.fth and walks to its members (== \`cpio -itv\`); .cmdline/.osrel/.uname read back == \`objcopy\`. The SELF-CONSISTENCY proof: ukify wrote .uname FROM .linux's version, so the firmware's .uname == the version bootparams.fth reads out of .linux == file(1)'s — one artifact, one answer. Controls (unix): each grader refuses the WRONG section BY NAME — bootparams on .text → bp| BAD-BOOTFLAG, cpio on .text → cpio| BAD-MAGIC, a wrong-length .initrd → cpio| TRUNCATED — graded by what it is, never rubber-stamped."
+    ;;
   elf-gate)
     # B.3, from dsl/POKE-ELF-GLEANINGS.md's "loose gold" (2026-09-03): the two
     # cheap things left in the pan, pocketed together because they are graded the
@@ -8159,5 +8329,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac
