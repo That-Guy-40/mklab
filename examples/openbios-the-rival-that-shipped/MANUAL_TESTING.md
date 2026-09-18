@@ -1020,6 +1020,49 @@ construction). **Controls:** a different-length replacement → `cpio| LEN-CHANG
 an absent member → `cpio| NO-MEMBER`; each refused by name, `etc/conf` unchanged
 after — the same no-partial-write guarantee, now one layer deeper.
 
+### The `cmdline-ptr` track — the classic-kernel rescue seam: edit `cmd_line_ptr`'s buffer in place (Spike 7a)
+
+```console
+$ ./smoke-openbios.sh cmdline-ptr
+  - subject: 131328-byte phys-0 boot_params dump; cmd_line_ptr names the sentinel 'root=/dev/vda1 ro quiet SENTINEL_CMDLINE_7=orig'; edit → 'init=/bin/bash single'
+  - unix: cle-open found boot_params; cmd_line_ptr named the sentinel; bp-cmdline-set rewrote it in place to 'init=/bin/bash single' (the firmware re-reads both)
+  - unix foreign oracle: an independent python struct decode of the edited dump's cmd_line_ptr == 'init=/bin/bash single' — the in-place edit is real in the bytes, not the firmware's own read-back
+  - unix controls: CMDLINE-TOO-BIG / CMDLINE-OOB / NO-CMDLINE each refused by name; the command line UNCHANGED after — refused edits write NOTHING
+  - x86 / amd64 / ppc: cle-open found boot_params; cmd_line_ptr named the sentinel; bp-cmdline-set rewrote it in place to 'init=/bin/bash single'
+PASS: UKI workbench Spike 7a (dsl/bootparams-edit.fth): the classic-kernel rescue seam …
+```
+
+This is the [UKI workbench](../../UKI_WORKBENCH_LAB_PLAN.md)'s **Spike 7a** — the
+rescue seam for a boot artifact that is *not* a UKI. A plain `kernel + initrd` boot
+reads its command line from a **runtime** buffer that `boot_params`' `cmd_line_ptr`
+(u32 @0x228) names; [`bootparams.fth`](dsl/bootparams.fth) already *reads* that field,
+and [`dsl/bootparams-edit.fth`](dsl/bootparams-edit.fth)'s `bp-cmdline` / `bp-cmdline-set`
+**follow it into the buffer and rewrite the string in place** — add `init=/bin/bash`
+at the firmware prompt.
+
+**Why the fixture is a captured memory dump, not a bzImage.** `cmd_line_ptr` is
+**zero on disk** — only a bootloader sets it, in RAM — so there is nothing on-disk to
+grade, and minting the zero-page ourselves would be a round trip that hides a
+symmetric offset error. The fixture ([`fixtures/cmdline-ptr/`](fixtures/cmdline-ptr/README.md))
+is therefore **guest physical memory captured from QEMU's own `-kernel` loader**,
+dumped from address 0, so `cmd_line_ptr` is a **direct offset** into it and QEMU — not
+us — authored the pointer and the buffer. `boot_params` is located inside the dump by
+`bootparams.fth`'s own two anchors, never a fixed address.
+
+**Proven in the bytes, not the firmware's claim:** on unix the edited dump is written
+back and an **independent python `struct` decode** (`decode-cmdline.py`, the same
+decoder that verified the capture) reads the new command line. Four-arch: every field
+the editor touches — the anchors, `cmd_line_ptr`, `cmdline_size` — is little-endian, so
+ppc resolves the **same** pointer x86 does, not a byte-swapped one. **Controls:** a line
+past `cmdline_size` → `bp| CMDLINE-TOO-BIG` (the protocol bound), past the image end →
+`bp| CMDLINE-OOB` (the buffer's bound), a zeroed pointer → `bp| NO-CMDLINE`; each refused
+by name, the command line unchanged after.
+
+**Honest boundary (Spike 7b, UNKNOWN):** that the edit reaches a *booted* kernel's
+`/proc/cmdline` needs a bootloader that consumes it, and this lab's firmware does not
+boot a bzImage from a prompt edit — so that half stays UNKNOWN. The runtime loop the
+toolkit *does* close is the UKI `.cmdline` path (Spike 6, under OVMF).
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

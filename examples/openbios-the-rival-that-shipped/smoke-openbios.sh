@@ -146,6 +146,17 @@ TRACK (default multiboot):
                               (the out-of-bounds-write guard), too-big → edit| TOO-BIG, a
                               non-PE → edit| NOT-PE; .cmdline unchanged after (no partial)
                               (needs ukify, binutils, genisoimage, both QEMUs)
+  cmdline-ptr                 UKI workbench Spike 7a: the classic-kernel rescue seam —
+                              dsl/bootparams-edit.fth FOLLOWS boot_params' cmd_line_ptr
+                              (@0x228) into its buffer and rewrites the command line IN
+                              PLACE (init=/bin/bash single). The fixture is a FOREIGN,
+                              phys-0 guest-memory dump captured from QEMU's own -kernel
+                              loader (it set the pointer + wrote the buffer — not a round
+                              trip); on unix an independent python struct decodes the
+                              written-back dump — real in the bytes. SECURITY controls
+                              refuse BY NAME: past cmdline_size → bp| CMDLINE-TOO-BIG, past
+                              the image → bp| CMDLINE-OOB, a zeroed pointer → bp| NO-CMDLINE
+                              (needs python3, genisoimage, a bzImage, both QEMUs)
   initrd-swap                 UKI workbench Spike 9: swap a UKI's WHOLE .initrd for a
                               known-good rescue initramfs in place — initrd-set is
                               Spike 6's pe-section-set pointed at .initrd (same guards);
@@ -6180,6 +6191,168 @@ PY
 
     pass "UKI workbench Spike 6 (dsl/pe-edit.fth): the rescue arc's smallest real proof — an in-firmware, in-place edit of a UKI's .cmdline at the OpenBIOS prompt, on unix, x86, amd64 AND ppc. cmdline-set rewrote .cmdline to '$ENEW' (grown 24→32 within the section slack) and updated VirtualSize; on unix the edited image was written back and \`objcopy\`/\`objdump\` (foreign) read the new bytes AND the new VirtualSize — the edit is real on the PE, not the firmware's own claim — and every arch re-reads the new value. The byte copy is order-free but LOCATING the section and WRITING VirtualSize are little-endian, so ppc finds + writes the same header x86 does. SECURITY (unix controls), each refused BY NAME with NOTHING written: a section whose data runs past the image → edit| OOB (the out-of-bounds-write guard, added to pe.fth's sec-in-image?), a value larger than the section → edit| TOO-BIG, a non-PE → edit| NOT-PE; and .cmdline is UNCHANGED after all three (no partial scribble). This is the rescue seam: add init=/bin/bash to a kernel command line without a USB stick or a chroot."
     ;;
+  cmdline-ptr)
+    # UKI workbench Spike 7a (UKI_WORKBENCH_LAB_PLAN.md) — the classic-kernel
+    # rescue seam. Not every rescue target is a UKI: a plain kernel+initrd boot
+    # reads its command line from a RUNTIME buffer that boot_params' cmd_line_ptr
+    # (u32 @0x228) names. bootparams.fth READS that field; dsl/bootparams-edit.fth
+    # FOLLOWS it into the buffer and REWRITES the string in place (init=/bin/bash
+    # single) — the rescue edit the readers set up but never made.
+    #
+    # THE FIXTURE IS A FOREIGN, PHYS-0-INDEXED DUMP. cmd_line_ptr is 0 on disk —
+    # only a bootloader sets it, in RAM — so the fixture is guest physical memory
+    # captured from a REAL bootloader (QEMU's own -kernel loader) dumped from
+    # address 0, so cmd_line_ptr is a DIRECT OFFSET into it (no rebasing). QEMU
+    # authored the pointer AND the buffer; we only pass the -append string, so the
+    # grade is a foreign producer, not a round trip. boot_params is LOCATED by
+    # scanning for bootparams.fth's own anchors (0xAA55 @ +0x1fe, HdrS @ +0x202).
+    #
+    # GRADE (all arches): the firmware follows cmd_line_ptr to the SENTINEL, edits
+    # it to the RESCUE line, and re-reads the new value. UNIX adds the FOREIGN
+    # oracle: the edited dump written back with write-file is decoded by an
+    # independent python struct (decode-cmdline.py) — the edit is real in the
+    # bytes, not the firmware's own read-back. FOUR ARCHES: every field the editor
+    # touches (the anchors, cmd_line_ptr, cmdline_size) is LITTLE-ENDIAN, read via
+    # le-field:, so a native fetch on ppc would follow a byte-swapped pointer into
+    # hyperspace; the matrix proves ppc resolves the SAME pointer x86 does.
+    # SECURITY controls (unix), each refused BY NAME with NOTHING written: a line
+    # past cmdline_size → bp| CMDLINE-TOO-BIG (the protocol bound), a line past the
+    # image end → bp| CMDLINE-OOB (the buffer's bound), a zeroed pointer →
+    # bp| NO-CMDLINE; and the command line is UNCHANGED after (no partial scribble).
+    command -v file >/dev/null || skip "file not installed (libmagic) — locates the bzImage"
+    command -v python3 >/dev/null || skip "python3 not installed — the QEMU capture + the little-endian oracle"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed (also the foreign loader that authors the fixture)"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed — the big-endian row is not optional in this lab"
+    CPSTRUCT="$HERE/dsl/struct.fth"; CPBP="$HERE/dsl/bootparams.fth"; CPBPE="$HERE/dsl/bootparams-edit.fth"
+    CPBLD="$HERE/fixtures/cmdline-ptr/build-cmdline-ptr-fixture.sh"; CPDEC="$HERE/fixtures/cmdline-ptr/decode-cmdline.py"
+    for f in "$CPSTRUCT" "$CPBP" "$CPBPE" "$CPBLD" "$CPDEC"; do [[ -f "$f" ]] || fail "cmdline-ptr: missing $f — this track stages the SHIPPED files"; done
+    CPUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; CPUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    CPXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   CPXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    CPAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; CPADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    CPPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$CPUBIN" "$CPUDICT" "$CPXMB" "$CPXDI" "$CPAMB" "$CPADI" "$CPPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86, amd64 and ppc first"; done
+    CPWD="$WORKDIR/cmdline-ptr"; rm -rf "$CPWD"; mkdir -p "$CPWD/stage"
+    # the fixture: capture a real boot_params from QEMU's loader (exit 77 = no bzImage → SKIP)
+    bash "$CPBLD" "$CPWD" 2> "$CPWD/fixture.err"; CPBRC=$?
+    if [[ $CPBRC -ne 0 ]]; then
+      [[ $CPBRC -eq 77 ]] && skip "no readable bzImage for the cmdline-ptr fixture — $(cat "$CPWD/fixture.err") (set BZIMAGE=/path/to/bzImage)"
+      fail "cmdline-ptr: the QEMU capture failed (rc=$CPBRC) — $(cat "$CPWD/fixture.err")"
+    fi
+    [[ -s "$CPWD/CMDPTR.BIN" ]] || fail "cmdline-ptr: the dump fixture was not produced"
+    CPSENT="$(cat "$CPWD/sentinel.txt")"; CPRESC="$(cat "$CPWD/rescue.txt")"
+    [[ -n "$CPSENT" && -n "$CPRESC" ]] || fail "cmdline-ptr: the sentinel/rescue oracle strings are empty"
+    # READ foreign oracle, before the firmware runs: python decodes cmd_line_ptr → the sentinel
+    CPRO="$(python3 "$CPDEC" "$CPWD/CMDPTR.BIN")" || fail "cmdline-ptr: decode-cmdline could not read the fixture"
+    [[ "$CPRO" == "$CPSENT" ]] || fail "cmdline-ptr: python decodes the fixture's cmd_line_ptr as '$CPRO', the builder wrote sentinel '$CPSENT' — the fixture is inconsistent"
+    cp "$CPSTRUCT" "$CPWD/stage/STRUCT.FTH"; cp "$CPBP" "$CPWD/stage/BOOTPARM.FTH"; cp "$CPBPE" "$CPWD/stage/BPEDIT.FTH"
+    cp "$CPWD/CMDLINE-PTR.FTH" "$CPWD/stage/CMDPTR.FTH"; cp "$CPWD/CMDPTR.BIN" "$CPWD/stage/CMDPTR.BIN"
+    genisoimage -quiet -o "$CPWD/cp.iso" -V CMDLINEPTR -r -J "$CPWD/stage" 2>/dev/null || fail "cmdline-ptr: genisoimage failed"
+    note "subject: $(stat -c%s "$CPWD/CMDPTR.BIN")-byte phys-0 boot_params dump; cmd_line_ptr names the sentinel '$CPSENT'; edit → '$CPRESC'"
+
+    # grade one arch's log: cle-open found boot_params (OPEN=0), the firmware read
+    # the sentinel (CMD=), the edit returned true (EDITOK) and re-reads the rescue
+    # line (NEW=). Markers print on their OWN line (leading cr) so the REPL's echo
+    # of `." CMD="` is never mistaken for the output (the pe track's lesson). <log> <arch>
+    cp_grade() {
+      local lg="$1" a="$2" g open cmd new
+      g="$(tr -d '\r\000' < "$lg")"
+      open="$(grep -aoE '^OPEN=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$open" == "0" ]] || fail "cmdline-ptr ($a): cle-open returned status 0x${open:-<none>}, expected 0 — boot_params not found/validated in the dump — see $lg"
+      grep -qE '^EDITOK' <<<"$g" || fail "cmdline-ptr ($a): bp-cmdline-set returned false on a valid edit (no EDITOK): $(grep -aoE 'bp\| [A-Z-]+' <<<"$g" | head -1) — see $lg"
+      cmd="$(grep -aE '^CMD=' <<<"$g" | head -1 | sed 's/^CMD=//')"
+      [[ "$cmd" == "$CPSENT" ]] || fail "cmdline-ptr ($a): before the edit cmd_line_ptr names '$cmd', expected the sentinel '$CPSENT' — see $lg"
+      new="$(grep -aE '^NEW=' <<<"$g" | head -1 | sed 's/^NEW=//')"
+      [[ "$new" == "$CPRESC" ]] || fail "cmdline-ptr ($a): after the edit cmd_line_ptr names '$new', expected the rescue line '$CPRESC' — see $lg"
+      note "$a: cle-open found boot_params; cmd_line_ptr named the sentinel; bp-cmdline-set rewrote it in place to '$CPRESC' (the firmware re-reads both)"
+    }
+
+    # each line stack-neutral, ≤80 cols; the rescue line rides in the compiled
+    # rescue-cmdline word (CMDPTR.FTH), so no long string is typed and no transient
+    # s" is live at the prompt. Markers on their own line (leading cr).
+    CPLINES=( 'variable ceok'
+              'load-base load-size cle-open cr ." OPEN=" . cr'
+              'cr ." CMD=" bp-cmdline type cr'
+              'rescue-cmdline bp-cmdline-set ceok !'
+              'cr ceok @ if ." EDITOK" else ." EDITBAD" then cr'
+              'cr ." NEW=" bp-cmdline type cr' )
+
+    # ── unix: the ISO door + write-file foreign oracle + the 3 refusal controls ──
+    # 5 loads, well under the hosted grubfs ~16-load/process ceiling.
+    ( cd "$CPWD" && printf '%s\n' '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\BOOTPARM.FTH' 'load-base load-size evaluate' \
+        'load hd:\BPEDIT.FTH' 'load-base load-size evaluate' \
+        'load hd:\CMDPTR.FTH' 'load-base load-size evaluate' \
+        'load hd:\CMDPTR.BIN' "${CPLINES[@]}" \
+        'load-base load-size s" EDITED.BIN" write-file drop' \
+        'load-base cle-toobig bp-cmdline-set ." T1=" if ." OK" else ." REF" then cr' \
+        'load-base cle-oob bp-cmdline-set ." T2=" if ." OK" else ." REF" then cr' \
+        'load-base load-size s" AFTER.BIN" write-file drop' \
+        '0 cle-bp @ bp-cmdline-ptr t!' \
+        'load-base 8 bp-cmdline-set ." T3=" if ." OK" else ." REF" then cr' 'bye' \
+      | "$CPUBIN" -f "$CPWD/cp.iso" "$CPUDICT" 2>&1 | tr -d '\r' > "$CPWD/unix.log" )
+    cp_grade "$CPWD/unix.log" unix
+    # the FOREIGN oracle: the edited dump on disk, decoded by python — not the firmware's read-back
+    [[ -s "$CPWD/EDITED.BIN" ]] || fail "cmdline-ptr (unix): write-file produced no EDITED.BIN — the firmware persisted nothing"
+    CPEO="$(python3 "$CPDEC" "$CPWD/EDITED.BIN")" || fail "cmdline-ptr (unix): decode-cmdline could not read the edited dump — the pointer no longer resolves"
+    [[ "$CPEO" == "$CPRESC" ]] || fail "cmdline-ptr (unix): python decodes the edited dump's cmd_line_ptr as '$CPEO', the firmware wrote '$CPRESC' — the edit is not real in the bytes"
+    note "unix foreign oracle: an independent python struct decode of the edited dump's cmd_line_ptr == '$CPRESC' — the in-place edit is real in the bytes, not the firmware's own read-back"
+    # controls, each refused BY NAME (the named line IS the assertion) and T?=REF
+    CPUG="$(cat "$CPWD/unix.log")"
+    grep -qE 'CMDLINE-TOO-BIG' <<<"$CPUG" && grep -qE '^T1=REF' <<<"$CPUG" \
+      || fail "cmdline-ptr CONTROL (unix): a line past cmdline_size was not refused by name (wanted CMDLINE-TOO-BIG and T1=REF) — see $CPWD/unix.log"
+    grep -qE 'CMDLINE-OOB' <<<"$CPUG" && grep -qE '^T2=REF' <<<"$CPUG" \
+      || fail "cmdline-ptr CONTROL (unix): a line past the image end was not refused by name (wanted CMDLINE-OOB and T2=REF) — see $CPWD/unix.log"
+    grep -qE 'NO-CMDLINE' <<<"$CPUG" && grep -qE '^T3=REF' <<<"$CPUG" \
+      || fail "cmdline-ptr CONTROL (unix): a zeroed cmd_line_ptr was not refused by name (wanted NO-CMDLINE and T3=REF) — see $CPWD/unix.log"
+    # NO PARTIAL WRITE: after the refused TOO-BIG/OOB, the command line is still the rescue edit
+    [[ -s "$CPWD/AFTER.BIN" ]] || fail "cmdline-ptr (unix): write-file produced no AFTER.BIN"
+    CPAO="$(python3 "$CPDEC" "$CPWD/AFTER.BIN")" || fail "cmdline-ptr (unix): decode-cmdline could not read AFTER.BIN"
+    [[ "$CPAO" == "$CPRESC" ]] || fail "cmdline-ptr CONTROL (unix): after the refused edits the command line is '$CPAO', not '$CPRESC' — a refusal scribbled a PARTIAL write"
+    note "unix controls: CMDLINE-TOO-BIG / CMDLINE-OOB / NO-CMDLINE each refused by name; the command line UNCHANGED after — refused edits write NOTHING"
+
+    # ── x86 and amd64: the multiboot doors, serial-driven (re-read grade) ─────
+    for CPA in x86 amd64; do
+      if [[ $CPA == x86 ]]; then CPMB="$CPXMB"; CPDI="$CPXDI"; else CPMB="$CPAMB"; CPDI="$CPADI"; fi
+      CPSER="/tmp/cp-$CPA-$$.sock"; CPLOG="$CPWD/$CPA.log"; rm -f "$CPSER" "$CPLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$CPMB" -initrd "$CPDI" -nic none -cdrom "$CPWD/cp.iso" \
+        -display none -serial "unix:$CPSER,server=on,wait=off" -no-reboot >/dev/null 2>&1 &
+      CPQ=$!
+      CPSENDS=(); for l in "${CPLINES[@]}"; do CPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+      python3 "$REPO/tools/drive-serial-repl.py" "$CPSER" "$CPLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\BOOTPARM.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\BPEDIT.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CMDPTR.FTH\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\CMDPTR.BIN\r'   --expect "0 > " \
+        "${CPSENDS[@]}"
+      CPRC=$?
+      kill "$CPQ" 2>/dev/null   # by PID, never by pattern
+      [[ $CPRC -eq 0 ]] || fail "cmdline-ptr ($CPA): the prompt driver did not complete (rc=$CPRC) — see $CPLOG"
+      cp_grade "$CPLOG" "$CPA"
+    done
+
+    # ── ppc: the big-endian row — the SAME little-endian cmd_line_ptr, resolved
+    # the same, NOT a native byte-swap. The row bootparams-edit.fth exists to defend. ──
+    CPPLOG="$CPWD/ppc.log"; rm -f "$CPPLOG"
+    CPPSENDS=(); for l in "${CPLINES[@]}"; do CPPSENDS+=( --send "$l"$'\r' --expect "0 > " ); done
+    python3 "$REPO/tools/drive-pty-repl.py" "$CPPLOG" --timeout 500 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\BOOTPARM.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\BPEDIT.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CMDPTR.FTH;1\r'   --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\CMDPTR.BIN;1\r'   --expect "0 > " \
+      "${CPPSENDS[@]}" \
+      -- qemu-system-ppc -bios "$CPPELF" -nographic -vga none -cdrom "$CPWD/cp.iso" >/dev/null 2>&1
+    CPPRC=$?
+    [[ $CPPRC -eq 0 ]] || fail "cmdline-ptr (ppc): the prompt driver did not complete (rc=$CPPRC) — see $CPPLOG"
+    cp_grade "$CPPLOG" ppc
+
+    pass "UKI workbench Spike 7a (dsl/bootparams-edit.fth): the classic-kernel rescue seam — an in-firmware, in-place edit of the x86 kernel command line that boot_params' cmd_line_ptr names, on unix, x86, amd64 AND ppc. The fixture is a FOREIGN, phys-0-indexed guest-memory dump captured from QEMU's own -kernel loader (which set cmd_line_ptr and wrote the buffer — not a round trip); boot_params is located by bootparams.fth's own anchors. bp-cmdline followed cmd_line_ptr to the sentinel '$CPSENT' and bp-cmdline-set rewrote it in place to the rescue line '$CPRESC'; on unix an INDEPENDENT python struct decode of the written-back dump reads the new line — the edit is real in the bytes, not the firmware's own read-back — and every arch re-reads it. Every field the editor touches (the anchors, cmd_line_ptr, cmdline_size) is LITTLE-ENDIAN, so ppc resolves the SAME pointer x86 does rather than a byte-swapped one. SECURITY (unix controls), each refused BY NAME with NOTHING written: a line past cmdline_size → bp| CMDLINE-TOO-BIG, a line past the image end → bp| CMDLINE-OOB, a zeroed pointer → bp| NO-CMDLINE; and the command line is UNCHANGED after all three (no partial scribble). This is the classic-BIOS rescue technique — add init=/bin/bash at the firmware prompt — graded against a foreign oracle; whether the edit reaches a booted kernel's /proc/cmdline is Spike 7b's honest UNKNOWN (this lab's firmware does not boot a bzImage from a prompt edit)."
+    ;;
   initrd-swap)
     # UKI workbench Spike 9 (UKI_WORKBENCH_LAB_PLAN.md) — swap a UKI's WHOLE .initrd
     # for a known-good rescue initramfs, in place at the prompt. This is ASSEMBLY:
@@ -8781,5 +8954,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|initrd-swap|config-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|elf-gate|dict-budget|marker|elf-ladder|unix]" >&2; exit 1 ;;
 esac
