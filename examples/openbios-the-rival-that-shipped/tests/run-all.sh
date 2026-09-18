@@ -67,6 +67,7 @@ tracks=(
     test-smoke-cmdline-ptr.sh
     test-smoke-initrd-swap.sh
     test-smoke-config-edit.sh
+    test-smoke-uki-edit.sh
     test-smoke-elf-gate.sh
     test-smoke-dict-budget.sh
     test-smoke-marker.sh
