@@ -1254,6 +1254,31 @@ PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
 which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
 ≈ 60 s under KVM (measured 2026-09-03: 60.3 s wall, one boot, six acts).
 
+### The rescue showcase — break a boot, then rescue it (UKI Spike 11, in progress)
+
+`showcase-rescue.sh` deliberately breaks a boot and rescues it with the toolkit —
+no USB stick, no chroot — with **the negative control as the point**: the
+un-edited artifact is shown genuinely failing first. The **initrd** act is built
+and measured 2026-09-18 (config/cmdline acts are the remaining capstone work):
+
+```console
+$ ./showcase-rescue.sh initrd
+  - initrd BREAK: boot with no initrd -> expect a VFS root-fs panic
+  - initrd BREAK failed as designed: Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)
+  - initrd RESCUE: same kernel + the good initrd on the boot line -> expect u-root
+  - initrd RESCUE reached the u-root shell
+PASS: Spike 11 (rescue capstone), initrd path: the negative control fired …
+```
+
+The break boots the bzImage with **no `initrd=`** on the line, so the kernel has
+no initramfs and no root device and panics with its named signature; the rescue
+adds `initrd=/ide@1/cdrom@0:\u` (the boot-**line** seam — Spike 7b showed a
+firmware-*prompt* edit of the live `cmd_line_ptr` does not reach the kernel) and
+reaches `Welcome to u-root!`. ≈ 15 s under KVM. **The negative control was watched
+to bite:** giving the *break* boot the good initrd (so it no longer panics) makes
+the act wait out its deadline and `FAIL: … the negative control did not fire`
+(measured, 90 s), so a rescue on a boot that would have come up anyway cannot pass.
+
 ## 5. The firmware as a Unix process (no QEMU)
 
 ```console
