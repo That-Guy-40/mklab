@@ -63,6 +63,7 @@ tracks=(
     test-smoke-pe.sh
     test-smoke-bootparams.sh
     test-smoke-uki.sh
+    test-smoke-cmdline-edit.sh
     test-smoke-elf-gate.sh
     test-smoke-dict-budget.sh
     test-smoke-marker.sh
