@@ -64,6 +64,7 @@ tracks=(
     test-smoke-bootparams.sh
     test-smoke-uki.sh
     test-smoke-cmdline-edit.sh
+    test-smoke-cmdline-ptr.sh
     test-smoke-initrd-swap.sh
     test-smoke-config-edit.sh
     test-smoke-elf-gate.sh
