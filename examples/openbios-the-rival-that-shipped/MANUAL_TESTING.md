@@ -1254,30 +1254,57 @@ PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
 which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
 ≈ 60 s under KVM (measured 2026-09-03: 60.3 s wall, one boot, six acts).
 
-### The rescue showcase — break a boot, then rescue it (UKI Spike 11, in progress)
+### The rescue showcase — break a boot, then rescue it (UKI Spike 11)
 
 `showcase-rescue.sh` deliberately breaks a boot and rescues it with the toolkit —
 no USB stick, no chroot — with **the negative control as the point**: the
-un-edited artifact is shown genuinely failing first. The **initrd** act is built
-and measured 2026-09-18 (config/cmdline acts are the remaining capstone work):
+un-edited artifact is shown genuinely failing first. **All three acts** are built
+and measured 2026-09-18 — initrd, config, and cmdline:
 
 ```console
-$ ./showcase-rescue.sh initrd
-  - initrd BREAK: boot with no initrd -> expect a VFS root-fs panic
+$ ./showcase-rescue.sh all
   - initrd BREAK failed as designed: Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)
-  - initrd RESCUE: same kernel + the good initrd on the boot line -> expect u-root
   - initrd RESCUE reached the u-root shell
-PASS: Spike 11 (rescue capstone), initrd path: the negative control fired …
+  - config BREAK failed as designed: RESCUE-FAIL: /etc/rescue.conf MODE=die is not runnable -- boot is blocked; fix the config
+  - config: firmware patched etc/rescue.conf in place (2126848 bytes, valid cpio); host confirms MODE=run
+  - config RESCUE reached the rescue shell (RESCUE-OK)
+PASS: Spike 11 (rescue capstone): every requested act broke a boot, watched it FAIL FIRST …
 ```
 
-The break boots the bzImage with **no `initrd=`** on the line, so the kernel has
-no initramfs and no root device and panics with its named signature; the rescue
-adds `initrd=/ide@1/cdrom@0:\u` (the boot-**line** seam — Spike 7b showed a
+**initrd** (~15 s): the break boots the bzImage with **no `initrd=`** on the line,
+so the kernel has no initramfs and no root device and panics; the rescue adds
+`initrd=/ide@1/cdrom@0:\u` (the boot-**line** seam — Spike 7b showed a
 firmware-*prompt* edit of the live `cmd_line_ptr` does not reach the kernel) and
-reaches `Welcome to u-root!`. ≈ 15 s under KVM. **The negative control was watched
-to bite:** giving the *break* boot the good initrd (so it no longer panics) makes
-the act wait out its deadline and `FAIL: … the negative control did not fire`
-(measured, 90 s), so a rescue on a boot that would have come up anyway cannot pass.
+reaches `Welcome to u-root!`. Its negative control was watched to bite: give the
+*break* boot the good initrd and the act waits out its deadline and `FAIL: … the
+negative control did not fire` (measured, 90 s).
+
+**config** (~15 s): a **real busybox initramfs** (not u-root — u-root reads no
+config, so nothing can be broken; see [`fixtures/rescue/build-rescue-initramfs.sh`](fixtures/rescue/build-rescue-initramfs.sh))
+whose `/init` sources `/etc/rescue.conf` and boots by what it reads. `MODE=die`
+hangs at `RESCUE-FAIL` (no shell); the **firmware** (`openbios-unix` +
+[`dsl/cpio-edit.fth`](dsl/cpio-edit.fth)) then patches `MODE=die`→`MODE=run` **in
+place, same length** inside the 2.1 MB initramfs (`cpio-patch` refuses a length
+change), host `cpio` confirms the edit is real and the archive still valid, and the
+fixed image boots to `RESCUE-OK`. A **real distro initrd is not usable here** — it
+is compressed (AlmaLinux's pxeboot initrd is 212 MB of XZ), which an in-firmware
+raw-newc editor cannot walk and this firmware cannot boot; busybox is the real
+minimal-Linux init, uncompressed newc keeps it firmware-editable, and the 2.1 MB
+image fits the hosted arena (the `alloc-mem` ceiling is between 3 and 4 MiB).
+
+**cmdline** (~180 s, two OVMF boots): a **UKI** (systemd EFI stub + EFISTUB kernel +
+the same busybox initramfs, here reading `/proc/cmdline`) booted under genuine OVMF.
+The break UKI's `.cmdline` lacks `rescue_ok=1`, so `/init` hangs at `RESCUE-FAIL`;
+the shipped [`uki-edit.sh`](uki-edit.sh) then **grows** `.cmdline` to add it —
+rebuilding with `ukify` so the section's **VirtualSize is bumped** (Q5: ukify leaves
+no slack, so a grown command line needs the header bumped, which `objcopy
+--update-section` would *not* do), a foreign `objcopy` confirms `rescue_ok=1` and the
+`.cmdline` grew (measured 13→25 bytes), and the grown UKI boots to `RESCUE-OK`. The
+edit is the **persisted host tool** (Spike 8) rather than in-firmware `pe-edit.fth`
+(Spike 6, proven small-scale) because a bootable UKI carries a ~15 MB kernel and
+exceeds the firmware arena — the same honest split Spike 7b named for the classic
+kernel. Needs an EFISTUB kernel (`linuxboot-uefi-kexec/fetch-kernel.sh`, or
+`KERNEL_EFI=`); the openbios `payload-bzImage` is a bare bzImage and SKIPs by name.
 
 ## 5. The firmware as a Unix process (no QEMU)
 

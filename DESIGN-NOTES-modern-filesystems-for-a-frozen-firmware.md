@@ -708,6 +708,61 @@ store **from the table** per door rather than from a sentence. The control is th
 row: a store-tiers run in which the static buffer *passes* a durability check is a
 broken instrument.
 
+### 2.6 The endgame — a SAME-LENGTH in-place file write on a block filesystem
+
+**This is why the read seams above are worth building: to turn the toolkit's
+readers AND writers onto files that live in a real block filesystem, and modify
+them in place.** Everything the rescue capstone (UKI Spike 11) does today happens
+one layer up — it edits a config inside a *cpio* (`cpio-edit.fth`) or a section
+inside a *PE* (`pe-edit.fth`). The container is an archive delivered whole over a
+CD. The endgame is the same edit against a file that lives in ext4/FAT on a block
+device — *"fix the broken `/etc/fstab` on the actual root, at the firmware prompt,
+without a USB stick."*
+
+**The path is three pieces already named in this repo, composed:**
+1. **A read shim (§2.1/2.1a/2.1b) that can report a file's DATA BLOCKS**, not just
+   stream its bytes — the LBAs on the parent device where the file's content sits.
+   GRUB 2's and U-Boot's readers already walk the extent/FAT chain to those blocks
+   to read them; exposing them (a `blocks-of` method beside `read`) is a small
+   addition to the shim, not a new driver.
+2. **The existing SAME-LENGTH editors** (`cpio-edit.fth`'s `cpio-patch`,
+   `pe-edit.fth`) — overwrite a region with exactly its own length, refusing a
+   length change BY NAME. That constraint, built for the archive layer, is what
+   makes this tractable on a filesystem.
+3. **The block-device WRITE seam** the persistence tracks already exercise (IDE
+   sectors, CFI flash, the NVDIMM — §2.5's stores) — write the file's own data
+   blocks back.
+
+**Why SAME-LENGTH is the whole trick, and the honest boundary against §5's excluded
+writer.** A same-length overwrite of a file's existing data blocks touches **no
+filesystem metadata** — not the inode size, not the extent tree or FAT chain, not
+the block/inode bitmaps, not the free count. It writes the very sectors the read
+shim already located, in place. So it needs none of the allocation, truncation,
+journaling or directory-mutation machinery a general filesystem writer is — the
+thing §5 rightly excludes as *"a wrong write is the `dd`."* It is the one write a
+frozen firmware can make to a modern filesystem **safely and without a writer**,
+because it is byte-for-byte the read path run backwards over blocks that are already
+allocated to that file. The classic rescues fit it exactly: comment a line with `#`,
+flip `ro`→`rw`, blank a UUID, `MODE=die`→`MODE=run` — all same-length.
+
+- **Scope, stated as tightly as the read plan's.** Same length only; a length
+  change is refused BY NAME and is the general-writer lab, not this. No create, no
+  delete, no rename, no grow, no journal replay. On a journaled fs the write is to
+  the data blocks only, so it is correct for a filesystem quiesced/unmounted (the
+  firmware-prompt case) — a mounted, dirty fs is out of scope and said so.
+- **Grading (the repo's rule — assert the OUTCOME).** After the in-place write,
+  **mount the image on the host and read the file back** (`grub-fstest cp`, or a
+  loopback mount) — the new bytes are there, same length, and `fsck` reports the
+  filesystem **clean** (the metadata was not touched — the proof that this is not a
+  `dd`). The negative control: a length-changing edit is refused before any sector
+  is written, and `fsck` on the untouched image is clean.
+- **Track `fs-edit-inplace`** (a follow-on to `fs-combo`/`fs-tiers`, once a read
+  shim lands): break a config on an ext4 image, `blocks-of` it through the shim,
+  `cpio-patch`-style same-length overwrite through the block-write seam, `fsck`
+  clean + host reads the fix, then **boot it** — the UKI Spike 11 config act, moved
+  from a cpio to a real root filesystem, which is the sentence this whole note
+  exists to reach.
+
 ## 3. Grading, per this repo's rules
 
 - **The shim is the only new code, so the shim gets the sharpest oracle.** For
@@ -768,9 +823,14 @@ broken instrument.
 
 ## 5. What this is NOT (scope guards)
 
-- **Not a write path.** Every route is read-only. `write-file` on unix and the pmem
-  seam exist for authoring; a filesystem *writer* in firmware is a different lab
-  with a different risk (a wrong write is the `dd`).
+- **Not a GENERAL write path.** The read seams are read-only; a filesystem *writer*
+  in firmware — allocate, truncate, create, rename, journal — is a different lab
+  with a different risk (a wrong write is the `dd`), and stays excluded. **The one
+  exception, carved out in §2.6, is the SAME-LENGTH in-place file write** — a
+  byte-for-byte overwrite of a file's own already-allocated data blocks, touching no
+  metadata. That is the endgame this note exists to reach (turn the toolkit's
+  same-length editors onto files in a real filesystem), and it is precisely *not*
+  the general writer, because a length change is refused by name.
 - **Not a network stack.** `libsa` carries `nfs` and `tftp`; they are left out here
   on purpose — the netboot labs own that door.
 - **Not ZFS.** Neither GRUB 2's nor `libsa`'s ZFS reader comes along; the ZFS-boot

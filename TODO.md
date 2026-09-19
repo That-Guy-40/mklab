@@ -5984,6 +5984,21 @@ as the attested-boot plan.
 [`DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md`](DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md);
 this entry is the pointer. Start at its §0a.
 
+**The endgame, made explicit 2026-09-18 (§2.6): turn the toolkit's readers AND
+writers onto files that live in a block filesystem, and modify them IN PLACE.** The
+rescue capstone (UKI Spike 11) already edits a config inside a *cpio*
+(`cpio-edit.fth`) and a section inside a *PE* (`pe-edit.fth`) — the archive layer.
+The ultimate target is the same edit against a file on ext4/FAT: *fix the broken
+`/etc/fstab` on the actual root, at the firmware prompt.* The path composes three
+pieces this repo already has — **a read shim (§2.1) that reports a file's data
+blocks + the existing SAME-LENGTH editors + the block-device write seam (§2.5's
+stores)** — into a scoped **same-length in-place file write**. Same-length is the
+whole trick: a byte-for-byte overwrite of a file's own already-allocated blocks
+touches NO filesystem metadata, so it is the one write a frozen firmware can make to
+a modern filesystem safely and without a general writer — which §5 still rightly
+excludes. Track `fs-edit-inplace`; grade by `fsck` clean + a host read-back, then
+boot it.
+
 The question was whether GRUB 2's filesystem drivers could be lifted into OpenBIOS,
 OFW, or both. **The premise corrected first:** only OpenBIOS carries GRUB code —
 `fs/grubfs/` is GRUB **0.97**, the driver that revival bug 5 (no `tell`) and the clib

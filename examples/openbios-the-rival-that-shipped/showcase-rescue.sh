@@ -14,10 +14,13 @@
 #             (The classic-kernel rescue seam is the boot LINE — Spike 7b: an
 #             in-firmware prompt edit of the live cmd_line_ptr does not reach the
 #             kernel, so the boot line is what carries the rescue here.)
-#   config  — break: a bad line in a config FILE inside the initramfs; rescue:
-#             dsl/cpio-edit.fth fixes it in place (Spike 10).            [TODO]
-#   cmdline — break: a UKI whose .cmdline lacks the rescue param; rescue: grow
-#             .cmdline (bumping VirtualSize per Q5) under OVMF (Spike 6).  [TODO]
+#   config  — break: a bad line in a config FILE inside a real busybox initramfs
+#             hangs the boot; rescue: the firmware (openbios-unix + dsl/cpio-edit.fth)
+#             fixes it in place, same-length, and the fixed image boots (Spike 10).
+#   cmdline — break: a UKI whose .cmdline lacks the rescue param hangs under OVMF;
+#             rescue: uki-edit.sh GROWS .cmdline (VirtualSize bumped per Q5) and the
+#             rescued UKI boots (Spike 6/8; host tool because a bootable UKI exceeds
+#             the firmware arena — in-firmware pe-edit.fth is proven small-scale).
 #
 # Exit: 0 PASS / 1 FAIL / 77 SKIP. Env: OPENBIOS_WORKDIR, KERNEL, INITRD.
 set -u
@@ -28,8 +31,12 @@ showcase-rescue.sh [ACT]   UKI workbench Spike 11 — break a boot, then rescue 
 ACT (default all):
   initrd    no-initrd boot panics (VFS: Unable to mount root fs); the good
             initrd on the boot line rescues it to a u-root shell
-  config    a broken config inside the initramfs, fixed in place (Spike 10) [TODO]
-  cmdline   a UKI .cmdline grown to add a rescue param under OVMF (Spike 6) [TODO]
+  config    a broken config inside a REAL busybox initramfs (MODE=die) hangs the
+            boot; the firmware (openbios-unix + dsl/cpio-edit.fth) fixes it in
+            place same-length and the rescued image boots to a shell (Spike 10)
+  cmdline   a UKI whose .cmdline lacks a rescue param hangs under OVMF; uki-edit.sh
+            GROWS .cmdline to add it (VirtualSize bumped per Q5) and the rescued UKI
+            boots to a shell (Spike 6/8)
   all       every implemented act; the run FAILS if any break did NOT fail
             first, or any rescue did not reach its shell
 
@@ -48,6 +55,13 @@ REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 KERNEL="${KERNEL:-$HOME/linuxboot-lab/payload-bzImage}"
 INITRD="${INITRD:-$HOME/linuxboot-lab/uroot.cpio}"
+# The cmdline act boots a UKI under OVMF, which needs an EFISTUB kernel (a PE, MZ
+# at offset 0) — the AlmaLinux pxeboot vmlinuz the linuxboot lab fetches. The
+# openbios `payload-bzImage` above is a bare bzImage and will NOT do for a UKI.
+KERNEL_EFI="${KERNEL_EFI:-$HOME/linuxboot-lab/vmlinuz}"
+STUB="${STUB:-/usr/lib/systemd/boot/efi/linuxx64.efi.stub}"
+OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}"
+OVMF_VARS="${OVMF_VARS:-/usr/share/OVMF/OVMF_VARS_4M.fd}"
 ACT="${1:-all}"
 
 pass() { echo "PASS: $*"; exit 0; }
@@ -68,22 +82,27 @@ DICT="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
 
 ACCEL=$([[ -w /dev/kvm ]] && echo kvm || echo tcg)
 
-# ── shared: one ISO with the kernel (v) and the good initrd (u), SHORT names so
-#    the boot line stays under the firmware's ~75-char input buffer (POC-4). ──
 RWD="$WORKDIR/rescue"; rm -rf "$RWD"; mkdir -p "$RWD/stage"
-cp "$KERNEL" "$RWD/stage/V"; cp "$INITRD" "$RWD/stage/U"
-ISO="$RWD/rescue.iso"
-genisoimage -quiet -o "$ISO" -V RESCUE -r -J "$RWD/stage" 2>/dev/null || fail "genisoimage failed building $ISO"
 
-# boot_openbios <log> <timeout> <boot-line> <expect...> : boot the x86 firmware,
-# type ONE boot line at the 0 > prompt, and wait for the expect markers in order.
-# Returns the driver's rc (0 = all markers seen, 124 = timeout). Socket lives in
-# $WORKDIR (short path — AF_UNIX caps at ~108 chars and the scratch tree is longer).
+# stage_iso <initrd-file> <iso-out> — a bootable CD with the kernel at `v` and the
+# given initrd at `u`, SHORT names so the boot line stays under the firmware's
+# ~75-char input buffer (POC-4).
+stage_iso() {
+    local initrd="$1" iso="$2" sdir; sdir="$(mktemp -d "$RWD/stage.XXXX")"
+    cp "$KERNEL" "$sdir/V"; cp "$initrd" "$sdir/U"
+    genisoimage -quiet -o "$iso" -V RESCUE -r -J "$sdir" 2>/dev/null || fail "genisoimage failed building $iso"
+}
+
+# boot_openbios <iso> <log> <timeout> <boot-line> <expect...> : boot the x86
+# firmware from <iso>, type ONE boot line at the 0 > prompt, and wait for the
+# expect markers in order. Returns the driver's rc (0 = all markers seen, 124 =
+# timeout). Socket lives in $WORKDIR (short path — AF_UNIX caps at ~108 chars and
+# the scratch tree is longer).
 boot_openbios() {
-    local log="$1" secs="$2" bl="$3"; shift 3
+    local iso="$1" log="$2" secs="$3" bl="$4"; shift 4
     local sock="$WORKDIR/rescue.sock"; rm -f "$sock" "$log"
     qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DICT" \
-        -cdrom "$ISO" -display none -serial "unix:$sock,server=on" -no-reboot >/dev/null 2>&1 &
+        -cdrom "$iso" -display none -serial "unix:$sock,server=on" -no-reboot >/dev/null 2>&1 &
     local qpid=$!
     local args=(python3 "$REPO/tools/drive-serial-repl.py" "$sock" "$log" --timeout "$secs"
                 --expect "0 > " --send "$bl"$'\r')
@@ -91,6 +110,33 @@ boot_openbios() {
     "${args[@]}"; local rc=$?
     kill "$qpid" 2>/dev/null   # by PID, never by pattern
     return $rc
+}
+
+# the good u-root initrd on a CD, for the initrd act's rescue leg
+ISO="$RWD/rescue.iso"; stage_iso "$INITRD" "$ISO"
+
+# uki_esp <uki.efi> <esp.img> — a FAT ESP with the UKI at the removable-media
+# auto-boot path, for booting under OVMF.
+uki_esp() {
+    local uki="$1" esp="$2"
+    rm -f "$esp"; truncate -s 96M "$esp"; mkfs.vfat -n RESCUE "$esp" >/dev/null
+    mmd -i "$esp" ::/EFI ::/EFI/BOOT; mcopy -i "$esp" "$uki" ::/EFI/BOOT/BOOTX64.EFI
+}
+
+# boot_ovmf <esp> <log> <timeout> <expect...> — boot a UKI ESP under genuine OVMF
+# (no -kernel/-initrd; the firmware finds \EFI\BOOT\BOOTX64.EFI), serial to <log>.
+# Returns 0 if all markers were seen before the deadline. A per-run copy of the
+# OVMF VARS pflash keeps runs independent.
+boot_ovmf() {
+    local esp="$1" log="$2" secs="$3"; shift 3
+    local vars; vars="$(mktemp "$RWD/vars.XXXX.fd")"; cp "$OVMF_VARS" "$vars"; rm -f "$log"
+    timeout "$secs" qemu-system-x86_64 -machine "q35,accel=$ACCEL" -cpu host -m 3072 \
+        -drive if=pflash,format=raw,unit=0,readonly=on,file="$OVMF_CODE" \
+        -drive if=pflash,format=raw,unit=1,file="$vars" \
+        -drive file="$esp",format=raw,if=virtio \
+        -display none -serial "file:$log" >/dev/null 2>&1 || true
+    local e; for e in "$@"; do grep -qaF "$e" "$log" || return 1; done
+    return 0
 }
 
 # ── ACT: initrd ──────────────────────────────────────────────────────────────
@@ -103,7 +149,7 @@ act_initrd() {
     note "initrd BREAK: boot with no initrd -> expect a VFS root-fs panic"
     # \\v: the driver decodes --send with unicode_escape, so the single backslash
     # of the device path must be doubled (see showcase-rival-boots-linux.sh).
-    if boot_openbios "$blog" 120 'boot /ide@1/cdrom@0:\\v console=ttyS0' \
+    if boot_openbios "$ISO" "$blog" 120 'boot /ide@1/cdrom@0:\\v console=ttyS0' \
          'Loading kernel... ok' 'not syncing'; then
         grep -qaF 'Unable to mount root fs' "$blog" \
             || fail "initrd: the broken boot panicked but not with the expected root-fs signature — see $blog"
@@ -112,7 +158,7 @@ act_initrd() {
         fail "initrd: the no-initrd boot did NOT reach its named panic (VFS: Unable to mount root fs) within the deadline — the negative control did not fire, so a rescue below would prove nothing — see $blog"
     fi
     note "initrd RESCUE: same kernel + the good initrd on the boot line -> expect u-root"
-    if boot_openbios "$rlog" 180 'boot /ide@1/cdrom@0:\\v console=ttyS0 initrd=/ide@1/cdrom@0:\\u' \
+    if boot_openbios "$ISO" "$rlog" 180 'boot /ide@1/cdrom@0:\\v console=ttyS0 initrd=/ide@1/cdrom@0:\\u' \
          'Loading kernel... ok' 'Loading initrd... ok' 'Welcome to u-root'; then
         note "initrd RESCUE reached the u-root shell"
     else
@@ -121,17 +167,174 @@ act_initrd() {
     return 0
 }
 
+# ── ACT: config ───────────────────────────────────────────────────────────────
+# A REAL busybox initramfs (not u-root — u-root reads no config, so nothing can be
+# broken) whose /init sources /etc/rescue.conf and boots differently by what it
+# reads. BREAK ships MODE=die and the boot HANGS after printing RESCUE-FAIL, never
+# reaching a shell. The RESCUE is the FIRMWARE editing the config INSIDE the
+# initramfs: openbios-unix loads the cpio and dsl/cpio-edit.fth's cpio-patch
+# overwrites `MODE=die\n` -> `MODE=run\n` (same 9 bytes — it refuses a length
+# change), writing a fixed image the host re-reads and the firmware then boots to
+# RESCUE-OK. This is Spike 10's in-place edit, carried through to a real boot.
+#
+# WHY A HOST-BUILT busybox INITRAMFS AND NOT A DISTRO INITRD: a real distro initrd
+# is compressed (AlmaLinux's pxeboot initrd is 212 MB of XZ) — an in-firmware
+# raw-newc editor cannot walk it and this firmware cannot boot it. busybox is the
+# real minimal-Linux init (dracut/mkinitramfs build on it); uncompressed newc keeps
+# it firmware-editable. Measured: the 2.1 MB image fits the hosted arena (alloc-mem
+# ceiling is between 3 and 4 MiB), where a distro initrd never would.
+act_config() {
+    command -v busybox >/dev/null || skip "busybox not installed — the config act needs a static busybox for a real config-reading initramfs"
+    command -v fakeroot >/dev/null || skip "fakeroot not installed — needed to author /dev/console in the initramfs without root"
+    local UBIN="$WORKDIR/openbios/obj-amd64/openbios-unix" UDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    [[ -x "$UBIN" && -f "$UDICT" ]] || skip "missing $UBIN — run ./build-openbios.sh amd64 first (the hosted firmware performs the config edit)"
+    local BUILDER="$HERE/fixtures/rescue/build-rescue-initramfs.sh"
+    [[ -x "$BUILDER" ]] || fail "config: missing $BUILDER — this act stages the SHIPPED fixture builder"
+    local f; for f in struct cpio cpio-edit; do [[ -f "$HERE/dsl/$f.fth" ]] || fail "config: missing dsl/$f.fth — this act stages the SHIPPED readers"; done
+
+    local cwd="$RWD/config"; rm -rf "$cwd"; mkdir -p "$cwd"
+    note "config: building a REAL busybox initramfs whose /init reads /etc/rescue.conf (MODE=die, broken)"
+    "$BUILDER" die "$cwd/broken.cpio" >/dev/null || fail "config: could not build the broken initramfs"
+
+    # BREAK: the broken config must hang the boot, printing its named failure and
+    # NEVER reaching the shell — the negative control.
+    note "config BREAK: boot the broken initramfs -> expect RESCUE-FAIL, no shell"
+    local biso="$cwd/broken.iso"; stage_iso "$cwd/broken.cpio" "$biso"
+    if boot_openbios "$biso" "$cwd/break.log" 120 'boot /ide@1/cdrom@0:\\v console=ttyS0 initrd=/ide@1/cdrom@0:\\u' \
+         'Loading initrd... ok' 'RESCUE-FAIL'; then
+        grep -qaF 'RESCUE-OK' "$cwd/break.log" \
+            && fail "config: the broken initramfs reached RESCUE-OK — the bad config did NOT block boot, so the negative control is void — see $cwd/break.log"
+        note "config BREAK failed as designed: $(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$cwd/break.log" | tr -d '\r' | grep -aoE 'RESCUE-FAIL:[^"]*' | head -1)"
+    else
+        fail "config: the broken initramfs did not print its RESCUE-FAIL signature within the deadline — the negative control did not fire — see $cwd/break.log"
+    fi
+
+    # RESCUE: the FIRMWARE fixes the config in place. Load the cpio into a 3 MiB
+    # arena buffer (the 2.1 MiB image fits; 4 MiB would exceed alloc-mem), cpio-find
+    # the member, cpio-patch it SAME-LENGTH, write the fixed image out.
+    note "config RESCUE: openbios-unix + dsl/cpio-edit.fth patch MODE=die -> MODE=run in place"
+    local fwiso="$cwd/fw.iso" fwstage; fwstage="$(mktemp -d "$RWD/fw.XXXX")"
+    cp "$HERE/dsl/struct.fth" "$fwstage/STRUCT.FTH"; cp "$HERE/dsl/cpio.fth" "$fwstage/CPIO.FTH"
+    cp "$HERE/dsl/cpio-edit.fth" "$fwstage/CPIOEDIT.FTH"; cp "$cwd/broken.cpio" "$fwstage/BROKEN.CPIO"
+    genisoimage -quiet -o "$fwiso" -V FW -r -J "$fwstage" 2>/dev/null || fail "config: genisoimage failed staging the edit ISO"
+    local edcwd="$cwd/edit"; rm -rf "$edcwd"; mkdir -p "$edcwd"
+    local edlog="$cwd/edit.log"
+    ( cd "$edcwd" && printf '%s\n' \
+        '300000 alloc-mem value bb' 'bb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH'   'load-base load-size evaluate' \
+        'load hd:\CPIO.FTH'     'load-base load-size evaluate' \
+        'load hd:\CPIOEDIT.FTH' 'load-base load-size evaluate' \
+        ': mkrun s" MODE=run" pad swap move 0a pad 8 + c! pad 9 ;' \
+        'load hd:\BROKEN.CPIO' \
+        'load-base load-size 40 s" etc/rescue.conf" mkrun cpio-patch ." PATCH=" . cr' \
+        'load-base load-size s" fixed.cpio" write-file ." WROTE=" . cr' \
+        'bye' | "$UBIN" -f "$fwiso" "$UDICT" 2>&1 | tr -d '\r' ) > "$edlog" 2>&1
+    grep -qaE 'PATCH=-1' "$edlog" \
+        || fail "config: cpio-edit.fth's cpio-patch did not report success (PATCH=-1) — $(grep -aoE 'cpio\| [A-Z-]+|panic[^ ]*' "$edlog" | head -1) — see $edlog"
+    [[ -f "$edcwd/fixed.cpio" ]] || fail "config: the firmware did not write fixed.cpio (write-file failed) — see $edlog"
+
+    # THE EDIT IS REAL OUTSIDE THE FIRMWARE'S CLAIM: host cpio extracts the member.
+    local got; got="$(cpio -i --to-stdout etc/rescue.conf < "$edcwd/fixed.cpio" 2>/dev/null | tr -d '\n')"
+    [[ "$got" == "MODE=run" ]] \
+        || fail "config: the firmware said it patched, but host cpio reads etc/rescue.conf as '$got', not 'MODE=run' — the edit is not real on disk — see $edlog"
+    cpio -it < "$edcwd/fixed.cpio" >/dev/null 2>&1 \
+        || fail "config: the firmware-written fixed.cpio is not a valid cpio — the patch corrupted the archive"
+    note "config: firmware patched etc/rescue.conf in place ($(stat -c%s "$edcwd/fixed.cpio") bytes, valid cpio); host confirms MODE=run"
+
+    # RESCUE boot: the firmware-fixed initramfs must now reach the shell.
+    note "config RESCUE: boot the firmware-fixed initramfs -> expect RESCUE-OK"
+    local riso="$cwd/fixed.iso"; stage_iso "$edcwd/fixed.cpio" "$riso"
+    if boot_openbios "$riso" "$cwd/rescue.log" 120 'boot /ide@1/cdrom@0:\\v console=ttyS0 initrd=/ide@1/cdrom@0:\\u' \
+         'Loading initrd... ok' 'RESCUE-OK'; then
+        note "config RESCUE reached the rescue shell (RESCUE-OK)"
+    else
+        fail "config: the firmware-fixed initramfs did not reach RESCUE-OK — the in-place config edit did not rescue the boot — see $cwd/rescue.log"
+    fi
+    return 0
+}
+
+# ── ACT: cmdline ────────────────────────────────────────────────────────────────
+# A UKI (systemd EFI stub + kernel + initramfs + .cmdline), booted under genuine
+# OVMF. The initramfs /init reads the KERNEL COMMAND LINE for a rescue token, so
+# the UKI's .cmdline section gates the boot: BREAK ships a .cmdline WITHOUT
+# rescue_ok=1 and the boot hangs at RESCUE-FAIL; the RESCUE GROWS .cmdline to add
+# it. Because ukify emits .cmdline with VirtualSize == the exact string length and
+# no slack (Q5, measured), growing needs the section's VirtualSize bumped — which
+# the SHIPPED uki-edit.sh does by rebuilding with ukify (validated read-back), the
+# persisted host deliverable a UEFI x86 box uses.
+#
+# WHY THE HOST TOOL AND NOT IN-FIRMWARE pe-edit.fth HERE: a bootable UKI carries a
+# real EFISTUB kernel (~15 MB), and the hosted firmware's arena tops out between 3
+# and 4 MiB (measured, config act), so openbios-unix cannot hold a bootable UKI to
+# edit it. pe-edit.fth's in-firmware .cmdline grow is proven at small scale by the
+# cmdline-edit track (Spike 6); the persisted host tool is the rescue form for a
+# real UKI (Spike 8), the same honest split Spike 7b named for the classic kernel.
+act_cmdline() {
+    command -v ukify >/dev/null || skip "ukify not installed — needed to build the UKI (systemd-ukify)"
+    command -v mkfs.vfat >/dev/null && command -v mmd >/dev/null || skip "mtools/mkfs.vfat not installed — needed to build the ESP"
+    command -v busybox >/dev/null || skip "busybox not installed — the cmdline act needs a static busybox initramfs"
+    command -v fakeroot >/dev/null || skip "fakeroot not installed — needed to author /dev/console without root"
+    [[ -f "$STUB" ]] || skip "no systemd EFI stub at $STUB — install systemd-boot-efi"
+    [[ -f "$OVMF_CODE" && -f "$OVMF_VARS" ]] || skip "no OVMF firmware at $OVMF_CODE — install ovmf"
+    [[ -f "$KERNEL_EFI" ]] || skip "no EFISTUB kernel at $KERNEL_EFI — run linuxboot-uefi-kexec/fetch-kernel.sh (set KERNEL_EFI= to point elsewhere); the openbios payload-bzImage is a bare bzImage and cannot be a UKI"
+    { [[ "$(od -An -tx1 -N2 "$KERNEL_EFI" | tr -d ' ')" == 4d5a ]]; } \
+        || skip "$KERNEL_EFI is not a PE (no MZ) — a UKI needs an EFISTUB (CONFIG_EFI_STUB) kernel"
+    local UKIEDIT="$HERE/uki-edit.sh"
+    [[ -x "$UKIEDIT" ]] || fail "cmdline: missing $UKIEDIT — this act uses the SHIPPED persisted rescue tool"
+    local BUILDER="$HERE/fixtures/rescue/build-rescue-initramfs.sh"
+    [[ -x "$BUILDER" ]] || fail "cmdline: missing $BUILDER"
+
+    local cwd="$RWD/cmdline"; rm -rf "$cwd"; mkdir -p "$cwd"
+    note "cmdline: building a busybox initramfs whose /init reads /proc/cmdline for rescue_ok=1"
+    "$BUILDER" cmdline "$cwd/init.cpio" >/dev/null || fail "cmdline: could not build the cmdline-gated initramfs"
+    printf 'NAME="Lab UKI"\nID=lab-rescue\n' > "$cwd/osrel.txt"
+
+    # BREAK: a UKI whose .cmdline lacks the rescue token -> hangs at RESCUE-FAIL.
+    note "cmdline BREAK: build a UKI with .cmdline='console=ttyS0' (no rescue_ok=1) -> expect RESCUE-FAIL, no shell"
+    ukify build --linux="$KERNEL_EFI" --initrd="$cwd/init.cpio" --cmdline="console=ttyS0" \
+        --os-release="@$cwd/osrel.txt" --stub="$STUB" --output="$cwd/broken.efi" >/dev/null 2>&1 \
+        || fail "cmdline: ukify failed building the broken UKI"
+    uki_esp "$cwd/broken.efi" "$cwd/broken-esp.img"
+    if boot_ovmf "$cwd/broken-esp.img" "$cwd/break.log" 90 'RESCUE-FAIL'; then
+        grep -qaF 'RESCUE-OK' "$cwd/break.log" \
+            && fail "cmdline: the broken UKI reached RESCUE-OK — the missing rescue param did NOT block boot, so the negative control is void — see $cwd/break.log"
+        note "cmdline BREAK failed as designed: $(sed 's/\x1b\[[0-9;?]*[a-zA-Z]//g' "$cwd/break.log" | tr -d '\r' | grep -aoE 'RESCUE-FAIL:[^"]*' | head -1)"
+    else
+        fail "cmdline: the broken UKI did not print RESCUE-FAIL within the deadline — the negative control did not fire — see $cwd/break.log"
+    fi
+
+    # RESCUE: uki-edit.sh GROWS .cmdline to add the token (bumping VirtualSize).
+    note "cmdline RESCUE: uki-edit.sh grows .cmdline to add rescue_ok=1 (VirtualSize bumped per Q5)"
+    "$UKIEDIT" "$cwd/broken.efi" "$cwd/fixed.efi" "console=ttyS0 rescue_ok=1" > "$cwd/edit.log" 2>&1 \
+        || fail "cmdline: uki-edit.sh refused or failed to grow .cmdline — $(grep -aoE 'uki-edit\| [A-Z-]+' "$cwd/edit.log" | head -1) — see $cwd/edit.log"
+    # the grow is real and it is a GROW: the fixed .cmdline VirtualSize > the broken one
+    local vb vf
+    vb=$(objdump -h "$cwd/broken.efi" | awk '/\.cmdline/{print strtonum("0x"$3)}')
+    vf=$(objdump -h "$cwd/fixed.efi"  | awk '/\.cmdline/{print strtonum("0x"$3)}')
+    [[ -n "$vb" && -n "$vf" && "$vf" -gt "$vb" ]] \
+        || fail "cmdline: the rescued UKI's .cmdline VirtualSize ($vf) is not larger than the broken one's ($vb) — the section did not grow, so this is not the Q5 case being exercised"
+    objcopy -O binary --only-section=.cmdline "$cwd/fixed.efi" /dev/stdout 2>/dev/null | grep -qaF 'rescue_ok=1' \
+        || fail "cmdline: the rescued UKI's .cmdline does not contain rescue_ok=1 under a foreign objcopy — the edit is not real"
+    note "cmdline: .cmdline grown $vb -> $vf bytes, foreign objcopy confirms rescue_ok=1"
+
+    note "cmdline RESCUE: boot the grown UKI under OVMF -> expect RESCUE-OK"
+    uki_esp "$cwd/fixed.efi" "$cwd/fixed-esp.img"
+    if boot_ovmf "$cwd/fixed-esp.img" "$cwd/rescue.log" 90 'RESCUE-OK'; then
+        note "cmdline RESCUE reached the rescue shell (RESCUE-OK)"
+    else
+        fail "cmdline: the grown UKI did not reach RESCUE-OK under OVMF — the .cmdline rescue did not take — see $cwd/rescue.log"
+    fi
+    return 0
+}
+
 ran=0
 case "$ACT" in
   initrd) act_initrd; ran=1 ;;
-  config) skip "the config act (Spike 10, dsl/cpio-edit.fth) is not built yet — run 'initrd' for the implemented pair" ;;
-  cmdline) skip "the cmdline act (Spike 6 under OVMF) is not built yet — run 'initrd' for the implemented pair" ;;
-  all)
-    act_initrd; ran=1
-    note "config and cmdline acts are not built yet (Spikes 10 / 6) — this run covers the initrd pair only"
-    ;;
+  config) act_config; ran=1 ;;
+  cmdline) act_cmdline; ran=1 ;;
+  all) act_initrd; act_config; act_cmdline; ran=1 ;;
   *) echo "usage: $0 [initrd|config|cmdline|all]" >&2; exit 1 ;;
 esac
 
 (( ran )) || skip "no act ran"
-pass "Spike 11 (rescue capstone), initrd path: the negative control fired — a no-initrd boot panicked with 'VFS: Unable to mount root fs on unknown-block(0,0)' — and supplying the good initrd on the boot line then reached the 'Welcome to u-root!' rescue shell. The un-edited artifact failed FIRST, so the rescue is what came up, not a boot that would have anyway. config (Spike 10) and cmdline (Spike 6) acts are the remaining build"
+pass "Spike 11 (rescue capstone): every requested act broke a boot, watched it FAIL FIRST with its named signature, then rescued it. initrd — a no-initrd boot panicked 'VFS: Unable to mount root fs on unknown-block(0,0)' and the good initrd on the boot line reached 'Welcome to u-root!'. config — a real busybox initramfs whose /init reads /etc/rescue.conf hung at 'RESCUE-FAIL' (MODE=die), the firmware (openbios-unix + dsl/cpio-edit.fth) patched it 'MODE=die'->'MODE=run' in place same-length (host cpio confirms the edit is real, archive still valid), and the fixed image booted to 'RESCUE-OK'. The un-edited artifact failed first in every act, so the rescue is what came up, not a boot that would have anyway. cmdline — a UKI whose .cmdline lacked rescue_ok=1 hung at RESCUE-FAIL under OVMF, uki-edit.sh grew .cmdline to add it (VirtualSize bumped per Q5; foreign objcopy confirms), and the grown UKI booted to RESCUE-OK. All three rescue paths — command line, config-in-initramfs, and initrd — now break, fail first, and rescue"
