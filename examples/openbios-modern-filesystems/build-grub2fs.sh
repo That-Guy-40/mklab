@@ -29,7 +29,8 @@ COPY="$BUILDROOT/openbios"
 [[ -d "$TREE" ]] || { echo "no OpenBIOS tree at $TREE — run openbios-the-rival-that-shipped/build-openbios.sh unix first" >&2; exit 2; }
 command -v podman >/dev/null || { echo "podman not found (toolchain lives in $IMG)" >&2; exit 2; }
 for f in grub2fs/grub2fs_fs.c grub2fs/grub2fs_glue.c grub2fs/grub2fs.h grub2fs/build.xml \
-         upstream-grub/ext2.c upstream-grub/fshelp.c; do
+         upstream-grub/ext2.c upstream-grub/fshelp.c \
+         upstream-grub/iso9660.c upstream-grub/fat.h upstream-grub/exfat.h; do
   [[ -f "$HERE/$f" ]] || { echo "missing shipped file $HERE/$f" >&2; exit 2; }
 done
 
@@ -48,8 +49,11 @@ fi
 mkdir -p "$COPY/fs/grub2fs" "$COPY/include/grub"
 cp "$HERE/grub2fs/grub2fs_fs.c" "$HERE/grub2fs/grub2fs_glue.c" \
    "$HERE/grub2fs/grub2fs.h" "$HERE/grub2fs/build.xml" "$COPY/fs/grub2fs/"
-cp "$HERE/upstream-grub/ext2.c" "$HERE/upstream-grub/fshelp.c" "$COPY/fs/grub2fs/"
+cp "$HERE/upstream-grub/ext2.c" "$HERE/upstream-grub/fshelp.c" \
+   "$HERE/upstream-grub/fat.c" "$HERE/upstream-grub/iso9660.c" "$COPY/fs/grub2fs/"
 cp "$HERE"/grub2fs/grub/*.h "$COPY/include/grub/"
+# vendored GRUB headers (on-disk structs) also go in include/grub/
+cp "$HERE/upstream-grub/fat.h" "$HERE/upstream-grub/exfat.h" "$COPY/include/grub/"
 cd "$COPY"
 sed -i 's#<include href="grubfs/build.xml"/>#<include href="grubfs/build.xml"/>\n <include href="grub2fs/build.xml"/>#' fs/build.xml
 sed -i 's#<option name="CONFIG_GRUBFS" type="boolean" value="true"/>#<option name="CONFIG_GRUBFS" type="boolean" value="true"/>\n  <option name="CONFIG_FSYS_GRUB2FS" type="boolean" value="true"/>#' config/examples/amd64_config.xml
@@ -88,9 +92,11 @@ podman run --rm -v "$COPY:/src" --userns=keep-id -w /src "$IMG" \
 BIN="$COPY/obj-amd64/openbios-unix"
 [[ -f "$BIN" ]] || { echo "FAIL: openbios-unix was not produced" >&2; exit 1; }
 syms="$(nm "$BIN")"
-grep -qE 'grub2fs_init' <<<"$syms" || { echo "FAIL: grub2fs not linked into openbios-unix" >&2; exit 1; }
+for want in grub2fs_init grub_ext2_fs grub_fat_fs grub_iso9660_fs; do
+  grep -qE "$want" <<<"$syms" || { echo "FAIL: $want not linked into openbios-unix" >&2; exit 1; }
+done
 mkdir -p "$OUT"
 cp "$BIN" "$COPY/obj-amd64/openbios-unix.dict" "$OUT/"
 echo "grub2fs: OK — firmware at $OUT/openbios-unix (+ .dict). Shared tree untouched."
-grep -E 'grub2fs_init|grub_ext2_fs|grub_disk_read|grub_fs_register' <<<"$syms" || true
+grep -E 'grub2fs_init|grub_ext2_fs|grub_fat_fs|grub_iso9660_fs|grub_disk_read|grub_fs_register' <<<"$syms" || true
 # trap removes the throwaway copy.

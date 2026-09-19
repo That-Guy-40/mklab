@@ -85,4 +85,20 @@ static inline grub_uint64_t grub_swap_bytes64 (grub_uint64_t x)
 # define grub_be_to_cpu64(x) grub_swap_bytes64 (x)
 #endif
 
+/* ── unaligned accessors (POC-3: fat.c/iso9660.c read unaligned on-disk ints) ─
+ * Structs + get accessors copied from GRUB 2.12 grub/types.h; a packed 1-field
+ * struct is the portable "read a possibly-unaligned integer" idiom. */
+#define GRUB_PACKED __attribute__ ((packed))
+
+struct grub_unaligned_uint16 { grub_uint16_t val; } GRUB_PACKED;
+struct grub_unaligned_uint32 { grub_uint32_t val; } GRUB_PACKED;
+struct grub_unaligned_uint64 { grub_uint64_t val; } GRUB_PACKED;
+
+static inline grub_uint16_t grub_get_unaligned16 (const void *ptr)
+{ return ((const struct grub_unaligned_uint16 *) ptr)->val; }
+static inline grub_uint32_t grub_get_unaligned32 (const void *ptr)
+{ return ((const struct grub_unaligned_uint32 *) ptr)->val; }
+static inline grub_uint64_t grub_get_unaligned64 (const void *ptr)
+{ return ((const struct grub_unaligned_uint64 *) ptr)->val; }
+
 #endif /* GRUB2FS_GRUB_TYPES_H */

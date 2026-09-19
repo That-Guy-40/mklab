@@ -88,11 +88,20 @@ rescue lab's config act uses. With that, `load hd:\HELLO` reads into the buffer.
 and removes it on exit (even on failure) — the shared `openbios/` tree that the rival
 and habitats labs build from is never modified. Re-runnable and idempotent.
 
+## 3a. FAT + ISO 9660 (POC-3) — done, same `./smoke-grub2fs.sh`
+
+`smoke-grub2fs.sh` also authors a FAT image (`mkfs.vfat` + `mcopy`) and an ISO 9660
+image (`xorriso`/`genisoimage`), each holding `/HELLO`, and asserts `grub2fs` reads
+each **byte-for-byte equal to `grub-fstest`**. Unlike the ext2 arm there is no
+"grubfs can't read it" control — 0.97 `grubfs` reads basic FAT/ISO too — so the proof
+for these formats is the `grub-fstest` foreign oracle. This exercised the new
+**grub2fs heap** (`fat.c`/`iso9660.c` call `grub_realloc`/`grub_calloc`, which OpenBIOS
+cannot provide — `free()` is a no-op over a 128 KiB bump); grub2fs supplies a first-fit
+free-list over a 1 MiB static arena. Build determinism verified 5/5. Extra SKIP guards
+name `mkfs.vfat` / `mcopy` / an ISO tool if absent.
+
 ## 4. Pending (not yet built — UNKNOWN, by name)
 
-- **FAT + ISO 9660 (POC-3):** needs a `charset`/`datetime` shim **and a real heap** —
-  `fat.c`/`iso9660.c` call `grub_realloc`, which the ext2 slice does not; OpenBIOS has
-  no `realloc` and `free()` is a no-op over a 128 KiB bump allocator. *Pending.*
 - **`fs-combo` / `fs-tiers` / `store-tiers` / `fs-edit-inplace`** tracks. *Pending.*
 - Four-arch matrix (x86 / amd64 / ppc / sparc), the ppc row as the byte-order control.
   *Pending.* sun4m/sparc32's ROM ceiling was **not** measured (a sparc ceiling, out of

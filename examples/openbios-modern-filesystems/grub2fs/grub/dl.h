@@ -9,9 +9,13 @@
 
 typedef struct grub_dl *grub_dl_t;
 
+/* Emit a prototype before the definition so -Wmissing-prototypes (an error in
+ * OpenBIOS's build) is satisfied for every driver's grub_<name>_init/fini. */
 #define GRUB_MOD_INIT(name) \
+  void grub_##name##_init (grub_dl_t mod); \
   void grub_##name##_init (grub_dl_t mod __attribute__ ((unused)))
 #define GRUB_MOD_FINI(name) \
+  void grub_##name##_fini (grub_dl_t mod); \
   void grub_##name##_fini (grub_dl_t mod __attribute__ ((unused)))
 
 #define GRUB_MOD_LICENSE(license)

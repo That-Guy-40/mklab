@@ -47,29 +47,158 @@ void grub_error_push (void) { }
 int  grub_error_pop  (void) { return 0; }
 
 /************************************************************************/
-/*	heap  (OpenBIOS malloc; note: x86/amd64 malloc is a bump		*/
-/*	allocator with free() a no-op — see fs/../lib.c)		*/
+/*	heap — grub2fs owns its own							*/
+/*									*/
+/*	OpenBIOS's x86/amd64 malloc is a 128 KiB bump allocator with	*/
+/*	free() a no-op and NO realloc (see arch/{x86,amd64}/lib.c). The	*/
+/*	ext2 slice tolerated that (it never calls grub_realloc and its	*/
+/*	frees are few), but fat.c/iso9660.c call realloc/calloc and free	*/
+/*	heavily, so grub2fs needs a real allocator. This is a self-	*/
+/*	contained first-fit free-list with coalescing, over a static 1	*/
+/*	MiB arena — ample for FAT/ISO directory + FAT/extent-chain	*/
+/*	buffers. (On a real ROM this is 1 MiB of BSS to budget; the	*/
+/*	hosted openbios-unix used by the smoke pays nothing.)		*/
+/*									*/
+/*	EVERY grub_* allocator below (malloc/zalloc/realloc/calloc, and	*/
+/*	the string dups + xasprintf) draws from THIS heap, because		*/
+/*	grub_free is g2_free — mixing an OpenBIOS-malloc'd pointer with	*/
+/*	g2_free would misread the header and corrupt the arena.		*/
 /************************************************************************/
 
-void *grub_malloc  (grub_size_t size)             { return malloc (size); }
-void  grub_free    (void *ptr)                    { free (ptr); }
+#define G2_HEAP_SIZE (1u << 20)          /* 1 MiB */
+#define G2_ALIGN     16u
 
-/* OpenBIOS provides no realloc (and free() is a no-op on x86/amd64). The ext2
- * slice never calls grub_realloc (0 references in ext2.c/fshelp.c); FAT/ISO do,
- * and that is the point at which grub2fs needs a real heap of its own — see
- * PLAN.md POC-3. Kept minimal here: allocate fresh, no copy (unreachable on the
- * ext2 path, so it cannot silently corrupt a read this slice performs). */
-void *grub_realloc (void *ptr __attribute__ ((unused)), grub_size_t size)
+typedef struct g2_blk { grub_size_t size; struct g2_blk *next; int free; } g2_blk_t;
+
+/* header size, rounded up to G2_ALIGN so payloads are aligned */
+#define G2_HDR ((grub_size_t) ((sizeof (g2_blk_t) + G2_ALIGN - 1) & ~(grub_size_t) (G2_ALIGN - 1)))
+
+static unsigned char g2_heap[G2_HEAP_SIZE] __attribute__ ((aligned (16)));
+static g2_blk_t *g2_head;
+static int g2_inited;
+
+static grub_size_t g2_round (grub_size_t n)
+{ return (n + G2_ALIGN - 1) & ~(grub_size_t) (G2_ALIGN - 1); }
+
+static void g2_init (void)
 {
-	return malloc (size);
+	g2_head = (g2_blk_t *) g2_heap;
+	g2_head->size = G2_HEAP_SIZE - G2_HDR;
+	g2_head->next = NULL;
+	g2_head->free = 1;
+	g2_inited = 1;
 }
+
+static void *
+g2_malloc (grub_size_t size)
+{
+	g2_blk_t *b;
+	if (!g2_inited)
+		g2_init ();
+	if (size == 0)
+		size = 1;
+	size = g2_round (size);
+	for (b = g2_head; b; b = b->next) {
+		if (!b->free || b->size < size)
+			continue;
+		/* split when the remainder can hold a header + a min payload */
+		if (b->size >= size + G2_HDR + G2_ALIGN) {
+			g2_blk_t *nb = (g2_blk_t *) ((unsigned char *) b + G2_HDR + size);
+			nb->size = b->size - size - G2_HDR;
+			nb->next = b->next;
+			nb->free = 1;
+			b->size = size;
+			b->next = nb;
+		}
+		b->free = 0;
+		return (unsigned char *) b + G2_HDR;
+	}
+	return NULL;   /* arena exhausted */
+}
+
+static void g2_coalesce (void)
+{
+	g2_blk_t *b = g2_head;
+	while (b && b->next) {
+		if (b->free && b->next->free) {
+			b->size += G2_HDR + b->next->size;
+			b->next = b->next->next;
+		} else
+			b = b->next;
+	}
+}
+
+static void g2_free (void *p)
+{
+	if (!p)
+		return;
+	((g2_blk_t *) ((unsigned char *) p - G2_HDR))->free = 1;
+	g2_coalesce ();
+}
+
+static void *
+g2_realloc (void *p, grub_size_t size)
+{
+	g2_blk_t *b;
+	grub_size_t want, copy;
+	void *np;
+	if (!p)
+		return g2_malloc (size);
+	if (size == 0) {
+		g2_free (p);
+		return NULL;
+	}
+	b = (g2_blk_t *) ((unsigned char *) p - G2_HDR);
+	want = g2_round (size);
+	if (b->size >= want)
+		return p;                       /* shrink/keep in place */
+	/* grow into an adjacent free block if it reaches */
+	if (b->next && b->next->free && b->size + G2_HDR + b->next->size >= want) {
+		b->size += G2_HDR + b->next->size;
+		b->next = b->next->next;
+		if (b->size >= want + G2_HDR + G2_ALIGN) {
+			g2_blk_t *nb = (g2_blk_t *) ((unsigned char *) b + G2_HDR + want);
+			nb->size = b->size - want - G2_HDR;
+			nb->next = b->next;
+			nb->free = 1;
+			b->size = want;
+			b->next = nb;
+		}
+		return p;
+	}
+	/* relocate: allocate, copy the old payload, free the old block */
+	np = g2_malloc (size);
+	if (!np)
+		return NULL;
+	copy = (b->size < size) ? b->size : size;
+	memcpy (np, p, copy);
+	g2_free (p);
+	return np;
+}
+
+void *grub_malloc  (grub_size_t size)             { return g2_malloc (size); }
+void  grub_free    (void *ptr)                    { g2_free (ptr); }
+void *grub_realloc (void *ptr, grub_size_t size)  { return g2_realloc (ptr, size); }
 
 void *
 grub_zalloc (grub_size_t size)
 {
-	void *p = malloc (size);
+	void *p = g2_malloc (size);
 	if (p)
 		memset (p, 0, size);
+	return p;
+}
+
+void *
+grub_calloc (grub_size_t n, grub_size_t size)
+{
+	grub_size_t tot;
+	void *p;
+	if (__builtin_mul_overflow (n, size, &tot))
+		return NULL;
+	p = g2_malloc (tot);
+	if (p)
+		memset (p, 0, tot);
 	return p;
 }
 
@@ -89,13 +218,23 @@ int   grub_strcasecmp (const char *a, const char *b)           { return strcasec
 char *grub_strcpy     (char *d, const char *s)                 { return strcpy (d, s); }
 char *grub_strchr     (const char *s, int c)                   { return strchr (s, c); }
 char *grub_strrchr    (const char *s, int c)                   { return strrchr (s, c); }
-char *grub_strdup     (const char *s)                          { return strdup (s); }
+/* strdup/strndup allocate from the grub2fs heap (not OpenBIOS's), so a later
+ * grub_free on the result reads a g2 header, not garbage. */
+char *
+grub_strdup (const char *s)
+{
+	grub_size_t l = strlen (s) + 1;
+	char *p = g2_malloc (l);
+	if (p)
+		memcpy (p, s, l);
+	return p;
+}
 
 char *
 grub_strndup (const char *s, grub_size_t n)
 {
 	grub_size_t l = strnlen (s, n);
-	char *p = malloc (l + 1);
+	char *p = g2_malloc (l + 1);
 	if (!p)
 		return NULL;
 	memcpy (p, s, l);
@@ -115,7 +254,7 @@ grub_xasprintf (const char *fmt, ...)
 	va_start (ap, fmt);
 	vsnprintf (buf, sizeof (buf), fmt, ap);
 	va_end (ap);
-	return strdup (buf);
+	return grub_strdup (buf);   /* g2 heap, so grub_free works on the result */
 }
 
 /************************************************************************/
