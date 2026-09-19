@@ -1,0 +1,9 @@
+<build>
+ <library name="fs" type="static" target="target">
+  <object source="grub2fs_fs.c"   condition="FSYS_GRUB2FS"/>
+  <object source="grub2fs_glue.c" condition="FSYS_GRUB2FS"/>
+  <!-- vendored GRUB 2 drivers (staged from ../upstream-grub); alias like grubfs's -->
+  <object source="ext2.c"   condition="FSYS_GRUB2FS" flags="-fno-strict-aliasing -Wno-error"/>
+  <object source="fshelp.c" condition="FSYS_GRUB2FS" flags="-fno-strict-aliasing -Wno-error"/>
+ </library>
+</build>

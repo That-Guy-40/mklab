@@ -74,9 +74,9 @@ FAT and ISO 9660 additionally pull in `charset` (`grub_utf16_to_utf8`), `datetim
 
 | spike | milestone | verified by |
 |---|---|---|
-| **POC-1 — build box** | GRUB 2's `ext2.c` + `fshelp.c` compile against the minimal `grub/` shim headers (object files), then link into `openbios-unix` with the glue + package | `gcc -c` clean; `openbios-unix` builds with `CONFIG_FSYS_GRUB2FS` |
-| **POC-2 — ext2 mount + read** | `grub2fs` mounts a **modern `mke2fs -t ext2`** image and `load`s a file; bytes == `grub-fstest cp`; the same image reads `File not found` through `grubfs` (neg control) | headless `openbios-unix` drive + host oracle |
-| POC-3 — FAT + ISO 9660 | add `charset`/`datetime` shim; `fat.c` + `iso9660.c` mount+read; ext4 (extents) too | oracle + neg control per format |
+| **POC-1 — build box ✓ DONE** | GRUB 2's `ext2.c` + `fshelp.c` compile against the minimal `grub/` shim headers, then link into `openbios-unix` with the glue + package | `gcc -c` clean; `openbios-unix` built via `build-grub2fs.sh`, `nm` shows `grub2fs_init`/`grub_disk_read`/`grub_ext2_fs`/`grub_fs_register` |
+| **POC-2 — ext2 mount + read ✓ DONE** | `grub2fs` mounts a **modern `mke2fs -t ext2`** image (inode 256, `dir_index`/`filetype`) and `load`s a file; bytes == `grub-fstest cp`; the same image reads `File not found` through `grubfs`, which still reads a classic image (neg control bites) | `smoke-grub2fs.sh` → PASS, headless `openbios-unix` drive vs the `grub-fstest` foreign oracle |
+| POC-3 — FAT + ISO 9660 | add `charset`/`datetime` shim **and a real heap for grub2fs** (`fat.c`/`iso9660.c` use `grub_realloc`, which the ext2 slice does not — OpenBIOS has no `realloc` and `free()` is a no-op over a 128 KiB bump); `fat.c` + `iso9660.c` mount+read; ext4 (extents) too | oracle + neg control per format |
 | POC-4 — four arches | x86 / amd64 / ppc / sparc; ppc is the byte-order control | matrix, UNCOVERED named |
 | POC-5 — `fs-combo`/`fs-tiers` | one image set through every package that claims it; emit `fs-tiers.toml` | design notes §2.2 |
 | (endgame) `fs-edit-inplace` | `blocks-of` beside `read`; same-length in-place write; `fsck` clean; boot it | design notes §2.6 |

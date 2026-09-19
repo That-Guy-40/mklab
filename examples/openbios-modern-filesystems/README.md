@@ -60,22 +60,36 @@ the same boot). See the plan §2.1, §3.
 openbios-modern-filesystems/
 ├── README.md            — this file
 ├── PLAN.md              — S1 build plan + spike ladder (the mapping, surface, grading)
-├── MANUAL_TESTING.md    — how to verify what exists so far
+├── MANUAL_TESTING.md    — how to run the smoke + the success signature
+├── build-grub2fs.sh     — build openbios-unix WITH grub2fs (in a throwaway tree copy;
+│                          the shared tree is never touched) -> $WORKDIR/grub2fs/
+├── smoke-grub2fs.sh     — one-verdict test: grub2fs reads a modern ext2 grubfs can't
 ├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
 │   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
 │   └── ext2.c fat.c iso9660.c fshelp.c
-└── grub2fs/             — the shim (POC-1a: the minimal grub/ header adapter)
-    └── grub/*.h         — types+byteorder, err, mm, disk, device, file, fs,
-                           fshelp, dl, safemath, i18n, misc, symbol
+└── grub2fs/             — the shim
+    ├── grub2fs_glue.c   — the grub_* environment (grub_disk_read == grubfs devread,
+    │                      grub_malloc/error/fs_register/str/mem over OpenBIOS libc)
+    ├── grub2fs_fs.c     — the OpenBIOS /packages/grub2fs-files package (open/read/…)
+    ├── grub2fs.h        — shared internals (disk priv + inits)
+    ├── build.xml        — fs library objects (condition FSYS_GRUB2FS)
+    └── grub/*.h         — 13 minimal shim headers (types+byteorder, err, mm, disk,
+                           device, file, fs, fshelp, dl, safemath, i18n, misc, symbol)
 ```
 
-## Status detail — S1 (the shim) is under way
+## Status detail — S1 (the shim): POC-1a + POC-1b + POC-2 done
 
 - **POC-1a (done):** GRUB 2.12's unmodified `ext2.c` + `fshelp.c` compile clean against
-  the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`) — the
-  proof that the shim approach builds GRUB 2's real driver code with no changes to it.
-- **POC-1b (next):** the glue (`grub_disk_read`→`seek_io`/`read_io`, `grub_malloc`,
-  `grub_error`, `grub_fs_register`, …) + the OpenBIOS package + build wiring, so
-  `openbios-unix` builds with `CONFIG_FSYS_GRUB2FS`.
-- **POC-2:** mount + read a modern `mke2fs` image, bytes `==` `grub-fstest cp`, old
-  `grubfs` as the negative control. See [`PLAN.md`](PLAN.md).
+  the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`).
+- **POC-1b (done):** the glue (`grub_disk_read`→`seek_io`/`read_io`, `grub_malloc`,
+  `grub_error`, `grub_fs_register`, …) + the OpenBIOS package + build wiring;
+  **`openbios-unix` builds with `grub2fs` linked** (`nm` shows `grub2fs_init`,
+  `grub_disk_read`, `grub_ext2_fs`, `grub_fs_register`), via `build-grub2fs.sh`.
+- **POC-2 (done):** `grub2fs` mounts a **modern** `mke2fs` ext2 image (inode size 256,
+  `dir_index`/`filetype`) and `load`s a file **byte-for-byte equal to `grub-fstest`**,
+  which the shipped 0.97 `grubfs` reads as `File not found` (though `grubfs` still reads
+  a classic image). Proven by [`smoke-grub2fs.sh`](smoke-grub2fs.sh) with the negative
+  control biting. Run: `./smoke-grub2fs.sh` → `PASS: grub2fs … read /HELLO from a MODERN
+  ext2 image … byte-for-byte equal to grub-fstest …`.
+- **POC-3 (next):** FAT + ISO 9660 (add the `charset`/`datetime` shim and a real heap —
+  those drivers use `grub_realloc`, which the ext2 slice does not). See [`PLAN.md`](PLAN.md).
