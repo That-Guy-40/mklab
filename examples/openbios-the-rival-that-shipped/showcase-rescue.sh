@@ -21,6 +21,13 @@
 #             rescue: uki-edit.sh GROWS .cmdline (VirtualSize bumped per Q5) and the
 #             rescued UKI boots (Spike 6/8; host tool because a bootable UKI exceeds
 #             the firmware arena — in-firmware pe-edit.fth is proven small-scale).
+#   bzimage — the THIRD in-place editor, completing the trio (UKI/archive/bzImage):
+#             the firmware follows boot_params' cmd_line_ptr and rewrites the classic
+#             kernel's runtime command line in place (dsl/bootparams-edit.fth). A
+#             FOREIGN decoder confirms the edit; it is oracle-proven, NOT boot-proven,
+#             because Spike 7b measured this buffer is rebuilt at boot (the boot-proven
+#             classic seam is the boot line — the initrd act). Reuses the cmdline-ptr
+#             fixture/oracle whole.
 #
 # Exit: 0 PASS / 1 FAIL / 77 SKIP. Env: OPENBIOS_WORKDIR, KERNEL, INITRD.
 set -u
@@ -28,21 +35,29 @@ usage() {
     cat <<'USAGE'
 showcase-rescue.sh [ACT]   UKI workbench Spike 11 — break a boot, then rescue it
 
-ACT (default all):
-  initrd    no-initrd boot panics (VFS: Unable to mount root fs); the good
-            initrd on the boot line rescues it to a u-root shell
-  config    a broken config inside a REAL busybox initramfs (MODE=die) hangs the
-            boot; the firmware (openbios-unix + dsl/cpio-edit.fth) fixes it in
-            place same-length and the rescued image boots to a shell (Spike 10)
-  cmdline   a UKI whose .cmdline lacks a rescue param hangs under OVMF; uki-edit.sh
-            GROWS .cmdline to add it (VirtualSize bumped per Q5) and the rescued UKI
-            boots to a shell (Spike 6/8)
-  all       every implemented act; the run FAILS if any break did NOT fail
-            first, or any rescue did not reach its shell
+Three in-place editors, each turned on its native artifact type:
+  config    ARCHIVE MEMBER — a broken config inside a REAL busybox initramfs
+            (MODE=die) hangs the boot; the firmware (openbios-unix +
+            dsl/cpio-edit.fth) fixes it in place same-length and the rescued image
+            boots to a shell (Spike 10)
+  cmdline   UKI SECTION — a UKI whose .cmdline lacks a rescue param hangs under
+            OVMF; uki-edit.sh GROWS .cmdline to add it (VirtualSize bumped per Q5)
+            and the rescued UKI boots to a shell (Spike 6/8)
+  bzimage   bzImage RUNTIME COMMAND LINE — the firmware (openbios-unix +
+            dsl/bootparams-edit.fth) follows boot_params' cmd_line_ptr and rewrites
+            the line in place (add init=/bin/bash); a FOREIGN decoder confirms the
+            edit is real in the bytes. Oracle-proven, NOT boot-proven: Spike 7b
+            measured that this runtime buffer is rebuilt at boot, so the boot-proven
+            classic-kernel seam is the boot line — the initrd act (Spike 7a/7b)
+  initrd    BOOT LINE — a no-initrd boot panics (VFS: Unable to mount root fs); the
+            good initrd on the boot line rescues it to a u-root shell (the classic
+            kernel's boot-proven rescue seam, Spike 7b)
+  all       every act (default); the run FAILS if any break did NOT fail first, or
+            any rescue did not reach its shell / its foreign-oracle proof
 
-The negative control is load-bearing: each act asserts the UN-edited artifact
-fails with its named signature BEFORE the rescue, so a rescue that "worked" on a
-boot that would have come up anyway is caught.
+The negative control is load-bearing: each act asserts the UN-edited artifact fails
+(or, for bzimage, reads as the un-rescued line under a foreign decoder) BEFORE the
+rescue, so a rescue that "worked" on an artifact that was fine anyway is caught.
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP.
 Env: KERNEL (a bzImage), INITRD (a cpio), OPENBIOS_WORKDIR, COREBOOT_DIR
@@ -74,8 +89,9 @@ trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: showcase-
 command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
 command -v python3 >/dev/null            || skip "python3 not installed"
 command -v genisoimage >/dev/null        || skip "genisoimage not installed"
-[[ -f "$KERNEL" ]] || skip "no kernel at $KERNEL (set KERNEL=; a bzImage the OpenBIOS loader boots)"
-[[ -f "$INITRD" ]] || skip "no initrd at $INITRD (set INITRD=; a cpio the kernel unpacks to a shell)"
+# KERNEL/INITRD are the payload the initrd/config acts BOOT; the cmdline act uses
+# KERNEL_EFI and the bzimage act captures its own fixture, so those are guarded per
+# act (below), not globally.
 MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
 DICT="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
 [[ -f "$MB" && -f "$DICT" ]] || skip "no x86 firmware at $MB — run ./build-openbios.sh x86 first"
@@ -112,9 +128,6 @@ boot_openbios() {
     return $rc
 }
 
-# the good u-root initrd on a CD, for the initrd act's rescue leg
-ISO="$RWD/rescue.iso"; stage_iso "$INITRD" "$ISO"
-
 # uki_esp <uki.efi> <esp.img> — a FAT ESP with the UKI at the removable-media
 # auto-boot path, for booting under OVMF.
 uki_esp() {
@@ -145,6 +158,10 @@ boot_ovmf() {
 # SAME kernel from the SAME ISO; only the boot line differs — which is the honest
 # minimal edit (the classic-kernel rescue seam, Spike 7b).
 act_initrd() {
+    [[ -f "$KERNEL" ]] || skip "no kernel at $KERNEL (set KERNEL=; a bzImage the OpenBIOS loader boots)"
+    [[ -f "$INITRD" ]] || skip "no initrd at $INITRD (set INITRD=; a cpio the kernel unpacks to a shell)"
+    # the good u-root initrd on a CD, for the rescue leg
+    local ISO="$RWD/rescue.iso"; stage_iso "$INITRD" "$ISO"
     local blog="$RWD/initrd-break.log" rlog="$RWD/initrd-rescue.log"
     note "initrd BREAK: boot with no initrd -> expect a VFS root-fs panic"
     # \\v: the driver decodes --send with unicode_escape, so the single backslash
@@ -184,6 +201,7 @@ act_initrd() {
 # it firmware-editable. Measured: the 2.1 MB image fits the hosted arena (alloc-mem
 # ceiling is between 3 and 4 MiB), where a distro initrd never would.
 act_config() {
+    [[ -f "$KERNEL" ]] || skip "no kernel at $KERNEL (set KERNEL=; a bzImage the OpenBIOS loader boots)"
     command -v busybox >/dev/null || skip "busybox not installed — the config act needs a static busybox for a real config-reading initramfs"
     command -v fakeroot >/dev/null || skip "fakeroot not installed — needed to author /dev/console in the initramfs without root"
     local UBIN="$WORKDIR/openbios/obj-amd64/openbios-unix" UDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
@@ -327,14 +345,107 @@ act_cmdline() {
     return 0
 }
 
+# ── ACT: bzimage ──────────────────────────────────────────────────────────────
+# The THIRD in-place editor, on the third artifact type — completing the trio the
+# capstone shows: UKI (.cmdline, cmdline act), archive member (cpio, config act),
+# and here a bzImage's RUNTIME command line. Not every rescue target is a UKI or an
+# initramfs config: a plain `kernel + initrd` boot reads its command line from a
+# runtime buffer that boot_params' cmd_line_ptr names. dsl/bootparams-edit.fth
+# FOLLOWS that pointer and rewrites the string in place (add `init=/bin/bash single`)
+# — the classic-kernel rescue edit the readers set up.
+#
+# HONEST BOUNDARY (Spike 7b): this is the ONE editor the capstone does NOT carry to
+# a booted shell, and that is a MEASURED fact, not a gap. cmd_line_ptr names a buffer
+# the bootloader REBUILDS at each boot, so an in-firmware prompt edit does not reach
+# the kernel the loader then starts (Spike 7b). The boot-proven classic-kernel seam
+# is therefore the boot LINE — which is exactly the `initrd` act above. Here the edit
+# is proven REAL the only honest way it can be: a FOREIGN decoder (decode-cmdline.py,
+# an independent little-endian struct read) reads the firmware-written dump back and
+# finds the rescue line, on BOTH ends (sentinel before, rescue after). The cmdline-ptr
+# smoke track carries this across all four arches with its three refusal controls;
+# this act is the capstone's one-session view, and states its own boundary.
+#
+# THE FIXTURE IS A PHYS-0 DUMP, reused whole from the cmdline-ptr track: cmd_line_ptr
+# is 0 on disk, so the subject is guest physical memory captured from QEMU's own
+# -kernel loader (a foreign producer), dumped from address 0 so the pointer is a
+# direct offset. build-cmdline-ptr-fixture.sh finds a bzImage itself (BZIMAGE= or
+# /boot/vmlinuz-*) and exits 77 -> SKIP when none is readable.
+act_bzimage() {
+    command -v file >/dev/null || skip "file not installed (libmagic) — locates the bzImage for the fixture"
+    local UBIN="$WORKDIR/openbios/obj-amd64/openbios-unix" UDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    [[ -x "$UBIN" && -f "$UDICT" ]] || skip "missing $UBIN — run ./build-openbios.sh amd64 first (the hosted firmware performs the bzImage cmdline edit)"
+    local BLD="$HERE/fixtures/cmdline-ptr/build-cmdline-ptr-fixture.sh"
+    local DEC="$HERE/fixtures/cmdline-ptr/decode-cmdline.py"
+    [[ -f "$BLD" && -f "$DEC" ]] || fail "bzimage: missing the SHIPPED cmdline-ptr fixture builder/decoder"
+    local f; for f in struct bootparams bootparams-edit; do [[ -f "$HERE/dsl/$f.fth" ]] || fail "bzimage: missing dsl/$f.fth — this act stages the SHIPPED readers/editor"; done
+
+    local cwd="$RWD/bzimage"; rm -rf "$cwd"; mkdir -p "$cwd/stage"
+    note "bzimage: capturing a phys-0 boot_params dump from QEMU's -kernel loader (the foreign producer)"
+    bash "$BLD" "$cwd" 2> "$cwd/fixture.err"; local frc=$?
+    if [[ $frc -ne 0 ]]; then
+        [[ $frc -eq 77 ]] && skip "no readable bzImage for the bzimage act — $(cat "$cwd/fixture.err") (set BZIMAGE=/path/to/bzImage)"
+        fail "bzimage: the QEMU capture failed (rc=$frc) — $(cat "$cwd/fixture.err")"
+    fi
+    [[ -s "$cwd/CMDPTR.BIN" ]] || fail "bzimage: the dump fixture was not produced"
+    local SENT RESC; SENT="$(cat "$cwd/sentinel.txt")"; RESC="$(cat "$cwd/rescue.txt")"
+
+    # BREAK (the negative-control framing): before the edit, a FOREIGN decode of
+    # cmd_line_ptr names the sentinel — a command line WITHOUT the rescue token — so
+    # "the edit changed it to the rescue line" is grounded on an independent read of
+    # the starting state, not assumed.
+    note "bzimage BREAK: the captured cmd_line_ptr names '$SENT' — no init=/bin/bash, so it boots the normal (unrescued) system"
+    local ro; ro="$(python3 "$DEC" "$cwd/CMDPTR.BIN")" || fail "bzimage: decode-cmdline could not read the fixture"
+    [[ "$ro" == "$SENT" ]] || fail "bzimage: the fixture's cmd_line_ptr decodes to '$ro', not the sentinel '$SENT' — the fixture is inconsistent, so the control is void"
+
+    # RESCUE: the firmware follows cmd_line_ptr and rewrites the line in place.
+    note "bzimage RESCUE: openbios-unix + dsl/bootparams-edit.fth rewrite cmd_line_ptr in place -> '$RESC'"
+    cp "$HERE/dsl/struct.fth" "$cwd/stage/STRUCT.FTH"; cp "$HERE/dsl/bootparams.fth" "$cwd/stage/BOOTPARM.FTH"
+    cp "$HERE/dsl/bootparams-edit.fth" "$cwd/stage/BPEDIT.FTH"; cp "$cwd/CMDLINE-PTR.FTH" "$cwd/stage/CMDPTR.FTH"
+    cp "$cwd/CMDPTR.BIN" "$cwd/stage/CMDPTR.BIN"
+    local fwiso="$cwd/fw.iso"
+    genisoimage -quiet -o "$fwiso" -V BZIMG -r -J "$cwd/stage" 2>/dev/null || fail "bzimage: genisoimage failed staging the edit ISO"
+    local edcwd="$cwd/edit"; rm -rf "$edcwd"; mkdir -p "$edcwd"; local edlog="$cwd/edit.log"
+    # 5 loads, well under the hosted grubfs ~16-load/process ceiling. Markers print
+    # on their OWN line (leading cr) and the edit flag is parked in `ceok` before it
+    # is printed, so the REPL's echo is never mistaken for the output (pe track).
+    ( cd "$edcwd" && printf '%s\n' \
+        '80000 alloc-mem value lb  lb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH'   'load-base load-size evaluate' \
+        'load hd:\BOOTPARM.FTH' 'load-base load-size evaluate' \
+        'load hd:\BPEDIT.FTH'   'load-base load-size evaluate' \
+        'load hd:\CMDPTR.FTH'   'load-base load-size evaluate' \
+        'load hd:\CMDPTR.BIN' \
+        'variable ceok' \
+        'load-base load-size cle-open cr ." OPEN=" . cr' \
+        'cr ." CMD=" bp-cmdline type cr' \
+        'rescue-cmdline bp-cmdline-set ceok !' \
+        'cr ceok @ if ." EDITOK" else ." EDITBAD" then cr' \
+        'cr ." NEW=" bp-cmdline type cr' \
+        'load-base load-size s" edited.bin" write-file drop' \
+        'bye' | "$UBIN" -f "$fwiso" "$UDICT" 2>&1 | tr -d '\r' ) > "$edlog" 2>&1
+    local open; open="$(grep -aoE '^OPEN=[0-9a-f]+' "$edlog" | head -1 | cut -d= -f2)"
+    [[ "$open" == "0" ]] || fail "bzimage: cle-open returned status 0x${open:-<none>}, expected 0 — boot_params not found/validated in the dump — see $edlog"
+    grep -qaE '^EDITOK' "$edlog" || fail "bzimage: bp-cmdline-set returned false on a valid edit — $(grep -aoE 'bp\| [A-Z-]+' "$edlog" | head -1) — see $edlog"
+    [[ -f "$edcwd/edited.bin" ]] || fail "bzimage: the firmware did not write edited.bin (write-file failed) — see $edlog"
+
+    # THE EDIT IS REAL OUTSIDE THE FIRMWARE'S CLAIM: an independent little-endian
+    # struct decode of the firmware-written dump reads the rescue line — Spike 7b's
+    # honest proof, the foreign oracle, since a boot cannot verify this seam here.
+    local got; got="$(python3 "$DEC" "$edcwd/edited.bin")" || fail "bzimage: decode-cmdline could not read the edited dump — the pointer no longer resolves"
+    [[ "$got" == "$RESC" ]] || fail "bzimage: the firmware said it edited, but a foreign decode of cmd_line_ptr reads '$got', not '$RESC' — the edit is not real in the bytes — see $edlog"
+    note "bzimage: firmware rewrote cmd_line_ptr in place; a FOREIGN decoder confirms '$SENT' -> '$RESC' in the bytes (boot-proof forecloses here per Spike 7b — the boot-proven classic seam is the initrd act)"
+    return 0
+}
+
 ran=0
 case "$ACT" in
   initrd) act_initrd; ran=1 ;;
   config) act_config; ran=1 ;;
   cmdline) act_cmdline; ran=1 ;;
-  all) act_initrd; act_config; act_cmdline; ran=1 ;;
-  *) echo "usage: $0 [initrd|config|cmdline|all]" >&2; exit 1 ;;
+  bzimage) act_bzimage; ran=1 ;;
+  all) act_initrd; act_config; act_cmdline; act_bzimage; ran=1 ;;
+  *) echo "usage: $0 [initrd|config|cmdline|bzimage|all]" >&2; exit 1 ;;
 esac
 
 (( ran )) || skip "no act ran"
-pass "Spike 11 (rescue capstone): every requested act broke a boot, watched it FAIL FIRST with its named signature, then rescued it. initrd — a no-initrd boot panicked 'VFS: Unable to mount root fs on unknown-block(0,0)' and the good initrd on the boot line reached 'Welcome to u-root!'. config — a real busybox initramfs whose /init reads /etc/rescue.conf hung at 'RESCUE-FAIL' (MODE=die), the firmware (openbios-unix + dsl/cpio-edit.fth) patched it 'MODE=die'->'MODE=run' in place same-length (host cpio confirms the edit is real, archive still valid), and the fixed image booted to 'RESCUE-OK'. The un-edited artifact failed first in every act, so the rescue is what came up, not a boot that would have anyway. cmdline — a UKI whose .cmdline lacked rescue_ok=1 hung at RESCUE-FAIL under OVMF, uki-edit.sh grew .cmdline to add it (VirtualSize bumped per Q5; foreign objcopy confirms), and the grown UKI booted to RESCUE-OK. All three rescue paths — command line, config-in-initramfs, and initrd — now break, fail first, and rescue"
+pass "Spike 11 (rescue capstone): the toolkit's THREE in-place editors, each turned on its native artifact type, each rescuing a broken boot with no USB stick and no chroot. config (ARCHIVE MEMBER) — a real busybox initramfs whose /init reads /etc/rescue.conf hung at 'RESCUE-FAIL' (MODE=die), the firmware (openbios-unix + dsl/cpio-edit.fth) patched it 'MODE=die'->'MODE=run' in place same-length (host cpio confirms the edit is real, archive still valid), and the fixed image booted to 'RESCUE-OK'. cmdline (UKI SECTION) — a UKI whose .cmdline lacked rescue_ok=1 hung at RESCUE-FAIL under OVMF, uki-edit.sh grew .cmdline to add it (VirtualSize bumped per Q5; foreign objcopy confirms), and the grown UKI booted to RESCUE-OK. bzimage (bzImage RUNTIME COMMAND LINE) — the firmware (openbios-unix + dsl/bootparams-edit.fth) followed boot_params' cmd_line_ptr and rewrote the line in place, and a FOREIGN little-endian decoder confirmed the sentinel became the rescue line in the bytes; this seam is oracle-proven, not boot-proven, because Spike 7b measured the runtime buffer is rebuilt at boot. initrd (BOOT LINE) — the boot-proven classic-kernel seam: a no-initrd boot panicked 'VFS: Unable to mount root fs on unknown-block(0,0)' and the good initrd on the boot line reached 'Welcome to u-root!'. The un-edited artifact failed (or read as the un-rescued line) FIRST in every act, so the rescue is what came up, not an artifact that was fine anyway"

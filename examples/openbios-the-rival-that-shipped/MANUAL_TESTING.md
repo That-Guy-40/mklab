@@ -1258,8 +1258,12 @@ which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
 
 `showcase-rescue.sh` deliberately breaks a boot and rescues it with the toolkit —
 no USB stick, no chroot — with **the negative control as the point**: the
-un-edited artifact is shown genuinely failing first. **All three acts** are built
-and measured 2026-09-18 — initrd, config, and cmdline:
+un-edited artifact is shown genuinely failing first. It brings together the
+toolkit's **three in-place editors**, each turned on its native artifact type —
+**config** (an archive member, `dsl/cpio-edit.fth`), **cmdline** (a UKI section,
+`uki-edit.sh`/`dsl/pe-edit.fth`), **bzimage** (a bzImage's runtime command line,
+`dsl/bootparams-edit.fth`) — plus **initrd**, the classic kernel's boot-**line**
+seam. Measured 2026-09-19:
 
 ```console
 $ ./showcase-rescue.sh all
@@ -1268,7 +1272,8 @@ $ ./showcase-rescue.sh all
   - config BREAK failed as designed: RESCUE-FAIL: /etc/rescue.conf MODE=die is not runnable -- boot is blocked; fix the config
   - config: firmware patched etc/rescue.conf in place (2126848 bytes, valid cpio); host confirms MODE=run
   - config RESCUE reached the rescue shell (RESCUE-OK)
-PASS: Spike 11 (rescue capstone): every requested act broke a boot, watched it FAIL FIRST …
+  - bzimage: firmware rewrote cmd_line_ptr in place; a FOREIGN decoder confirms 'root=/dev/vda1 ro quiet SENTINEL_CMDLINE_7=orig' -> 'init=/bin/bash single' in the bytes (boot-proof forecloses here per Spike 7b — the boot-proven classic seam is the initrd act)
+PASS: Spike 11 (rescue capstone): the toolkit's THREE in-place editors, each turned on its native artifact type, each rescuing a broken boot …
 ```
 
 **initrd** (~15 s): the break boots the bzImage with **no `initrd=`** on the line,
@@ -1305,6 +1310,27 @@ edit is the **persisted host tool** (Spike 8) rather than in-firmware `pe-edit.f
 exceeds the firmware arena — the same honest split Spike 7b named for the classic
 kernel. Needs an EFISTUB kernel (`linuxboot-uefi-kexec/fetch-kernel.sh`, or
 `KERNEL_EFI=`); the openbios `payload-bzImage` is a bare bzImage and SKIPs by name.
+
+**bzimage** (~5 s, no full boot): the third in-place editor, completing the trio
+(UKI / archive / bzImage). A plain `kernel + initrd` boot reads its command line
+from a runtime buffer that `boot_params`' `cmd_line_ptr` names; the firmware
+(`openbios-unix` + [`dsl/bootparams-edit.fth`](dsl/bootparams-edit.fth)) follows
+that pointer and rewrites the line in place — the classic-kernel rescue edit (add
+`init=/bin/bash single`). **It is oracle-proven, not boot-proven, and that is a
+measured boundary, not a gap:** Spike 7b established that this buffer is rebuilt by
+the loader at each boot, so an in-firmware prompt edit does not reach the started
+kernel — the boot-proven classic seam is the boot *line* (the initrd act). So the
+edit is proven the only honest way it can be: a **foreign** little-endian decoder
+([`fixtures/cmdline-ptr/decode-cmdline.py`](fixtures/cmdline-ptr/decode-cmdline.py))
+reads the firmware-written dump back and finds the rescue line, with the sentinel
+confirmed before and the rescue line after. The subject is the **phys-0 dump**
+reused whole from the `cmdline-ptr` track (a real `boot_params` captured from QEMU's
+own `-kernel` loader — a foreign producer — dumped from address 0); the builder
+finds a bzImage itself (`BZIMAGE=`, else `/boot/vmlinuz-*`) and SKIPs (77) when none
+is readable. The `cmdline-ptr` smoke track carries this across all four arches with
+its three refusal controls; this act is the capstone's one-session view, and its
+negative control was watched to bite (an edit to the wrong line makes the foreign
+decoder read those bytes and the act `FAIL`s *the edit is not real in the bytes*).
 
 ## 5. The firmware as a Unix process (no QEMU)
 
