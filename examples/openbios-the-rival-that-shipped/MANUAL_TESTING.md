@@ -1254,13 +1254,12 @@ PASS: the B.3 preboot structure toolkit, end to end, in ONE boot …
 which produced `FAIL: ACT II: HEAP=0 …` instead of a prettier transcript.
 ≈ 60 s under KVM (measured 2026-09-03: 60.3 s wall, one boot, six acts).
 
-### The rescue showcase — break a boot, then rescue it (UKI Spike 11, in progress)
+### The rescue showcase — break a boot, then rescue it (UKI Spike 11)
 
 `showcase-rescue.sh` deliberately breaks a boot and rescues it with the toolkit —
 no USB stick, no chroot — with **the negative control as the point**: the
-un-edited artifact is shown genuinely failing first. The **initrd** and **config**
-acts are built and measured 2026-09-18 (the cmdline act, Spike 6 under OVMF,
-remains):
+un-edited artifact is shown genuinely failing first. **All three acts** are built
+and measured 2026-09-18 — initrd, config, and cmdline:
 
 ```console
 $ ./showcase-rescue.sh all
@@ -1292,6 +1291,20 @@ is compressed (AlmaLinux's pxeboot initrd is 212 MB of XZ), which an in-firmware
 raw-newc editor cannot walk and this firmware cannot boot; busybox is the real
 minimal-Linux init, uncompressed newc keeps it firmware-editable, and the 2.1 MB
 image fits the hosted arena (the `alloc-mem` ceiling is between 3 and 4 MiB).
+
+**cmdline** (~180 s, two OVMF boots): a **UKI** (systemd EFI stub + EFISTUB kernel +
+the same busybox initramfs, here reading `/proc/cmdline`) booted under genuine OVMF.
+The break UKI's `.cmdline` lacks `rescue_ok=1`, so `/init` hangs at `RESCUE-FAIL`;
+the shipped [`uki-edit.sh`](uki-edit.sh) then **grows** `.cmdline` to add it —
+rebuilding with `ukify` so the section's **VirtualSize is bumped** (Q5: ukify leaves
+no slack, so a grown command line needs the header bumped, which `objcopy
+--update-section` would *not* do), a foreign `objcopy` confirms `rescue_ok=1` and the
+`.cmdline` grew (measured 13→25 bytes), and the grown UKI boots to `RESCUE-OK`. The
+edit is the **persisted host tool** (Spike 8) rather than in-firmware `pe-edit.fth`
+(Spike 6, proven small-scale) because a bootable UKI carries a ~15 MB kernel and
+exceeds the firmware arena — the same honest split Spike 7b named for the classic
+kernel. Needs an EFISTUB kernel (`linuxboot-uefi-kexec/fetch-kernel.sh`, or
+`KERNEL_EFI=`); the openbios `payload-bzImage` is a bare bzImage and SKIPs by name.
 
 ## 5. The firmware as a Unix process (no QEMU)
 

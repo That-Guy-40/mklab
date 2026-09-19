@@ -22,8 +22,8 @@
 # "unable to open an initial console"). They are made under fakeroot (no root/mknod
 # privilege needed): fakeroot records the node type so cpio writes a device header.
 set -euo pipefail
-MODE="${1:?usage: build-rescue-initramfs.sh <MODE> <out.cpio> [busybox]}"
-OUT="${2:?usage: build-rescue-initramfs.sh <MODE> <out.cpio> [busybox]}"
+MODE="${1:?usage: build-rescue-initramfs.sh <MODE|cmdline> <out.cpio> [busybox]}"
+OUT="${2:?usage: build-rescue-initramfs.sh <MODE|cmdline> <out.cpio> [busybox]}"
 BB="${3:-$(command -v busybox || true)}"
 [[ -n "$BB" && -f "$BB" ]] || { echo "no busybox found (arg 3 or PATH)" >&2; exit 2; }
 file -L "$BB" | grep -q 'statically linked\|not a dynamic executable' \
@@ -40,7 +40,23 @@ cat > "$DIR/etc/inittab" <<'IT'
 ::sysinit:/bin/busybox mount -t devtmpfs dev /dev
 console::respawn:/bin/busybox sh /etc/rc
 IT
-cat > "$DIR/etc/rc" <<'RC'
+if [ "$MODE" = cmdline ]; then
+  # cmdline flavor: /init reads the KERNEL COMMAND LINE (/proc/cmdline) for a rescue
+  # token — for the cmdline rescue act, where the UKI's .cmdline gates the boot.
+  cat > "$DIR/etc/rc" <<'RC'
+if /bin/busybox grep -q 'rescue_ok=1' /proc/cmdline; then
+  /bin/busybox echo "RESCUE-OK: kernel cmdline has rescue_ok=1 -- reaching the rescue shell"
+  exec /bin/busybox sh
+else
+  /bin/busybox echo "RESCUE-FAIL: kernel cmdline lacks rescue_ok=1 -- boot is blocked; add the param"
+  /bin/busybox sleep 999999
+fi
+RC
+else
+  # config flavor: /init sources /etc/rescue.conf and boots by what it reads —
+  # MODE=run reaches a shell, anything else hangs. `run`/`die` are both 3 bytes,
+  # so MODE=die\n -> MODE=run\n is a SAME-LENGTH member edit for cpio-edit.fth.
+  cat > "$DIR/etc/rc" <<'RC'
 . /etc/rescue.conf
 if [ "$MODE" = run ]; then
   /bin/busybox echo "RESCUE-OK: /etc/rescue.conf MODE=run -- reaching the rescue shell"
@@ -50,7 +66,8 @@ else
   /bin/busybox sleep 999999
 fi
 RC
-printf 'MODE=%s\n' "$MODE" > "$DIR/etc/rescue.conf"
+  printf 'MODE=%s\n' "$MODE" > "$DIR/etc/rescue.conf"
+fi
 
 # newc, uncompressed, member names without a leading ./ (so cpio-find matches
 # "etc/rescue.conf"); device nodes authored under fakeroot.
