@@ -24,8 +24,13 @@ lab's [POC-7](examples/openbios-clib-hello-to-emacs/POC-7-DISK-BOOT.md).*
 > *"the terms of the GNU General Public License version 2"* (the words split across two lines),
 > not the *"version 2 of the License"* the sample table quoted — same substance, exact form noted.
 > Also confirmed on disk: `fs/grubfs`, `fs/iso9660`, and [POC-7](examples/openbios-clib-hello-to-emacs/POC-7-DISK-BOOT.md).
-> The external source trees (GRUB 2, U-Boot, FreeBSD `libsa`) are cited, not vendored — correct,
-> per the note's own cite-don't-mirror tier.
+> The external source trees (U-Boot, FreeBSD `libsa`) are cited, not vendored — correct,
+> per the note's own cite-don't-mirror tier. **Updated 2026-09-19:** GRUB 2 is now the one
+> exception — S1 vendors its four `fs/` driver files byte-exact (the shim's *specification*,
+> not a mirror of the tree; headers/build system stay cited via the pinned tarball) in
+> [`examples/openbios-modern-filesystems/upstream-grub/`](examples/openbios-modern-filesystems/upstream-grub/),
+> with a provenance + license README marking them GPLv3+, lab-only, cannot ship — exactly the
+> boundary §2.1c drew.
 
 ## 0. The question, and the answer in one paragraph each
 
@@ -185,6 +190,26 @@ collects them. §0a is the digest.
    `-Os`, are two numbers a `size` call produces. **x86 and amd64 have no such
    ceiling** (a coreboot ROM has 4 MiB of CBFS), so a ppc that does not fit
    partitions the matrix rather than blocking it — said by name.
+
+   **DONE 2026-09-19 — the number.** Built for a real `powerpc-ieee1275` target with the lab's
+   own cross gcc (`powerpc-linux-gnu-gcc`, the package QEMU's stock openbios-ppc is built with),
+   GRUB 2.12's four `fs/` files compiled `-Os -mbig-endian` occupy, as `size` reports text+data
+   (re-measured here on the linked ELF32-PowerPC-big-endian objects, not taken on faith):
+   **ext2 4,632 B, fat 5,041 B, iso9660 7,384 B, fshelp 2,299 B — 19,356 B (~18.9 KB) total.**
+   That is the driver code proper: the objects carry unresolved externals (`grub_disk_read`,
+   `grub_malloc`, `grub_error`) that the shim maps to firmware equivalents per §1a, not new ROM.
+   Today's `openbios-qemu.elf` is **689,492 B** on disk (text 269,640 + data 393,872 = 663,512 B
+   ROM-occupying; bss is RAM). The Mac ROM ceiling, measured against QEMU 8.2 rather than cited:
+   **mac99 rejects a `-bios` above exactly 1 MiB** (1,048,576 accepted, +1 rejected), while the
+   **g3beige** machine the lab actually boots is more generous (accepts ≤ 4 MiB). So on the
+   tightest Mac machine the headroom is 1 MiB − 673 KB ≈ **351 KB** (reproducing this section's
+   earlier "~350 KB" from an independent measurement), and 18.9 KB of drivers clears it with an
+   **~18× margin** — more on g3beige. **The ppc size ceiling does not partition the matrix; it
+   clears with room to spare**, even allowing tens of KB for glue and pulled-in helpers. GRUB 2.12
+   tarball sha256 `f3c97391…7fe0faa`, GPG-verified against release-manager key `BE5C…2166`.
+   *(sun4m/sparc32 is a different ceiling — UNCOVERED here by name, out of scope for the ppc number;
+   the packaged `.mod` sizes were not produced, but a `.module`'s text/data equals the linked `.o`'s,
+   which is the faithful footprint reported.)*
 3. **What the package interface actually requires** (§1a) — read out of
    `fs/grubfs/`'s glue and out of revival bug 5, not assumed.
 

@@ -723,7 +723,7 @@ theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
 members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/",
            "open-firmware-debugs-itself/",
            "openbios-the-rival-that-shipped/", "openbios-clib-hello-to-emacs/",
-           "open-firmware-native-habitats/",
+           "open-firmware-native-habitats/", "openbios-modern-filesystems/",
            "zfsbootmenu-boot-environments/",
            "kdump-kexec-lab/", "virtualbmc-ipmi-lab/", "bmc-toolkit/",
            "metal-as-a-service/", "root-password-reset/", "tiny-linux-experiments/",
