@@ -35,13 +35,30 @@ These are exactly the four files §1(2) of the design notes names: the three
 filesystem readers the shim's first tier targets (ext2/3/4, FAT, ISO 9660) plus
 the `fshelp` directory-walk helper they share.
 
+### Two on-disk-struct headers (POC-3, byte-exact from `grub-2.12/include/grub/`)
+
+| file | lines | `sha256` |
+|---|---|---|
+| `fat.h` | 77 | `d674a60b6ee3f73d1e4a0212ddc34ed7ff6e68621d6ec9d3558d97e2f1e154a9` |
+| `exfat.h` | 53 | `ebe7783fcf16f5de7f72e6db518227617a6b6d745813efefc7f7ad2c56aca1f6` |
+
+`fat.c` includes `<grub/fat.h>` + `<grub/exfat.h>`, which define the FAT/exFAT BPB
+and directory-entry **on-disk layouts**. These are vendored **verbatim** (not
+hand-written into a shim) precisely because a byte-off struct layout would
+mis-parse a real filesystem; they include only `<grub/types.h>` + `<grub/disk.h>`,
+both of which the shim provides. `build-grub2fs.sh` stages them into `include/grub/`
+beside the shim headers.
+
 ## What is **not** vendored (cited, per the repo's provenance rule for upstream code)
 
-GRUB's headers (`include/grub/*.h`), byte-order shims (`byteorder.h`), and build
-system are **not** copied here — they are cited via the pinned tarball `sha256`
-above and reconstructed at build time from it. Only the driver source proper — the
-code the shim ports — is vendored, so the license footprint below is as small as
-the specification requires.
+GRUB's *environment* headers — memory, error, disk, fs, dl, misc, byte order,
+etc. — are **not** copied here: the shim in `../grub2fs/grub/` re-implements just
+what the drivers call (the small `grub_*` surface), the way OpenBIOS's own
+`fs/grubfs/` ships adapted headers rather than GRUB's originals. Two self-contained
+inlines the drivers need (`grub_utf16_to_utf8`, `grub_datetime2unixtime`) are copied
+into those shims with attribution. The full GRUB build system is cited via the
+pinned tarball `sha256` above. Only the driver source + the on-disk-struct headers
+are vendored, keeping the GPLv3 footprint as small as the specification requires.
 
 ## License — GPLv3-or-later, and why this stays **lab-only**
 

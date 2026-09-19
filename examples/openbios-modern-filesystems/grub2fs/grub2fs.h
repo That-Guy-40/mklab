@@ -19,6 +19,8 @@ struct grub2fs_disk_priv
  * the shim's grub/dl.h) to grub_<name>_init(grub_dl_t); the package calls them
  * once at registration, exactly as grubfs's fsys_table is a compile-time list. */
 void grub_ext2_init (grub_dl_t mod);
+void grub_fat_init (grub_dl_t mod);        /* fat.c GRUB_MOD_INIT (no MODE_EXFAT) */
+void grub_iso9660_init (grub_dl_t mod);    /* iso9660.c GRUB_MOD_INIT */
 
 /* package registration entry point, called from packages/init.c */
 void grub2fs_init (void);

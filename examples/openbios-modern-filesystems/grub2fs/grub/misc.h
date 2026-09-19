@@ -33,4 +33,11 @@ char *grub_xasprintf (const char *fmt, ...)
 /* Debug tracing compiles to nothing in the shim. */
 #define grub_dprintf(condition, ...) ((void) 0)
 
+/* static assert used as a statement (fat.c checks on-disk struct sizes);
+ * definition copied from GRUB 2.12 grub/misc.h. */
+#define COMPILE_TIME_ASSERT(cond) switch (0) { case 1: case !(cond): ; }
+
+/* element count of a fixed array (iso9660.c); copied from GRUB 2.12 grub/misc.h. */
+#define ARRAY_SIZE(array) (sizeof (array) / sizeof (array[0]))
+
 #endif /* GRUB2FS_GRUB_MISC_H */

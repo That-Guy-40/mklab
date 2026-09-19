@@ -6,6 +6,7 @@
 
 void *grub_malloc (grub_size_t size);
 void *grub_zalloc (grub_size_t size);
+void *grub_calloc (grub_size_t n, grub_size_t size);
 void *grub_realloc (void *ptr, grub_size_t size);
 void  grub_free (void *ptr);
 

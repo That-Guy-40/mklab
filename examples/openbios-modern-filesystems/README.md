@@ -73,11 +73,14 @@ openbios-modern-filesystems/
     ├── grub2fs_fs.c     — the OpenBIOS /packages/grub2fs-files package (open/read/…)
     ├── grub2fs.h        — shared internals (disk priv + inits)
     ├── build.xml        — fs library objects (condition FSYS_GRUB2FS)
-    └── grub/*.h         — 13 minimal shim headers (types+byteorder, err, mm, disk,
-                           device, file, fs, fshelp, dl, safemath, i18n, misc, symbol)
+    └── grub/*.h         — minimal shim headers: `types.h`+byteorder, `err.h`, `mm.h`,
+                           `disk.h`, `device.h`, `file.h`, `fs.h`, `fshelp.h`, `dl.h`,
+                           `safemath.h`, `i18n.h`, `misc.h`, `symbol.h`, and (POC-3)
+                           `charset.h` + `datetime.h` (copied `grub_utf16_to_utf8` /
+                           `grub_datetime2unixtime` inlines)
 ```
 
-## Status detail — S1 (the shim): POC-1a + POC-1b + POC-2 done
+## Status detail — S1 (the shim): POC-1a + POC-1b + POC-2 + POC-3 done
 
 - **POC-1a (done):** GRUB 2.12's unmodified `ext2.c` + `fshelp.c` compile clean against
   the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`).
@@ -91,5 +94,12 @@ openbios-modern-filesystems/
   a classic image). Proven by [`smoke-grub2fs.sh`](smoke-grub2fs.sh) with the negative
   control biting. Run: `./smoke-grub2fs.sh` → `PASS: grub2fs … read /HELLO from a MODERN
   ext2 image … byte-for-byte equal to grub-fstest …`.
-- **POC-3 (next):** FAT + ISO 9660 (add the `charset`/`datetime` shim and a real heap —
-  those drivers use `grub_realloc`, which the ext2 slice does not). See [`PLAN.md`](PLAN.md).
+- **POC-3 (done):** FAT + ISO 9660. grub2fs now owns a **real heap** (a first-fit
+  free-list over a 1 MiB static arena — OpenBIOS has no `realloc` and `free()` is a
+  no-op over a 128 KiB bump, which FAT/ISO cannot tolerate), plus `grub_utf16_to_utf8`
+  / `grub_datetime2unixtime` inlines and the `grub/fat.h`+`grub/exfat.h` on-disk-struct
+  headers (vendored verbatim). `grub2fs` reads a **FAT** and an **ISO 9660** image
+  byte-for-byte equal to `grub-fstest`, alongside the modern-ext2 read — proven by
+  [`smoke-grub2fs.sh`](smoke-grub2fs.sh) (build determinism 5/5). Run: `./smoke-grub2fs.sh`.
+- **Next:** the four-arch matrix (POC-4; ppc is the byte-order control) and the
+  `fs-edit-inplace` endgame. See [`PLAN.md`](PLAN.md).

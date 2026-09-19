@@ -51,6 +51,10 @@ command -v podman     >/dev/null || skip "podman not installed (grub2fs firmware
 command -v grub-fstest >/dev/null || skip "grub-fstest not installed (the foreign oracle — GRUB's own shim)"
 command -v mke2fs     >/dev/null || skip "mke2fs not installed (needed to author the ext2 images)"
 command -v python3    >/dev/null || skip "python3 not installed"
+command -v mkfs.vfat  >/dev/null || skip "mkfs.vfat not installed (needed to author the FAT image — POC-3)"
+command -v mcopy      >/dev/null || skip "mcopy (mtools) not installed (needed to place a file on the FAT image — POC-3)"
+ISOTOOL=""; command -v xorriso >/dev/null && ISOTOOL="xorriso -as mkisofs"; command -v genisoimage >/dev/null && ISOTOOL="genisoimage"
+[[ -n "$ISOTOOL" ]] || skip "no ISO authoring tool (xorriso or genisoimage) installed — POC-3 ISO arm"
 GF="$TREE/obj-amd64/openbios-unix"; GFD="$TREE/obj-amd64/openbios-unix.dict"
 [[ -f "$GF" && -f "$GFD" ]] || skip "no stock grubfs firmware at $GF — run openbios-the-rival-that-shipped/build-openbios.sh unix first (it is the negative control)"
 
@@ -120,4 +124,31 @@ cmp -s "$WD/nc-classic.bin" "$WD/oracle-classic.bin" \
     || fail "grubfs read the classic image but the bytes differ from grub-fstest — the control firmware is misbehaving"
 note "grubfs read /HELLO from the classic image, byte-equal to grub-fstest — it works, just not on modern ext2"
 
-pass "grub2fs (GRUB 2's ext2 driver behind an OpenBIOS package) read /HELLO from a MODERN ext2 image (inode size 256, dir_index/filetype) byte-for-byte equal to grub-fstest, which the shipped 0.97 grubfs could not (File not found) though it read a classic image — the read shim reads a modern block filesystem the frozen firmware cannot (S1 POC-1b build + POC-2 read, verified against a foreign oracle with the negative control biting)"
+# ── POC-3: grub2fs reads FAT and ISO 9660 too (positive oracle) ───────────────
+# 0.97 grubfs ALSO reads basic FAT/ISO (it has fsys_fat / fsys_iso9660), so there
+# is NO "old package can't read this format" control here — that control is
+# specific to modern ext (above). The proof for FAT/ISO is byte-equality with
+# grub-fstest (GRUB 2's own shim), i.e. grub2fs's fat.c/iso9660.c drivers, running
+# behind the OpenBIOS package + the grub2fs heap, read the same bytes GRUB does.
+note "POC-3 FAT: grub2fs mounts a FAT image and loads /HELLO"
+truncate -s 8M "$WD/fat.img"
+mkfs.vfat -n G2FS "$WD/fat.img" >/dev/null 2>&1 || fail "mkfs.vfat could not create the FAT image"
+mcopy -i "$WD/fat.img" "$WD/content/HELLO" ::/HELLO 2>/dev/null || fail "mcopy could not place /HELLO on the FAT image"
+grub-fstest "$WD/fat.img" cp /HELLO "$WD/oracle-fat.bin" 2>/dev/null || fail "grub-fstest could not read /HELLO from the FAT image (oracle failed)"
+drive_load "$G2" "$G2D" "$WD/fat.img" fat.bin > "$WD/fat.log" 2>&1
+[[ -s "$WD/fat.bin" ]] || fail "grub2fs produced no bytes loading /HELLO from the FAT image — $(grep -aoE 'File not found|panic[^ ]*|violation' "$WD/fat.log" | head -1) — see the run log"
+cmp -s "$WD/fat.bin" "$WD/oracle-fat.bin" \
+    || fail "grub2fs FAT read differs from grub-fstest ($(wc -c <"$WD/fat.bin") vs $(wc -c <"$WD/oracle-fat.bin") bytes) — the fat.c driver or the grub2fs heap read the wrong data"
+note "grub2fs read /HELLO from the FAT image, $(wc -c <"$WD/fat.bin") bytes, byte-equal to grub-fstest"
+
+note "POC-3 ISO: grub2fs mounts an ISO 9660 image and loads /HELLO"
+mkdir -p "$WD/isoroot"; cp "$WD/content/HELLO" "$WD/isoroot/HELLO"
+$ISOTOOL -quiet -r -o "$WD/cd.iso" "$WD/isoroot" 2>/dev/null || fail "ISO authoring ($ISOTOOL) failed"
+grub-fstest "$WD/cd.iso" cp /HELLO "$WD/oracle-iso.bin" 2>/dev/null || fail "grub-fstest could not read /HELLO from the ISO (oracle failed)"
+drive_load "$G2" "$G2D" "$WD/cd.iso" iso.bin > "$WD/iso.log" 2>&1
+[[ -s "$WD/iso.bin" ]] || fail "grub2fs produced no bytes loading /HELLO from the ISO — $(grep -aoE 'File not found|panic[^ ]*|violation' "$WD/iso.log" | head -1) — see the run log"
+cmp -s "$WD/iso.bin" "$WD/oracle-iso.bin" \
+    || fail "grub2fs ISO read differs from grub-fstest ($(wc -c <"$WD/iso.bin") vs $(wc -c <"$WD/oracle-iso.bin") bytes) — the iso9660.c driver or the grub2fs heap read the wrong data"
+note "grub2fs read /HELLO from the ISO 9660 image, $(wc -c <"$WD/iso.bin") bytes, byte-equal to grub-fstest"
+
+pass "grub2fs (GRUB 2's ext2/fat/iso9660 drivers behind an OpenBIOS package, over grub2fs's own heap) read /HELLO byte-for-byte equal to grub-fstest from THREE filesystems: a MODERN ext2 image (inode size 256, dir_index/filetype) that the shipped 0.97 grubfs cannot read (File not found, though grubfs reads a classic image), plus a FAT and an ISO 9660 image — the read shim reads modern/foreign block filesystems the frozen firmware cannot or does not, verified against grub-fstest with the ext2 negative control biting (S1 POC-1b build + POC-2 ext2 + POC-3 FAT/ISO)"

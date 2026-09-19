@@ -295,8 +295,13 @@ void
 grub2fs_init( void )
 {
 	/* Populate grub_fs_list from the compiled-in drivers, then register the
-	 * package. Each grub_<name>_init is the vendored driver's GRUB_MOD_INIT. */
+	 * package. Each grub_<name>_init is the vendored driver's GRUB_MOD_INIT.
+	 * Order is not correctness-critical: open probes every registered fs and
+	 * each fs_open returns BAD_FS on a foreign image (distinct superblock magic
+	 * for ext2/fat/iso9660), so the matching driver is the one that succeeds. */
 	grub_ext2_init( NULL );
+	grub_fat_init( NULL );
+	grub_iso9660_init( NULL );
 
 	REGISTER_NODE( grub2fs );
 }

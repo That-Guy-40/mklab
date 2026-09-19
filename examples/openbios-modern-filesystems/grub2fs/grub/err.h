@@ -21,7 +21,8 @@ typedef enum
     GRUB_ERR_BAD_FILENAME,
     GRUB_ERR_NOT_IMPLEMENTED_YET,
     GRUB_ERR_IO,
-    GRUB_ERR_BAD_DEVICE
+    GRUB_ERR_BAD_DEVICE,
+    GRUB_ERR_EOF
   }
 grub_err_t;
 
