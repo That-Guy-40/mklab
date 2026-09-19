@@ -15,6 +15,10 @@ This lab operationalizes it. It is a sibling of, and composes with, the OpenBIOS
 toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/)
 (the `dsl/` readers and the `cpio-edit.fth` / `pe-edit.fth` editors the endgame reuses).
 
+**The S1 build plan and spike ladder are in [`PLAN.md`](PLAN.md)** — the
+package-method ↔ `grub_fs` mapping, the shim surface, and the grading (`grub-fstest cp`
+oracle + old `grubfs` negative control).
+
 ## Status — scaffolding (S0 complete; S1 is the next build)
 
 This lab is **being built**. What is done and measured:
@@ -55,8 +59,23 @@ the same boot). See the plan §2.1, §3.
 ```
 openbios-modern-filesystems/
 ├── README.md            — this file
-├── MANUAL_TESTING.md    — how to verify what exists so far (the S0 measurements)
-└── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
-    ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
-    ├── ext2.c fat.c iso9660.c fshelp.c
+├── PLAN.md              — S1 build plan + spike ladder (the mapping, surface, grading)
+├── MANUAL_TESTING.md    — how to verify what exists so far
+├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
+│   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
+│   └── ext2.c fat.c iso9660.c fshelp.c
+└── grub2fs/             — the shim (POC-1a: the minimal grub/ header adapter)
+    └── grub/*.h         — types+byteorder, err, mm, disk, device, file, fs,
+                           fshelp, dl, safemath, i18n, misc, symbol
 ```
+
+## Status detail — S1 (the shim) is under way
+
+- **POC-1a (done):** GRUB 2.12's unmodified `ext2.c` + `fshelp.c` compile clean against
+  the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`) — the
+  proof that the shim approach builds GRUB 2's real driver code with no changes to it.
+- **POC-1b (next):** the glue (`grub_disk_read`→`seek_io`/`read_io`, `grub_malloc`,
+  `grub_error`, `grub_fs_register`, …) + the OpenBIOS package + build wiring, so
+  `openbios-unix` builds with `CONFIG_FSYS_GRUB2FS`.
+- **POC-2:** mount + read a modern `mke2fs` image, bytes `==` `grub-fstest cp`, old
+  `grubfs` as the negative control. See [`PLAN.md`](PLAN.md).
