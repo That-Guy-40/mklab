@@ -75,6 +75,7 @@ openbios-modern-filesystems/
 ├── fs-tiers.toml        — POC-5: the DERIVED tier table (regenerate: smoke-fs-tiers.sh --emit)
 ├── smoke-fs-blocks.sh   — endgame E1: grub2fs `blocks-of` reports a file's device data LBAs
 ├── smoke-fs-edit-inplace.sh — endgame E2: same-length in-place file write; fsck clean; host reads the fix
+├── smoke-fs-dir.sh      — S1 dir: grub2fs `dir hd:\` lists a modern ext2 directory (grubfs can't)
 ├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
 │   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
 │   └── ext2.c fat.c iso9660.c fshelp.c
@@ -139,6 +140,11 @@ openbios-modern-filesystems/
   [`smoke-fs-tiers.sh`](smoke-fs-tiers.sh). **UNCOVERED-by-name:** Tier 2 cost
   (`info blockstats` — hosted firmware has no counted block device); U-Boot + `libsa`
   readers (§2.1a/b, not built — a two-reader table).
+- **S1 `dir` (done):** `dir hd:\` through grub2fs **lists** a modern `mke2fs` ext2
+  directory (S1's literal milestone, design notes §4) — the stock 0.97 grubfs cannot
+  (its `dir` is a stub and it can't mount a modern-ext2 directory). `open` succeeds for
+  a directory path and the `dir` method drives `fs->fs_dir` with a buffering hook,
+  marking subdirectories with a trailing `\`. Proven by [`smoke-fs-dir.sh`](smoke-fs-dir.sh).
 - **Endgame E1 (blocks-of, done):** the read-side foundation of the `fs-edit-inplace`
   endgame — grub2fs reports a file's exact **device data-block LBAs** (a `blocks-of`
   method: `fshelp.c` fires `disk->read_hook` for the file-data reads only, so a recording
