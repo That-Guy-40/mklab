@@ -14,7 +14,8 @@ For per-lab status see the phase `SHOWCASE.md`s and
 *Written 2026-09-20 from a measured audit of `main` at `48774b8` — every claim below was derived
 from the checkout, the CI run logs, and the runner job records, not from the plan documents. This
 section is the entry point: read it first, do the two items in order, and move it down into §0
-(as a dated ✅) when both are merged. Nothing here has been changed yet; the audit only read.*
+(as a dated ✅) when both are merged. Nothing here has been changed yet; the audit only read.
+What this brief consciously defers — and why — is ledgered in [`DEFERRED.md`](DEFERRED.md).*
 
 ### Why this is at the top
 
@@ -115,6 +116,18 @@ containers. **Tier B — the firmware's four-arch OpenBIOS tracks — was green 
 **Acceptance:** a PR whose `ci.yml` run is fully green (all four jobs), whose diff touches
 `phase4-podman/tests/test-pod-lifecycle.sh` (and at most `lib.sh` if the helper needs a tiny
 extension), and whose description quotes the control biting.
+
+**Deferral record (2026-09-20, after #459 merged as `39e19fb`).** The brief above already
+prescribes the fix — this item *is* the specification: the bounded `await_match` wait, the
+control that must bite, and the never-skip guardrails, for Opus 4.8 to land as its own
+one-test PR against `phase4-podman`. It was deliberately **not folded into #459**: that PR was
+docs-only, and the authoring host had no `podman`, so the fix could not be verified with the
+tool the subject runs (point 5). #459 was merged over the red it documents, by the owner's
+explicit call, with a standing-down comment on the PR naming the failure; the red has since
+continued on #460 (run 1024) and #461 (run 1026), so point 6's "do not merge over red" counts
+from **this fix landing**. The repo-level ledger entry is
+[`DEFERRED.md` D1](DEFERRED.md#d1--the-phase4-podman-readiness-race-fix-deferred-out-of-459-2026-09-20);
+close both when the PR lands.
 
 ### Item 1a/1b — two hygiene gaps the same audit surfaced (small, do alongside or right after)
 
