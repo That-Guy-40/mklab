@@ -19,9 +19,10 @@ toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-sh
 package-method ↔ `grub_fs` mapping, the shim surface, and the grading (`grub-fstest cp`
 oracle + old `grubfs` negative control).
 
-## Status — scaffolding (S0 complete; S1 is the next build)
+## Status — S1 read shim DONE (POC-1..5); the `fs-edit-inplace` endgame is next
 
-This lab is **being built**. What is done and measured:
+The `grub2fs` read shim is built and graded (POC-1..4), and its **tier table** is
+derived and provenance-bound (POC-5, §"Status detail" below). What is done and measured:
 
 - **S0(1) — the license question (DONE 2026-09-16).** GRUB 2 is GPL-3.0-or-later;
   OpenBIOS's package interface is GPLv2-only (measured: 0 "or later" files in the
@@ -38,14 +39,16 @@ This lab is **being built**. What is done and measured:
   GRUB 2.12 driver files byte-exact, with a provenance + license README (GPLv3+,
   lab-only, `sha256` + GPG-verified tarball).
 
-**Next (S1):** the `grub2fs` read shim itself — a `/packages` package that translates
-OpenBIOS's method set (`open`/`read`/`seek`/`dir`) onto GRUB 2's `grub_fs` API over
-the parent device node, graded byte-for-byte against `grub-fstest cp` (GRUB's own
-shim as the oracle), with the old `grubfs` package as the negative control (a modern
-image must read `File not found` through it and the right bytes through `grub2fs` in
-the same boot). See the plan §2.1, §3.
+**The shim (S1, DONE):** a `/packages/grub2fs` that translates OpenBIOS's method set
+(`open`/`read`/`seek`/`dir`) onto GRUB 2's `grub_fs` API over the parent device node,
+graded byte-for-byte against `grub-fstest cp` (GRUB's own shim as the oracle), with the
+old `grubfs` package as the negative control (a modern image reads `File not found`
+through it and the right bytes through `grub2fs` in the same boot). See the plan §2.1, §3.
 
-## The tracks the plan defines (not yet built)
+## The tracks the plan defines
+
+`fs-combo`/`fs-tiers` are **DONE** (Tier 1 — POC-5, [`fs-tiers.toml`](fs-tiers.toml));
+`store-tiers` and the `fs-edit-inplace` endgame are pending.
 
 | track | what it proves |
 |---|---|
@@ -63,9 +66,13 @@ openbios-modern-filesystems/
 ├── MANUAL_TESTING.md    — how to run the smoke + the success signature
 ├── build-grub2fs.sh     — build openbios-unix WITH grub2fs (in a throwaway tree copy;
 │                          the shared tree is never touched) -> $WORKDIR/grub2fs/
+│                          (GRUB2FS_ONLY=1 -> a grub2fs-only firmware for POC-5 attribution)
 ├── smoke-grub2fs.sh     — one-verdict test: grub2fs reads a modern ext2 grubfs can't
 ├── build-grub2fs-arch.sh — POC-4: build grub2fs into the real ppc/x86 firmware
 ├── smoke-grub2fs-arches.sh — POC-4: the ppc big-endian byte-order control (== grub-fstest)
+├── fixtures/fs-corpus/  — POC-5: build-fs-corpus.sh (one image per edge, foreign-validated)
+├── smoke-fs-tiers.sh    — POC-5: derive + verify the per-format probe order (fs-combo/fs-tiers)
+├── fs-tiers.toml        — POC-5: the DERIVED tier table (regenerate: smoke-fs-tiers.sh --emit)
 ├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
 │   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
 │   └── ext2.c fat.c iso9660.c fshelp.c
@@ -82,7 +89,7 @@ openbios-modern-filesystems/
                            `grub_datetime2unixtime` inlines)
 ```
 
-## Status detail — S1 (the shim): POC-1a + POC-1b + POC-2 + POC-3 + POC-4 (ppc byte-order control) done
+## Status detail — S1: POC-1a + POC-1b + POC-2 + POC-3 + POC-4 (ppc byte-order control) + POC-5 (fs-tiers) done
 
 - **POC-1a (done):** GRUB 2.12's unmodified `ext2.c` + `fshelp.c` compile clean against
   the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`).
@@ -116,5 +123,19 @@ openbios-modern-filesystems/
   no regression). **UNCOVERED-by-name:** FAT/ISO on ppc (a device-path quirk, not byteorder —
   the shared `grub_le_to_cpu` is proven by the ext2 row); x86 real-firmware; sparc (no
   cross-toolchain in the build container).
+- **POC-5 (fs-combo/fs-tiers, done — Tier 1):** one **corpus of edge images**
+  ([`fixtures/fs-corpus/`](fixtures/fs-corpus/build-fs-corpus.sh): ext2 classic/modern,
+  FAT 16/32/vfat-long, ISO plain/Rock Ridge) read through **both** readers this lab has —
+  grubfs (0.97) and grub2fs — via **single-reader firmwares** (a `GRUB2FS_ONLY=1` build,
+  so attribution needs no probe-order guess), each read graded byte-equal to a **foreign**
+  oracle (debugfs/mcopy/isoinfo). The per-format order is **derived, not opined**:
+  **ext2 → grub2fs first** (grubfs *partial*: `File not found` on the modern decider),
+  **iso9660 → both eligible, tie UNBROKEN** (needs Tier 2 cost), **fat → grub2fs sole
+  reader here**. Written to [`fs-tiers.toml`](fs-tiers.toml), **bound to the corpus by an
+  anchor sha** (stale → refused). Controls A (reversed ext2 order = LIED), B (stale anchor
+  refused), C (byte-changed payload read back as the new bytes) all bite. Proven by
+  [`smoke-fs-tiers.sh`](smoke-fs-tiers.sh). **UNCOVERED-by-name:** Tier 2 cost
+  (`info blockstats` — hosted firmware has no counted block device); U-Boot + `libsa`
+  readers (§2.1a/b, not built — a two-reader table).
 - **Next:** the `fs-edit-inplace` endgame (same-length in-place file write on a real block
   filesystem). See [`PLAN.md`](PLAN.md).
