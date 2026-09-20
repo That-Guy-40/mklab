@@ -8,7 +8,19 @@
 > none. An item that is quietly done is as misleading as one quietly abandoned: **update
 > this file when an item lands.**
 
-## D1 — the `phase4-podman` readiness-race fix (deferred out of #459, 2026-09-20)
+## D1 — the `phase4-podman` readiness-race fix — ✅ RESOLVED 2026-09-20 (fix/phase4-podman-readiness-race)
+
+**✅ Closed.** `test-pod-lifecycle.sh`'s one-shot probe at line 57 is replaced with a bounded
+readiness wait on the observable outcome —
+`await_match 30 nginx -- "$LAB_PODMAN" exec "$LAB/b" -- wget -q -O- http://localhost/` — so the
+test waits for nginx to *answer*, not merely for its container to be *listed*. Verified on a host
+with **podman 4.9.3**: `tests/run-all.sh` → `26/26 discovered tests ran — 24 passed, 2 skipped,
+0 failed`, and the **control bit** — pointing the same wait at a dead port (`:81`) expired at its
+5 s deadline with `wget: can't connect … Connection refused` and returned non-zero (a real
+bounded wait, not a hang, not a false pass). Diff touches only `test-pod-lifecycle.sh`. The
+process guardrail (do not merge over a red `shell test suites`) starts counting from this fix.
+
+<details><summary>Original entry (why it was deferred out of #459)</summary>
 
 **What.** `phase4-podman/tests/test-pod-lifecycle.sh` awaits the pod and both containers
 *existing* (`await_line 20` on their names), then probes nginx **immediately** at line 57 —
@@ -62,6 +74,8 @@ measured, [run 1021](https://github.com/That-Guy-40/mklab/actions/runs/354542725
 Intermittent across PR runs — 986 failed and its re-run 987 passed; 1003 and 1007 passed amid
 failures — which is a race's fingerprint, not a broken test. Every other suite in the step
 prints `0 failed`.
+
+</details>
 
 ## D2–D4 — deferred by the same brief, not started
 
