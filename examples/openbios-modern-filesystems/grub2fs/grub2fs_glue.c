@@ -318,7 +318,13 @@ grub_disk_read (grub_disk_t disk, grub_disk_addr_t sector,
 		grub_errno = GRUB_ERR_READ_ERROR;
 		return grub_errno;
 	}
-	/* disk->read_hook (progress/blocklist) is unused on the plain file-read
-	 * path — the package leaves file->read_hook NULL — so it is not called. */
+	/* Honor disk->read_hook. fshelp.c scopes it to the FILE-DATA reads only
+	 * (sets it before the data read, clears it after — see fshelp.c), so the
+	 * `blocks-of` method sets a recorder and learns the exact device sectors a
+	 * file's content sits on — the endgame's block map (design notes §2.6). It
+	 * stays NULL on the plain load/read path, so this is a no-op there. */
+	if (disk->read_hook)
+		disk->read_hook (sector, (unsigned) offset, (unsigned) size,
+				 disk->read_hook_data);
 	return GRUB_ERR_NONE;
 }

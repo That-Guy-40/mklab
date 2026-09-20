@@ -19,7 +19,7 @@ toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-sh
 package-method ↔ `grub_fs` mapping, the shim surface, and the grading (`grub-fstest cp`
 oracle + old `grubfs` negative control).
 
-## Status — S1 read shim DONE (POC-1..5); the `fs-edit-inplace` endgame is next
+## Status — S1 read shim DONE (POC-1..5); the `fs-edit-inplace` endgame is underway (E1 `blocks-of` done)
 
 The `grub2fs` read shim is built and graded (POC-1..4), and its **tier table** is
 derived and provenance-bound (POC-5, §"Status detail" below). What is done and measured:
@@ -73,6 +73,7 @@ openbios-modern-filesystems/
 ├── fixtures/fs-corpus/  — POC-5: build-fs-corpus.sh (one image per edge, foreign-validated)
 ├── smoke-fs-tiers.sh    — POC-5: derive + verify the per-format probe order (fs-combo/fs-tiers)
 ├── fs-tiers.toml        — POC-5: the DERIVED tier table (regenerate: smoke-fs-tiers.sh --emit)
+├── smoke-fs-blocks.sh   — endgame E1: grub2fs `blocks-of` reports a file's device data LBAs
 ├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
 │   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
 │   └── ext2.c fat.c iso9660.c fshelp.c
@@ -137,5 +138,15 @@ openbios-modern-filesystems/
   [`smoke-fs-tiers.sh`](smoke-fs-tiers.sh). **UNCOVERED-by-name:** Tier 2 cost
   (`info blockstats` — hosted firmware has no counted block device); U-Boot + `libsa`
   readers (§2.1a/b, not built — a two-reader table).
-- **Next:** the `fs-edit-inplace` endgame (same-length in-place file write on a real block
-  filesystem). See [`PLAN.md`](PLAN.md).
+- **Endgame E1 (blocks-of, done):** the read-side foundation of the `fs-edit-inplace`
+  endgame — grub2fs reports a file's exact **device data-block LBAs** (a `blocks-of`
+  method: `fshelp.c` fires `disk->read_hook` for the file-data reads only, so a recording
+  hook learns the segments; the glue now honors the hook, no new driver code). Graded by a
+  **foreign** oracle: the raw device bytes at the reported LBAs **reconstruct the file**
+  byte-for-byte (single- and multi-block), sum to its exact size, and agree with `debugfs`;
+  a control (rewrite the bytes on disk → the map follows) bites. Proven by
+  [`smoke-fs-blocks.sh`](smoke-fs-blocks.sh).
+- **Next (endgame E2):** the same-length in-place write itself — `blocks-of` + a
+  same-length overwrite + the block-**write** seam → `fsck` clean + host reads the fix.
+  Blocked on a write seam (hosted disk is `O_RDONLY`; needs a writable hosted disk or a
+  QEMU arch). See [`PLAN.md`](PLAN.md) and design notes §2.6.

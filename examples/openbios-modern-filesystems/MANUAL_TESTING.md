@@ -166,11 +166,40 @@ this is honestly a two-reader table. The **dispatcher** (§2.1d, decisive-mount
 fall-through in `libopenbios/`) is not built; `fs-tiers.toml` is the *data* a generated
 probe-order table would consume.
 
-## 5. Pending (not yet built — UNKNOWN, by name)
+## 5. The endgame, E1 — `blocks-of` — `./smoke-fs-blocks.sh`
 
-- **`store-tiers`** (§2.5) and the **`fs-edit-inplace`** endgame (§2.6, same-length
-  in-place write on a real block fs). *Pending.*
-- **Tier 2 cost** for `fs-tiers` (above) — needs a QEMU arch's `info blockstats`.
+The `fs-edit-inplace` endgame (§2.6) is a same-length in-place file write on a real
+block fs. Its read-side foundation is **`blocks-of`**: the shim reports the exact
+**device LBAs** a file's *data* occupies — what makes the eventual write surgical
+(write only those sectors, touch no metadata → `fsck` stays clean). GRUB's readers
+already walk the block chain; `fshelp.c` fires `disk->read_hook` for the FILE-DATA
+reads only, so the glue now honors the hook (~10 lines) and a `blocks-of` package
+method re-reads the file with a recording hook to learn the segments.
+
+```
+$ ./smoke-fs-blocks.sh
+```
+
+drives (via the grub2fs-only firmware) `" hd:\FILE" open-dev … " blocks-of" $call-method`
+— note **≤80-column typed lines** (the hosted `openbios-unix` input is 80-column; a
+longer line is silently truncated). The grade is a **foreign** oracle: for a single-
+and a multi-block file, the raw device bytes read straight off the image at the
+reported LBAs **reconstruct the file byte-for-byte** and sum to its exact size,
+agreeing with `debugfs`. A control (rewrite the file's bytes on disk → `blocks-of`'s
+map follows to the new content) bites, proving the map is read live, not cached.
+Verdict: `PASS: grub2fs blocks-of reports a file's exact device data LBAs …`.
+
+**E2 (the write itself) is BLOCKED on a write seam, named:** hosted `openbios-unix`
+opens the image `O_RDONLY` (a deliberate safety choice) and `arch/unix/blk.c` exposes
+no `write-blocks`, so writing the file's blocks back needs either a writable hosted
+disk (staged in the throwaway build) or a QEMU arch with a real writable block device.
+
+## 6. Pending (not yet built — UNKNOWN, by name)
+
+- **E2 / E3 of the endgame** (§2.6): the same-length in-place write (`fsck` clean +
+  host reads the fix) and "boot it" — blocked on the write seam named in §5.
+- **`store-tiers`** (§2.5). *Pending.*
+- **Tier 2 cost** for `fs-tiers` (§4) — needs a QEMU arch's `info blockstats`.
 - x86 real-firmware + sparc rows of the four-arch matrix (ppc is DONE — §3b). sparc: no
   cross-toolchain in the build container. sun4m/sparc32's ROM ceiling was **not** measured
   (a sparc ceiling, out of

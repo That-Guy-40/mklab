@@ -209,6 +209,87 @@ grub2fs_files_load( grub2fs_info_t *mi )
 	RET( (int)ret );
 }
 
+/************************************************************************/
+/*	blocks-of: the file's DATA BLOCKS on the parent device		*/
+/*	(the endgame's read-side addition, design notes §2.6)		*/
+/************************************************************************/
+/*
+ * A file's bytes live in data blocks at known LBAs on the parent device. GRUB's
+ * ext2/fat/iso readers already walk the extent/block chain to those blocks to read
+ * them; fshelp.c fires disk->read_hook for exactly those FILE-DATA reads (it sets
+ * the hook around the data read and clears it after — metadata reads are not
+ * hooked). So we re-read the whole file with a recording hook and learn the device
+ * segments its content occupies — no new driver code, per §2.6.
+ *
+ * These segments are what a SAME-LENGTH in-place write (the endgame proper) writes
+ * back: the very sectors already allocated to the file, touching no fs metadata.
+ * blocks-of is graded by reading those raw device ranges on the host and confirming
+ * they reconstruct the file (smoke-fs-blocks.sh).
+ */
+#define G2_MAXSEG 1024
+typedef struct {
+	unsigned long long off[G2_MAXSEG];   /* absolute device byte offset */
+	unsigned           len[G2_MAXSEG];
+	int                n;
+	int                overflow;
+	unsigned long long partoff;          /* partition byte offset (priv.offset) */
+} g2_blkrec_t;
+static g2_blkrec_t g2_blkrec;
+
+static grub_err_t
+g2_blk_hook( grub_disk_addr_t sector, unsigned offset, unsigned length, void *data )
+{
+	g2_blkrec_t *r = (g2_blkrec_t *) data;
+	if (r->n >= G2_MAXSEG) { r->overflow = 1; return GRUB_ERR_NONE; }
+	r->off[r->n] = (unsigned long long) sector * GRUB_DISK_SECTOR_SIZE
+		     + (unsigned long long) offset + r->partoff;
+	r->len[r->n] = length;
+	r->n++;
+	return GRUB_ERR_NONE;
+}
+
+/* ( -- ) prints the file's device data-block segments as G2BLK: lines */
+static void
+grub2fs_files_blocks_of( grub2fs_info_t *mi )
+{
+	static char scratch[8192];
+	grub_off_t remaining;
+	int i;
+
+	if (!mi->mounted) { forth_printf("G2BLK: not mounted\n"); return; }
+
+	g2_blkrec.n = 0;
+	g2_blkrec.overflow = 0;
+	g2_blkrec.partoff = (unsigned long long) mi->priv.offset;
+	mi->file.read_hook = g2_blk_hook;
+	mi->file.read_hook_data = &g2_blkrec;
+	mi->file.offset = 0;
+
+	/* read the whole file (in chunks) so the hook sees every data-block read */
+	remaining = mi->file.size;
+	while (remaining > 0) {
+		int chunk = (remaining > (grub_off_t) sizeof(scratch))
+			  ? (int) sizeof(scratch) : (int) remaining;
+		grub_ssize_t got;
+		grub_errno = GRUB_ERR_NONE;
+		got = mi->file.fs->fs_read( &mi->file, scratch, chunk );
+		if (got <= 0) break;
+		mi->file.offset += got;
+		remaining -= got;
+	}
+
+	mi->file.read_hook = 0;
+	mi->file.read_hook_data = 0;
+	mi->file.offset = 0;
+
+	forth_printf("G2BLKS: n=%d size=%lld%s\n", g2_blkrec.n,
+		     (long long) mi->file.size,
+		     g2_blkrec.overflow ? " OVERFLOW" : "");
+	for (i = 0; i < g2_blkrec.n; i++)
+		forth_printf("G2BLK: off=%lld len=%u\n",
+			     (long long) g2_blkrec.off[i], g2_blkrec.len[i]);
+}
+
 /* ( -- cstr ) */
 static void
 grub2fs_files_get_fstype( grub2fs_info_t *mi )
@@ -284,6 +365,7 @@ NODE_METHODS( grub2fs ) = {
 	{ "tell",	grub2fs_files_tell	},
 	{ "load",	grub2fs_files_load	},
 	{ "dir",	grub2fs_files_dir	},
+	{ "blocks-of",	grub2fs_files_blocks_of	},
 
 	/* special */
 	{ "get-fstype",	grub2fs_files_get_fstype },
