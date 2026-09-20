@@ -9,6 +9,223 @@ For per-lab status see the phase `SHOWCASE.md`s and
 
 ---
 
+## ⏭ NEXT — an implementation brief for Opus 4.8: get `main` green, then build the Tier-0 contract (2026-09-20)
+
+*Written 2026-09-20 from a measured audit of `main` at `48774b8` — every claim below was derived
+from the checkout, the CI run logs, and the runner job records, not from the plan documents. This
+section is the entry point: read it first, do the two items in order, and move it down into §0
+(as a dated ✅) when both are merged. Nothing here has been changed yet; the audit only read.*
+
+### Why this is at the top
+
+The firmware family's [roadmap](FIRMWARE_FAMILY_ROADMAP.md) made one load-bearing architecture
+decision — **a federation of separable readers/writers behind a thin shared contract, NOT one
+fused DSL** ([§2](FIRMWARE_FAMILY_ROADMAP.md#2-architecture-decision-locked-a-federation-not-a-fusion)).
+That decision **survived the 2026-09-16 re-measurement word for word**, and the built code gave it
+*stronger* evidence than the plans did: **four modules refuse bad input four different ways** —
+`elf.fth` **aborts** through `struct.fth`'s `chk`; `fdt-read.fth`'s `fdt-open` **returns a flag**
+and prints `BAD-MAGIC`; `eventlog.fth` **sets a variable** (`ev-err`) and prints `!BADALG`; and
+`cbfs.fth`'s `cbfs-list` **stops silently** at the first non-`LARCHIVE` and prints `CBFS-END`, so a
+corrupt first entry is indistinguishable from an empty CBFS. That last one is a **defect**, not a
+style, and the tracks never catch it because `cbfstool`'s listing is the oracle. This is exactly the
+drift the contract exists to close — not ten documents disagreeing about an API, but four modules
+that already do. **The contract and its slim-profile checker are the one Tier-0 piece of the
+roadmap still unbuilt.** That is item 2 below.
+
+But item 2 must wait for item 1, because **`main`'s CI is red and has been for two days**, and a
+conformance checker landed on a red `main` proves nothing — its own green would be one more tick
+nobody reads.
+
+### Item 1 — `main` is red from a readiness race in `phase4-podman`, not from the firmware family
+
+**The finding.** `main`'s `ci.yml` job **"shell test suites (daemon/root tests self-skip)"** has
+failed on **13 consecutive pushes since 2026-09-18 08:10 UTC** (run 996, #446) through the newest
+(run 1021, #458, 2026-09-19 16:13). The other three jobs — shellcheck, link/learning-path
+integrity, pytest — are green on every one of them. Read from the **full** step logs of both the
+first red run and the latest, the failing step is `Run every phase's run-all.sh`, and exactly one
+suite reports a failure, identical both times:
+
+```
+phase4-podman/tests/test-pod-lifecycle.sh
+FAIL: b couldn't reach a via localhost; got: wget: can't connect to remote host: Connection refused
+summary: 26/26 discovered tests ran (26 test files on disk) — 25 passed, 0 skipped, 1 failed
+```
+
+Every other suite in that step prints `0 failed` (phase1 28/28, phase2 27/27, phase3 27/27,
+phase5 21/21, phase7 20/20, netboot 4/4, the small labs, the rival lab 66/66 with 6 passed /
+60 skipped, micro-cloud 23/23, nested-calico 8/8, metal-as-a-service 39/39). The rival lab's
+trailing `UNKNOWN: none of the 58 boot tracks executed …` verdict is **stderr text with exit 0**
+(it has existed since 2026-08-30, #361) and is *not* the cause; the odd `UNKNOWN: NOTHING and`
+tokens in the step's skipped-list annotation are just `ci.yml`'s `awk` reading that verdict's
+first words after the skipped list. Ignore them.
+
+**It is a readiness race, not a regression.** Read
+[`phase4-podman/tests/test-pod-lifecycle.sh`](phase4-podman/tests/test-pod-lifecycle.sh): it
+brings the pod up, then `await_line 20 …` for the pod to **exist** and for both containers to be
+**listed as running**, and then — at line 57 — immediately runs
+`podman exec b -- wget -q -O- http://localhost/` against `a`'s nginx. Nothing waits for nginx to
+be **listening**. A container that is *running* is not a server that is *accepting*; `wget` fires
+into the gap and gets `Connection refused`. Three facts pin the diagnosis:
+
+- **Nothing in `phase4-podman/` changed** since `main` was last green (2026-09-18 07:42, #445).
+  `git log --since=2026-09-17 -- phase4-podman/` is empty.
+- **It is intermittent across PR-level runs**, which is the fingerprint of a race and not of a
+  broken test: PR run 986 failed and its re-run 987 passed; runs 1003 and 1007 passed amid a
+  string of failures; runs 991–1020 otherwise failed. `main` is pushed exactly once per merge, so
+  a race with a high trip rate looks like "red for two days" on `main` while an occasional PR
+  re-run goes green — **which is how 13 PRs came to be merged over a red `main`.**
+- **podman is `4.9.3` in both the first and latest red run** (same runner image family), so it
+  is not a runtime drift either.
+
+This is precisely the shape §0.4 below (*"the flaky-CI shape, partly fixed"*) already names —
+*"the state is eventual (a tool returning is not the container having done the thing)"* — and the repo's own cure is already in that suite's `lib.sh`:
+[`await_match`](phase4-podman/tests/lib.sh) (line 260; `await_line` at 259, both over `_await`
+at 244) sits two lines above the probe and is used by the very same test for the pod and the
+containers. **Tier B — the firmware's four-arch OpenBIOS tracks — was green on every one of those
+13 PRs.** The firmware family is not the problem; the podman lifecycle test is.
+
+**What to implement (Opus 4.8):**
+
+1. **Replace the one-shot probe at line 57 with a bounded readiness wait.** Use the suite's own
+   helper — something of the shape
+   `await_match 30 'nginx\|welcome' -- "$LAB_PODMAN" exec "$LAB/b" -- wget -q -O- http://localhost/`
+   — so the test waits (bounded, ~30 s) for nginx to *answer*, not merely for its container to be
+   *listed*. Keep the existing `fail "b couldn't reach a via localhost; got: …"` verdict for the
+   deadline-expired path, and keep it **specific** (it must still name *what* was unreachable and
+   quote the last output), per CLAUDE.md's "a failure must name the specific defect."
+2. **Assert the outcome, not the mechanism.** The claim is *"b reaches a over the pod's shared
+   network"*. Do not add a `sleep`; do not assert on `podman inspect` state; do not grep nginx's
+   log. A bounded await on the observable outcome is the whole fix.
+3. **The control must bite.** Prove the wait is real by breaking it: point the probe at a port
+   nothing listens on (or start `a` with a command that never serves) and watch the await expire
+   with the named `FAIL:`, within the deadline, not hang. CLAUDE.md: *"write the control first,
+   then break the subject and watch it bite."*
+4. **Never** skip, disable, quarantine, or `|| true` the test to get green; never push an empty
+   commit to re-roll the race; never widen this into a phase-4 refactor. One test, one wait, one
+   control.
+5. **Verify with the tool the subject runs.** `podman` is **not** on this session's host, so the
+   fix cannot be reproduced here — run `phase4-podman/tests/run-all.sh` on a host with podman
+   (or drive it through CI on the PR) and confirm `26/26 … 0 failed`, then confirm the control
+   fails by name. CI on the PR is the acceptance oracle: **`shell test suites` must be green on
+   the PR's own run, not just Tier B.**
+6. **Process, once:** until `main` is green again, do not merge over a red `shell test suites`
+   job. The last two days show what that costs — a real flake got normalised, and the next
+   genuine regression in that job would have been invisible.
+
+**Acceptance:** a PR whose `ci.yml` run is fully green (all four jobs), whose diff touches
+`phase4-podman/tests/test-pod-lifecycle.sh` (and at most `lib.sh` if the helper needs a tiny
+extension), and whose description quotes the control biting.
+
+### Item 1a/1b — two hygiene gaps the same audit surfaced (small, do alongside or right after)
+
+- **1a. The CBFS and attestation halves are verified only on the dev host.** Tier B's
+  `DEFAULT_TRACKS` ([`.github/workflows/openbios-tier-b.yml`](.github/workflows/openbios-tier-b.yml),
+  line 64) now carries 30 tracks — including `cpio pe bootparams uki cmdline-edit cmdline-ptr
+  initrd-swap config-edit uki-edit` — but **not** `cbfs`, `cbfs-live`, `cbfs-write`,
+  `cbfs-payload`, `event-log`, `event-replay`, `event-real`, `event-bench`, nor a `sha256`
+  digest track. In headless `ci.yml` those eight wrappers **SKIP** for want of the coreboot ROM
+  and `tpm2-tools`. So the SHA-256 vectors, the event-log-vs-`tpm2_eventlog` replay, and every
+  CBFS read/write control are green **only where the author sits** — "measured HERE is not
+  measured THERE," the roadmap §1 row, still open. Fix shape: either add the ROM + `tpm2-tools`
+  install to the Tier B job and put those tracks in `DEFAULT_TRACKS`, or give them their own
+  scheduled Tier B job with those preconditions installed **and a strict gate** so a skip is red,
+  not a warning (the §0.4 / air-gapped-install lesson). Name whichever tracks still cannot run in
+  CI rather than letting them skip quietly.
+- **1b. The `qemu-system` install step can fail silently.** In the latest `main` run
+  (35454272557) the step `Install qemu-system (so phase 2's argv unit tests RUN, not SKIP)`
+  completed in **2 seconds** (16:13:54→16:13:56); in the first red run it took 14 s. Two seconds
+  is an `apt-get` that did not install anything — the step's `|| echo "::warning::…"` swallowed
+  the failure — and the consequence is visible downstream: `metal-as-a-service` rows and phase 2's
+  argv rows all printed `SKIP: missing required command: qemu-system-x86_64`, so **every
+  QEMU-gated guard in that run was UNKNOWN**, inside a job that had claimed to install the tool.
+  This is the exact defect §0.4's strict gate was written for. Fix shape: after the install,
+  **assert** `command -v qemu-system-x86_64` and fail the step (`::error::` + `exit 1`) when it is
+  absent, or pass `strict` to `run_suite` for the suites that job installs preconditions for —
+  the same shape `airgap.sh preflight` + `run_suite … strict` already use for
+  `air-gapped-install`. A precondition the job installs is not an UNKNOWN when missing; it is a
+  CI defect.
+
+### Item 2 — the Tier-0 conformance contract + slim-profile checker (the roadmap's unbuilt piece)
+
+**Do this only after item 1 has `main` green.** The roadmap's
+[§2](FIRMWARE_FAMILY_ROADMAP.md#2-architecture-decision-locked-a-federation-not-a-fusion) specifies
+it and §3 Tier 0 owes it; the 2026-09-16 re-measurement found "the contract's vocabulary already
+exists, by hand" in places (`elf.fth`'s `hook` naming a missing `elf32.fth`; `?elf64` refusing a
+big-endian ELF by name; `struct.fth` already keeping `t-off`/`t-width`/`t-order` per field, so
+`NAME-fields`' data is there and only the word is missing). Build the word, not a framework.
+
+**What to build (Opus 4.8), in [`examples/openbios-the-rival-that-shipped/`](examples/openbios-the-rival-that-shipped/README.md):**
+
+1. **The contract, as a short document in `dsl/`** (`dsl/CONTRACT.md`, `contract v1`): the
+   required core every format module opts into — `NAME-open ( addr len -- handle )` (bind to a
+   buffer; refuse a bad magic **by name**), `NAME-fields ( handle -- )` (enumerate name/offset/
+   size for the grader and any UI), `NAME-validate ( handle -- reason|0 )` (the format's
+   invariants; `0` = valid, else a **named** reason), `NAME-manifest` (self-description: what it
+   reads, what it deliberately does **not**, its honesty label, its **arch scope**) — plus the
+   optional extensions `NAME-emit`/`NAME-write` (the writer half) and `NAME-live` (a seam-backed
+   handle, for pacme). The manifest must carry the two honesty axes the roadmap §5 fixed:
+   `ARCH: 4/4` or `ARCH: x86-only` (PE/UEFI subjects are x86-only by nature — say so), and
+   `HOST-ONLY` / `LIVE` / `SNAPSHOT` where they apply. **Keep the modules separate files**; the
+   contract is a *convention they conform to*, never a merge (owner's locked intent: prunable for
+   real hardware, liftable into its own repo).
+2. **Unify the refusal convention — this is the load-bearing part.** Pick one shape for "bad
+   input" (the plans' `NAME-validate` returning a named reason, with `NAME-open` refusing a bad
+   magic by name) and conform the four divergent modules to it: `elf.fth`, `fdt-read.fth`,
+   `eventlog.fth`, and — the actual defect — `cbfs.fth`, whose `cbfs-list` must **refuse a
+   corrupt first entry by name** rather than print `CBFS-END` and look empty. Each conformance
+   change needs its **own negative control that bites**: feed each module a deliberately corrupt
+   input (a flipped magic, a truncated header, a bad first CBFS entry) and watch it refuse *by
+   name*; before the change the CBFS control must **fail** (it currently reads as empty) — that
+   failing-then-passing pair is the proof the defect was real.
+3. **A loader/registry that composes what is present and NAMES what is absent.** Loading a
+   module registers its manifest; a build without module `X` is not an error, it prints
+   `MODULE X: not loaded`. This generalises what `elf.fth`'s `hook` does for `elf32.fth` today.
+4. **The conformance checker, `tests/test-contract-conformance.sh`, in the harness shape**
+   (`lib.sh`'s EXIT net, one `PASS`/`FAIL`/`SKIP` verdict, registered with `on_exit`, listed in
+   `run-all.sh`, with a `tests/test-harness-net.sh` sibling untouched). It must prove: every
+   registered module implements the required core; every `NAME-manifest` carries an arch scope
+   and an honesty label; every `NAME-validate` refuses its module's corrupt fixture **by name**;
+   and — **the separability guarantee** — a **slim profile** that loads the substrate
+   (`struct.fth`, `sha256.fth`) plus *any subset* of modules still passes, with each absent module
+   **named** absent and never silently mis-reported as present. **Per CLAUDE.md's "the control is
+   where the bugs are," the checker must prove itself on must-catch / must-not-catch fixtures
+   *before* it is aimed at a real module**: a module missing `NAME-validate` → caught; a manifest
+   with no arch scope → caught; a slimmed build that lies about a dropped module → caught; a
+   fully-conformant fixture → not caught. A scan that matches nothing and a scan that is broken
+   print the same green tick — build the fixtures first, watch them bite, then point it at `dsl/`.
+5. **Pin the consumers.** The one built capstone (the UKI rescue strand: `uki`, `cmdline-edit`,
+   `initrd-swap`, `config-edit`, `uki-edit`, `cmdline-ptr` tracks) and the in-flight
+   [`openbios-modern-filesystems`](examples/openbios-modern-filesystems/README.md) lab each gain a
+   one-line pin — *"consumes {pe, cpio, bootparams} at contract v1"* — in their README/plan, so
+   drift closes at the moment of building, as the roadmap intends. Do **not** retro-pin the
+   plan-only capstones; they pin when built.
+6. **Wire it into CI where it can actually run.** The conformance checker is headless on
+   `openbios-unix` and belongs in the rival lab's `run-all.sh` (so `ci.yml` runs it) **and** in
+   Tier B's `DEFAULT_TRACKS` if it has a four-arch form. If any part can only run on the dev host,
+   name it (see 1a) rather than letting it skip.
+
+**Acceptance:** `dsl/CONTRACT.md` at v1; the four modules conform with a negative control each
+(the CBFS one demonstrably failing before the fix); `test-contract-conformance.sh` green with its
+must-catch/must-not-catch fixtures exercised first; the slim-profile run green with absent modules
+named; the two consumers pinned; `link_check.py` 0 broken; `paths.py --check` green; CI green on
+the PR **including `shell test suites`** — which is why item 1 comes first.
+
+### Guardrails that apply to both items (the repo's, restated so they are not re-learned)
+
+- Every test ends on exactly one `PASS:`/`FAIL:`/`SKIP:` line; no test installs its own
+  `trap … EXIT` (the net is `lib.sh`'s).
+- Write the control first, break the subject, watch it bite; suspect the control when it
+  surprises you.
+- Assert the outcome the system must reach, never the mechanism; a version string is not an
+  identity; a record that outlives its subject is the bug class that fooled the roadmap's own
+  first draft — measure against the tree, not the plans.
+- Kill by PID, never by pattern; never pipe a command whose exit status is the gate (`grep -q`
+  SIGPIPEs the producer — §0.4's fifth instance).
+- Keep each PR minimal: item 1 is one test; item 2 is one contract, four conformances, one
+  checker. Do not fuse the DSLs.
+
+---
+
 ## 0. Next up — the three things nearest the front of the queue
 
 *Added 2026-08-07.* The list below is otherwise **in the order raised, not priority**, so
