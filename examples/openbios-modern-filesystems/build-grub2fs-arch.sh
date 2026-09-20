@@ -23,8 +23,18 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 TREE="$WORKDIR/openbios"
 IMG="${OPENBIOS_BUILD_IMG:-localhost/openbios-build:latest}"
-OUT="$WORKDIR/grub2fs-$ARCH"
-BUILDROOT="$WORKDIR/grub2fs-build-$ARCH"
+
+# GRUB2FS_ONLY=1 disables the old grubfs package (CONFIG_GRUBFS=false) so grub2fs is
+# the SOLE fs reader — an `open-dev hd:\file` is then unambiguously grub2fs's (with
+# grubfs registered too, grubfs mounts any ext2 first and answers open-dev, hiding
+# grub2fs's methods). The endgame's write path is reached through grub2fs, so it
+# needs this. Mirrors build-grub2fs.sh's GRUB2FS_ONLY.
+GRUB2FS_ONLY="${GRUB2FS_ONLY:-}"
+if [[ -n "$GRUB2FS_ONLY" ]]; then
+  OUT="$WORKDIR/grub2fs-only-$ARCH"; BUILDROOT="$WORKDIR/grub2fs-only-build-$ARCH"
+else
+  OUT="$WORKDIR/grub2fs-$ARCH"; BUILDROOT="$WORKDIR/grub2fs-build-$ARCH"
+fi
 COPY="$BUILDROOT/openbios"
 
 [[ -d "$TREE" ]] || { echo "no OpenBIOS tree at $TREE — run openbios-the-rival-that-shipped/build-openbios.sh first" >&2; exit 2; }
@@ -55,6 +65,10 @@ cp "$HERE/upstream-grub/fat.h" "$HERE/upstream-grub/exfat.h" "$COPY/include/grub
 cd "$COPY"
 sed -i 's#<include href="grubfs/build.xml"/>#<include href="grubfs/build.xml"/>\n <include href="grub2fs/build.xml"/>#' fs/build.xml
 sed -i "s#<option name=\"CONFIG_GRUBFS\" type=\"boolean\" value=\"true\"/>#<option name=\"CONFIG_GRUBFS\" type=\"boolean\" value=\"true\"/>\n  <option name=\"CONFIG_FSYS_GRUB2FS\" type=\"boolean\" value=\"true\"/>#" "config/examples/$CFG"
+if [[ -n "$GRUB2FS_ONLY" ]]; then
+  sed -i "s#<option name=\"CONFIG_GRUBFS\" type=\"boolean\" value=\"true\"/>#<option name=\"CONFIG_GRUBFS\" type=\"boolean\" value=\"false\"/>#" "config/examples/$CFG"
+  echo "grub2fs[$ARCH]: GRUB2FS_ONLY — grubfs package disabled (CONFIG_GRUBFS=false)"
+fi
 sed -i 's#\(mkdir -p \$OBJDIR/target/fs/grubfs\)#\1\n    mkdir -p $OBJDIR/target/fs/grub2fs#' config/scripts/switch-arch
 sed -i 's#extern void \tgrubfs_init( void );#extern void \tgrubfs_init( void );\nextern void \tgrub2fs_init( void );#' packages/packages.h
 python3 - <<'PY'
@@ -63,6 +77,57 @@ anchor="#ifdef CONFIG_GRUBFS\n\tgrubfs_init();\n#endif"
 assert anchor in s, "grubfs init block not found in packages/init.c"
 open(p,"w").write(s.replace(anchor, "#ifdef CONFIG_FSYS_GRUB2FS\n\tgrub2fs_init();\n#endif\n"+anchor, 1))
 PY
+
+# ── endgame E2 (ENDGAME_WRITE=1): expose a write-blocks METHOD on the ide disk ──
+# drivers/ide.c already carries a guarded ATA write path (ob_ide_write_sectors —
+# refuses ATAPI/CHS/out-of-LBA28/out-of-range); it is simply not bound as a Forth
+# method. Mirror read-blocks (drivers/floppy.c shows the shape) so the same-length
+# in-place write (design notes §2.6) can reach it. Off by default → POC-4's arch
+# builds are byte-for-byte unchanged.
+if [[ -n "${ENDGAME_WRITE:-}" ]]; then
+  echo "grub2fs[$ARCH]: ENDGAME_WRITE — exposing ide.c write-blocks (mirror of read-blocks)"
+  python3 - <<'PY'
+p = "drivers/ide.c"; s = open(p).read()
+fn = """static void
+ob_ide_write_blocks(int *idx)
+{
+\tcell n = POP(), cnt = n;
+\tucell blk = POP();
+\tunsigned char *src = (unsigned char *)cell2pointer(POP());
+\tstruct ide_drive *drive = *(struct ide_drive **)idx;
+
+\twhile (n) {
+\t\tunsigned int len = (unsigned int) n;
+\t\tif (len > (unsigned int) drive->max_sectors)
+\t\t\tlen = drive->max_sectors;
+\t\t/* ob_ide_write_sectors refuses ATAPI/CHS/out-of-LBA28/range by itself */
+\t\tif (ob_ide_write_sectors(drive, blk, src, len)) {
+\t\t\tIDE_DPRINTF("ob_ide_write_blocks: error\\n");
+\t\t\tRET(0);
+\t\t}
+\t\tsrc += len * drive->bs;
+\t\tn -= len;
+\t\tblk += len;
+\t}
+\tPUSH(cnt);
+}
+
+"""
+anchor = "static void\nob_ide_block_size(int *idx)"
+assert anchor in s, "ide.c: ob_ide_block_size anchor not found"
+s = s.replace(anchor, fn + anchor, 1)
+# add the method-table entry right after the read-blocks line (copy its indent)
+lines = s.splitlines(keepends=True); out = []; done = False
+for ln in lines:
+    out.append(ln)
+    if not done and '"read-blocks"' in ln and "ob_ide_read_blocks" in ln:
+        indent = ln[:len(ln) - len(ln.lstrip())]
+        out.append(indent + '{ "write-blocks",\tob_ide_write_blocks\t},\n')
+        done = True
+assert done, "ide.c: read-blocks method-table entry not found"
+open(p, "w").write("".join(out))
+PY
+fi
 
 echo "grub2fs[$ARCH]: building (switch-arch $SW) — one plain from-scratch make"
 podman run --rm -v "$COPY:/src" --userns=keep-id -w /src "$IMG" \

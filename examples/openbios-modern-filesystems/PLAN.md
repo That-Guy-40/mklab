@@ -80,8 +80,39 @@ FAT and ISO 9660 additionally pull in `charset` (`grub_utf16_to_utf8`), `datetim
 | POC-4 — the byte-order control (ppc DONE) | grub2fs built into the REAL ppc firmware (`build-grub2fs-arch.sh ppc` -> `openbios-qemu.elf`) and driven in `qemu-system-ppc` (BIG-ENDIAN): reads a modern little-endian ext2 image, `/HELLO` byte-for-byte == `grub-fstest`, inode size + data both correct through `grub_le_to_cpu*` (which SWAP on ppc). amd64 LE is proven hosted (`smoke-grub2fs.sh`). **x86 real-firmware + sparc are UNCOVERED-by-name** (sparc: no cross-toolchain in the build container). **Finding: the 1 MiB static-BSS heap overflowed the ppc ROM** (`.bss VMA wraps` — the S0 1 MiB ceiling); fixed by claiming the heap from RAM at first use (`alloc-mem` in `g2_init`), which fits any ROM. | `smoke-grub2fs-arches.sh` — ppc `load hd:\HELLO` via grub2fs == `grub-fstest` |
 | POC-5 — `fs-combo`/`fs-tiers` ✓ DONE (Tier 1) | one **corpus of edge images** read through every reader this lab has (grubfs 0.97, grub2fs) via **single-reader firmwares** (a `GRUB2FS_ONLY=1` build → attribution needs no probe-order guess); the per-format order **derived** from byte-equal grades against a **foreign** oracle (debugfs/mcopy/isoinfo). Result: **ext2 → grub2fs first** (grubfs *partial*, `File not found` on the modern decider); **iso9660 → both eligible, tie UNBROKEN** (needs Tier 2 cost); **fat → grub2fs sole reader here** (grubfs FAT not compiled). Emitted to `fs-tiers.toml`, **bound to the corpus by an anchor sha** (stale → refused). **Tier 2 cost (info blockstats) UNMEASURED** — hosted firmware has no counted block device; **U-Boot/`libsa` (§2.1a/b) not built** — a two-reader table, named as such. | `smoke-fs-tiers.sh` → PASS; controls **A** (reversed ext2 order = LIED), **B** (stale anchor refused), **C** (byte-changed payload read back as new bytes) all bite |
 | (endgame E1) `blocks-of` ✓ DONE | the shim reports a file's **device data-block LBAs** (a `blocks-of` package method: fshelp fires `disk->read_hook` for the FILE-DATA reads only, so a recording hook learns the segments — the glue now honors the hook, ~10 lines, no new driver code). Graded by a **foreign** oracle: the raw device bytes at the reported LBAs **reconstruct the file** byte-for-byte (single- and multi-block) and sum to its exact size, agreeing with `debugfs`; a control (rewrite the bytes on disk → the map follows) bites. | `smoke-fs-blocks.sh` → PASS |
-| (endgame E2) same-length in-place write | compose `blocks-of` + a same-length overwrite (refuse a length change BY NAME) + the **block-WRITE seam** → write the file's own data blocks back; grade: host reads the new bytes, same length, **`fsck` clean** (metadata untouched — the proof it is not a `dd`); neg control: a length-changing edit refused before any sector is written. **BLOCKED on a write seam:** hosted `openbios-unix` opens the image `O_RDONLY` (a deliberate safety choice) and `arch/unix/blk.c` has no `write-blocks` — so E2 needs either a writable hosted disk (staged in the throwaway build) or a QEMU arch with a real writable block device. | design notes §2.6 |
+| (endgame E2) same-length in-place write ✓ DONE (hosted) | `write-file` overwrites a file's own DATA blocks in place (the sectors `blocks-of` located) with exactly-its-own-length bytes → **no metadata touched** (`fsck` clean). Path: grub2fs `write-file` → parent `write` (the C deblocker `packages/deblocker.c` does RMW over `write-blocks`), same-length guarded (refuse a length change BY NAME). The hosted disk is made writable in the **throwaway build only** (`ENDGAME_WRITE=1`: `O_RDWR` + `arch/unix/blk.c` `write-blocks` + a `packages/disk-label.c` `parent_write_xt` relay — its `dlabel_write` was a hard `-1` stub). Grade: firmware edits `MODE=die`→`MODE=run`, host reads the fix, size unchanged, **`e2fsck` CLEAN**, and image-wide EXACTLY the 3 edited bytes differ (no metadata moved). Neg control: a length-changing edit refused by name, image byte-identical, fsck clean. | `smoke-fs-edit-inplace.sh` → PASS |
+| (endgame E2b) port the write to REAL firmware (qemu-ppc) — **DEFERRED, characterized as a spike below** | the faithful "real writable IDE" version | design notes §2.6; see the spike |
 | (endgame E3) boot it | the UKI Spike 11 config act moved to a real root fs: break a config, fix it in place at the prompt, **boot it** | design notes §2.6 |
+
+### Spike (deferred): port the same-length write to real firmware (qemu-ppc)
+
+E2 proves the mechanism on hosted `openbios-unix`. The faithful version — a real
+writable IDE on a QEMU arch — is characterized here from the E2 investigation, for a
+later attack. **What is reusable, platform-independent:** the whole grub2fs `write-file`
+method **and** the `packages/disk-label.c` `parent_write_xt` write relay. Only the arch
+disk write-seam and method-reachability differ.
+
+- **Arch = ppc** (`ppc_config.xml` has `DRIVER_IDE=true`; mac99's disk runs through
+  `drivers/ide.c`; grub2fs ext2 read is proven on ppc — POC-4).
+- **The ATA write already exists, guarded:** `drivers/ide.c` `ob_ide_write_sectors`
+  (refuses ATAPI/CHS/out-of-LBA28/range) + `ob_ide_write_ata_lba28` (`WIN_WRITE`) +
+  `ob_ide_write_blocks_nr`. `build-grub2fs-arch.sh ENDGAME_WRITE=1` **already stages** an
+  `ide.c` `write-blocks` method (mirror of `read-blocks`).
+- **Two known obstacles, mapped:**
+  1. **`open-dev hd:\file` on ppc returns the disk-label, not grub2fs** — so
+     `blocks-of`/`write-file` are not reachable via `open-dev` + `$call-method` (they are
+     on hosted). `load hd:\file` works via the fs-package **interpose** framework. The
+     port must open grub2fs through that framework (or expose a global word).
+  2. The **`packages/disk-label.c` write relay** (E2's hosted patch) applies unchanged;
+     the C deblocker already RMWs over `write-blocks`.
+- **The crux, UNCONFIRMED — NOT proven dead, just untested:** *does
+  `ob_ide_write_sectors` actually persist a `WIN_WRITE` to the qemu mac99 IDE drive?*
+  I could not fire it from the ppc prompt (couldn't reach a write-capable word). **The
+  decisive experiment:** a global `bind_func` word (e.g. `g2-ata-write ( buf blk -- flag )`
+  → `ob_ide_write_blocks_nr(0, blk, buf, 1)`), then check the qemu image changed on the
+  host. If it persists → the port is (ide write-blocks, staged) + (disk-label relay, done)
+  + (reach `write-file` via the fs framework). If it does **not** persist → the qemu IDE
+  write path itself (DMA/PIO write wiring in `ide.c`) needs fixing first.
 
 ## Where the code lives
 
@@ -102,3 +133,6 @@ FAT and ISO 9660 additionally pull in `charset` (`grub_utf16_to_utf8`), `datetim
   `smoke-fs-tiers.sh --emit`).
 - `smoke-fs-blocks.sh` — endgame E1: grades grub2fs's `blocks-of` (a file's device data LBAs)
   by reconstructing the file from raw device bytes at those LBAs.
+- `smoke-fs-edit-inplace.sh` — the endgame E2: grub2fs `write-file` edits a file in place on a
+  real ext2 fs (same-length), host reads the fix, `e2fsck` clean, only the edited bytes change.
+  Uses `GRUB2FS_ONLY=1 ENDGAME_WRITE=1 build-grub2fs.sh` (writable firmware, throwaway build only).

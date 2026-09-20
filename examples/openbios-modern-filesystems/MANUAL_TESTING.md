@@ -189,15 +189,46 @@ agreeing with `debugfs`. A control (rewrite the file's bytes on disk → `blocks
 map follows to the new content) bites, proving the map is read live, not cached.
 Verdict: `PASS: grub2fs blocks-of reports a file's exact device data LBAs …`.
 
-**E2 (the write itself) is BLOCKED on a write seam, named:** hosted `openbios-unix`
-opens the image `O_RDONLY` (a deliberate safety choice) and `arch/unix/blk.c` exposes
-no `write-blocks`, so writing the file's blocks back needs either a writable hosted
-disk (staged in the throwaway build) or a QEMU arch with a real writable block device.
+## 6. The endgame, E2 — same-length in-place write — `./smoke-fs-edit-inplace.sh`
 
-## 6. Pending (not yet built — UNKNOWN, by name)
+This is the sentence the whole design exists to reach: **fix a broken config on a real
+block filesystem, at the firmware prompt, with no USB stick.** `write-file` overwrites a
+file's own DATA blocks in place with exactly-its-own-length bytes — the sectors
+`blocks-of` located, already allocated to the file — so it touches **no filesystem
+metadata** and `fsck` stays clean. A length change is refused BY NAME (that is the
+general-writer lab, §5, not this).
 
-- **E2 / E3 of the endgame** (§2.6): the same-length in-place write (`fsck` clean +
-  host reads the fix) and "boot it" — blocked on the write seam named in §5.
+```
+$ ./smoke-fs-edit-inplace.sh
+```
+
+builds a **writable** grub2fs firmware — `GRUB2FS_ONLY=1 ENDGAME_WRITE=1
+./build-grub2fs.sh`, which in the **throwaway build only** opens the image `O_RDWR`, adds
+`arch/unix/blk.c` `write-blocks`, and adds the `packages/disk-label.c` write relay its
+`dlabel_write` stub lacked (the C deblocker `packages/deblocker.c` already read-modify-
+writes over `write-blocks`). The shared tree stays read-only. Then it drives the firmware
+to load `/CONF` (`MODE=die`), poke `die`→`run` in memory (same length), and `write-file`
+it back. **The grade (assert the OUTCOME):** the host reads `/CONF` as `MODE=run`, size
+unchanged, **`e2fsck` CLEAN**, and image-wide **exactly the 3 edited bytes differ** (a
+general writer would also move bitmaps/timestamps — the direct proof this is not a `dd`).
+**Negative control (bites):** a length-changing `write-file` is refused by name before any
+sector is written — the image is byte-identical and fsck stays clean. Verdict:
+`PASS: the endgame: grub2fs edited a file IN PLACE on a real ext2 filesystem …`.
+
+The path from grub2fs to the disk: `write-file` → the parent's byte `write`
+(disk-label → deblocker → `write-blocks`), symmetric with grub2fs's own read. See
+[PLAN.md](PLAN.md) for the deferred spike that ports this to **real** firmware
+(qemu-ppc, a genuine writable IDE) — the ATA write C already exists in `ide.c`; the open
+question, characterized there, is whether a `WIN_WRITE` persists to the qemu drive.
+
+## 7. Pending (not yet built — UNKNOWN, by name)
+
+- **E2b — port the write to REAL firmware** (qemu-ppc, a genuine writable IDE): the
+  faithful version of E2, characterized as a deferred spike in [PLAN.md](PLAN.md). The
+  crux (does the qemu IDE `WIN_WRITE` persist?) is UNCONFIRMED, not dead — a global
+  `bind_func` test word would settle it.
+- **E3 — boot it:** the UKI Spike 11 config act moved to a real root fs (break a config,
+  fix it in place, then boot). *Pending.*
 - **`store-tiers`** (§2.5). *Pending.*
 - **Tier 2 cost** for `fs-tiers` (§4) — needs a QEMU arch's `info blockstats`.
 - x86 real-firmware + sparc rows of the four-arch matrix (ppc is DONE — §3b). sparc: no
