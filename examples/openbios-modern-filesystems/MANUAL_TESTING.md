@@ -100,9 +100,32 @@ cannot provide — `free()` is a no-op over a 128 KiB bump); grub2fs supplies a 
 free-list over a 1 MiB static arena. Build determinism verified 5/5. Extra SKIP guards
 name `mkfs.vfat` / `mcopy` / an ISO tool if absent.
 
+## 3b. Big-endian byte-order control (POC-4) — `./smoke-grub2fs-arches.sh`
+
+Everything above ran little-endian (amd64), exercising only the identity byteorder
+path. POC-4 builds grub2fs into the **real ppc firmware** (`build-grub2fs-arch.sh ppc`
+→ `openbios-qemu.elf`) and drives it in **`qemu-system-ppc` (big-endian)**:
+`load hd:\HELLO` via grub2fs off a modern ext2 disk, and the loaded bytes (printed with
+`type` between `DA<`/`>DA` markers — take the *last* pair; the driver echoes the typed
+command first) must equal `grub-fstest`. They do: `load-size` = 66 and the data match,
+so the ext2 **inode size** (a little-endian on-disk field read through `grub_le_to_cpu`,
+which SWAPS on ppc) and the data blocks were both read correctly — the assertion that
+the typed accessors were used, not the CPU's native order.
+
+**Finding:** the 1 MiB **static-BSS heap overflowed the ppc ROM** (link died with
+`.bss VMA wraps around address space` — the S0 1 MiB mac99 ceiling). Fixed by claiming
+the heap from RAM at first use (`alloc-mem` in `g2_init`, post-boot when the memory
+system is up), which fits any ROM; the hosted LE path was re-verified (no regression).
+**UNCOVERED-by-name:** FAT/ISO on ppc (`smoke-grub2fs-arches.sh` reports 0 bytes — a ppc
+`hd:`/`cd:` device-path quirk, not a byteorder failure; the shared `grub_le_to_cpu` is
+proven by the ext2 row); the x86 real-firmware row; sparc (no sparc cross-toolchain in
+the build container). Run: `./smoke-grub2fs-arches.sh` → `PASS: grub2fs read a MODERN
+little-endian ext2 filesystem correctly on a BIG-ENDIAN ppc firmware …`.
+
 ## 4. Pending (not yet built — UNKNOWN, by name)
 
 - **`fs-combo` / `fs-tiers` / `store-tiers` / `fs-edit-inplace`** tracks. *Pending.*
-- Four-arch matrix (x86 / amd64 / ppc / sparc), the ppc row as the byte-order control.
-  *Pending.* sun4m/sparc32's ROM ceiling was **not** measured (a sparc ceiling, out of
+- x86 real-firmware + sparc rows of the four-arch matrix (ppc is DONE — §3b). sparc: no
+  cross-toolchain in the build container. sun4m/sparc32's ROM ceiling was **not** measured
+  (a sparc ceiling, out of
   scope for the ppc number) — UNCOVERED by name.

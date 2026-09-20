@@ -73,7 +73,11 @@ typedef struct g2_blk { grub_size_t size; struct g2_blk *next; int free; } g2_bl
 /* header size, rounded up to G2_ALIGN so payloads are aligned */
 #define G2_HDR ((grub_size_t) ((sizeof (g2_blk_t) + G2_ALIGN - 1) & ~(grub_size_t) (G2_ALIGN - 1)))
 
-static unsigned char g2_heap[G2_HEAP_SIZE] __attribute__ ((aligned (16)));
+/* Claimed from RAM at first use — NOT a static BSS array. A static G2_HEAP_SIZE
+ * array is fine in the hosted openbios-unix process but OVERFLOWS a real firmware
+ * ROM image: on ppc (mac99, a 1 MiB ROM — the S0 ceiling) POC-4's link failed with
+ * ".bss VMA wraps around address space". RAM claimed post-boot fits any ROM. */
+static unsigned char *g2_heap;
 static g2_blk_t *g2_head;
 static int g2_inited;
 
@@ -82,11 +86,20 @@ static grub_size_t g2_round (grub_size_t n)
 
 static void g2_init (void)
 {
+	/* alloc-mem ( size -- addr ) returns a Forth address that is a usable C
+	 * pointer in the firmware's own address space; by the first allocation (a
+	 * `load`/mount at the prompt) the memory system is up. If the claim fails,
+	 * g2_head stays NULL and g2_malloc returns NULL — the read fails cleanly. */
+	g2_inited = 1;
+	PUSH (G2_HEAP_SIZE);
+	fword ("alloc-mem");
+	g2_heap = (unsigned char *) cell2pointer (POP());
+	if (!g2_heap)
+		return;
 	g2_head = (g2_blk_t *) g2_heap;
 	g2_head->size = G2_HEAP_SIZE - G2_HDR;
 	g2_head->next = NULL;
 	g2_head->free = 1;
-	g2_inited = 1;
 }
 
 static void *

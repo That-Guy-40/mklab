@@ -64,6 +64,8 @@ openbios-modern-filesystems/
 ├── build-grub2fs.sh     — build openbios-unix WITH grub2fs (in a throwaway tree copy;
 │                          the shared tree is never touched) -> $WORKDIR/grub2fs/
 ├── smoke-grub2fs.sh     — one-verdict test: grub2fs reads a modern ext2 grubfs can't
+├── build-grub2fs-arch.sh — POC-4: build grub2fs into the real ppc/x86 firmware
+├── smoke-grub2fs-arches.sh — POC-4: the ppc big-endian byte-order control (== grub-fstest)
 ├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
 │   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
 │   └── ext2.c fat.c iso9660.c fshelp.c
@@ -80,7 +82,7 @@ openbios-modern-filesystems/
                            `grub_datetime2unixtime` inlines)
 ```
 
-## Status detail — S1 (the shim): POC-1a + POC-1b + POC-2 + POC-3 done
+## Status detail — S1 (the shim): POC-1a + POC-1b + POC-2 + POC-3 + POC-4 (ppc byte-order control) done
 
 - **POC-1a (done):** GRUB 2.12's unmodified `ext2.c` + `fshelp.c` compile clean against
   the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`).
@@ -101,5 +103,18 @@ openbios-modern-filesystems/
   headers (vendored verbatim). `grub2fs` reads a **FAT** and an **ISO 9660** image
   byte-for-byte equal to `grub-fstest`, alongside the modern-ext2 read — proven by
   [`smoke-grub2fs.sh`](smoke-grub2fs.sh) (build determinism 5/5). Run: `./smoke-grub2fs.sh`.
-- **Next:** the four-arch matrix (POC-4; ppc is the byte-order control) and the
-  `fs-edit-inplace` endgame. See [`PLAN.md`](PLAN.md).
+- **POC-4 (ppc byte-order control, done):** grub2fs built into the **real ppc firmware**
+  ([`build-grub2fs-arch.sh`](build-grub2fs-arch.sh) `ppc` → `openbios-qemu.elf`) and
+  driven in **`qemu-system-ppc` (big-endian)**: it reads a modern little-endian ext2
+  image, `/HELLO` byte-for-byte == `grub-fstest`, the inode size **and** data correct
+  through `grub_le_to_cpu*` (which SWAP on ppc). Before POC-4 everything ran little-endian
+  (amd64), exercising only the identity path; this is the assertion that the typed
+  accessors were used, not the CPU's native order. Proven by
+  [`smoke-grub2fs-arches.sh`](smoke-grub2fs-arches.sh). Finding: the 1 MiB **static-BSS
+  heap overflowed the ppc ROM** (the S0 1 MiB ceiling — `.bss VMA wraps`); the heap is now
+  **claimed from RAM at first use** (`alloc-mem`), which fits any ROM (hosted LE re-verified,
+  no regression). **UNCOVERED-by-name:** FAT/ISO on ppc (a device-path quirk, not byteorder —
+  the shared `grub_le_to_cpu` is proven by the ext2 row); x86 real-firmware; sparc (no
+  cross-toolchain in the build container).
+- **Next:** the `fs-edit-inplace` endgame (same-length in-place file write on a real block
+  filesystem). See [`PLAN.md`](PLAN.md).
