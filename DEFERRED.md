@@ -8,9 +8,10 @@
 > none. An item that is quietly done is as misleading as one quietly abandoned: **update
 > this file when an item lands.**
 
-## D1 — the `phase4-podman` readiness-race fix — ✅ RESOLVED 2026-09-20 (fix/phase4-podman-readiness-race)
+## D1 — the `phase4-podman` readiness-race fix (deferred out of #459, 2026-09-20)
 
-**✅ Closed.** `test-pod-lifecycle.sh`'s one-shot probe at line 57 is replaced with a bounded
+**✅ RESOLVED 2026-09-20 (PR #466, branch `fix/phase4-podman-readiness-race`).**
+`test-pod-lifecycle.sh`'s one-shot probe at line 57 is replaced with a bounded
 readiness wait on the observable outcome —
 `await_match 30 nginx -- "$LAB_PODMAN" exec "$LAB/b" -- wget -q -O- http://localhost/` — so the
 test waits for nginx to *answer*, not merely for its container to be *listed*. Verified on a host
