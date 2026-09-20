@@ -19,7 +19,7 @@ toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-sh
 package-method ↔ `grub_fs` mapping, the shim surface, and the grading (`grub-fstest cp`
 oracle + old `grubfs` negative control).
 
-## Status — S1 read shim DONE (POC-1..5); the `fs-edit-inplace` endgame is underway (E1 `blocks-of` done)
+## Status — S1 read shim DONE (POC-1..5); the `fs-edit-inplace` endgame WORKS (E1 blocks-of + E2 same-length in-place write, hosted)
 
 The `grub2fs` read shim is built and graded (POC-1..4), and its **tier table** is
 derived and provenance-bound (POC-5, §"Status detail" below). What is done and measured:
@@ -74,6 +74,7 @@ openbios-modern-filesystems/
 ├── smoke-fs-tiers.sh    — POC-5: derive + verify the per-format probe order (fs-combo/fs-tiers)
 ├── fs-tiers.toml        — POC-5: the DERIVED tier table (regenerate: smoke-fs-tiers.sh --emit)
 ├── smoke-fs-blocks.sh   — endgame E1: grub2fs `blocks-of` reports a file's device data LBAs
+├── smoke-fs-edit-inplace.sh — endgame E2: same-length in-place file write; fsck clean; host reads the fix
 ├── upstream-grub/       — GRUB 2.12 fs drivers, vendored byte-exact (the shim's spec)
 │   ├── README.md        — provenance + license (GPLv3+, lab-only) + sha256
 │   └── ext2.c fat.c iso9660.c fshelp.c
@@ -90,7 +91,7 @@ openbios-modern-filesystems/
                            `grub_datetime2unixtime` inlines)
 ```
 
-## Status detail — S1: POC-1a + POC-1b + POC-2 + POC-3 + POC-4 (ppc byte-order control) + POC-5 (fs-tiers) done
+## Status detail — S1: POC-1a..POC-5 done + endgame E1 (blocks-of) & E2 (same-length in-place write) done
 
 - **POC-1a (done):** GRUB 2.12's unmodified `ext2.c` + `fshelp.c` compile clean against
   the minimal `grub2fs/grub/` shim headers (`gcc -ffreestanding -I grub2fs -c`).
@@ -146,7 +147,18 @@ openbios-modern-filesystems/
   byte-for-byte (single- and multi-block), sum to its exact size, and agree with `debugfs`;
   a control (rewrite the bytes on disk → the map follows) bites. Proven by
   [`smoke-fs-blocks.sh`](smoke-fs-blocks.sh).
-- **Next (endgame E2):** the same-length in-place write itself — `blocks-of` + a
-  same-length overwrite + the block-**write** seam → `fsck` clean + host reads the fix.
-  Blocked on a write seam (hosted disk is `O_RDONLY`; needs a writable hosted disk or a
-  QEMU arch). See [`PLAN.md`](PLAN.md) and design notes §2.6.
+- **Endgame E2 (same-length in-place write, done — hosted):** the sentence this design
+  exists to reach — grub2fs's **`write-file`** overwrites a file's own DATA blocks in
+  place (the sectors `blocks-of` located) with exactly-its-own-length bytes, touching
+  **no metadata**. Path: `write-file` → parent `write` (the C deblocker `packages/deblocker.c`
+  RMWs over `write-blocks`), same-length guarded (a length change refused BY NAME). The
+  hosted disk is made writable in the **throwaway build only** (`ENDGAME_WRITE=1`:
+  `O_RDWR` + `arch/unix/blk.c` `write-blocks` + a `packages/disk-label.c` `parent_write_xt`
+  relay). Graded by [`smoke-fs-edit-inplace.sh`](smoke-fs-edit-inplace.sh): the firmware
+  edits `MODE=die`→`MODE=run`, the host reads the fix, size unchanged, **`e2fsck` CLEAN**,
+  and image-wide exactly the 3 edited bytes differ (not a `dd`); the length-change
+  negative control bites.
+- **Next:** **E2b** — port the write to **real** firmware (qemu-ppc, a genuine writable
+  IDE), characterized as a deferred spike in [`PLAN.md`](PLAN.md) (the ATA write C already
+  exists in `ide.c`; the open question is whether a `WIN_WRITE` persists to the qemu
+  drive). Then **E3** — "boot it". See design notes §2.6.

@@ -290,6 +290,86 @@ grub2fs_files_blocks_of( grub2fs_info_t *mi )
 			     (long long) g2_blkrec.off[i], g2_blkrec.len[i]);
 }
 
+/************************************************************************/
+/*	write-file: SAME-LENGTH in-place overwrite of a file's data	*/
+/*	(the endgame, design notes §2.6)				*/
+/************************************************************************/
+/*
+ * Overwrite the open file's DATA blocks in place with `len` bytes at `addr`.
+ * SAME-LENGTH ONLY: refuses (returns -2) when len != the file size, so it touches
+ * NO filesystem metadata (inode size, extent/block map, bitmaps, free counts) —
+ * it writes the very sectors blocks-of located, already allocated to the file, so
+ * fsck stays clean. A length change is the general-writer lab, refused BY NAME here.
+ *
+ * The write path: seek the parent to each data segment's device offset and call its
+ * byte-level `write` (the C deblocker, packages/deblocker.c, does the read-modify-
+ * write over the disk's write-blocks) — symmetric with grub2fs's own read_io.
+ *
+ * ( addr len -- actual )   actual = bytes written, or a negative refusal code.
+ */
+static void
+grub2fs_files_write_file( grub2fs_info_t *mi )
+{
+	static char scratch[8192];
+	int len = POP();
+	char *src = (char *) cell2pointer( POP() );
+	ihandle_t ih;
+	xt_t wxt;
+	grub_off_t remaining;
+	int i, foff = 0, total = 0;
+
+	if (!mi->mounted)
+		RET( -1 );
+	if ((grub_off_t) len != mi->file.size) {
+		forth_printf("write-file: refusing length %d != file size %lld (same-length only)\n",
+			     len, (long long) mi->file.size);
+		RET( -2 );
+	}
+
+	/* recompute the file's device data-block map with the recording hook */
+	g2_blkrec.n = 0;
+	g2_blkrec.overflow = 0;
+	g2_blkrec.partoff = (unsigned long long) mi->priv.offset;
+	mi->file.read_hook = g2_blk_hook;
+	mi->file.read_hook_data = &g2_blkrec;
+	mi->file.offset = 0;
+	remaining = mi->file.size;
+	while (remaining > 0) {
+		int chunk = (remaining > (grub_off_t) sizeof(scratch))
+			  ? (int) sizeof(scratch) : (int) remaining;
+		grub_ssize_t got;
+		grub_errno = GRUB_ERR_NONE;
+		got = mi->file.fs->fs_read( &mi->file, scratch, chunk );
+		if (got <= 0) break;
+		mi->file.offset += got;
+		remaining -= got;
+	}
+	mi->file.read_hook = 0;
+	mi->file.read_hook_data = 0;
+	mi->file.offset = 0;
+	if (g2_blkrec.overflow) { forth_printf("write-file: block map overflow\n"); RET( -3 ); }
+
+	/* the parent's byte-level write (deblocker over write-blocks) */
+	ih = get_ih_from_fd( mi->priv.fd );
+	wxt = ih ? find_ih_method( "write", ih ) : 0;
+	if (!wxt) { forth_printf("write-file: parent device has no write method\n"); RET( -4 ); }
+
+	for (i = 0; i < g2_blkrec.n; i++) {
+		int w;
+		if (seek_io( mi->priv.fd, (long long) g2_blkrec.off[i] ))
+			break;
+		PUSH( pointer2cell( src + foff ) );
+		PUSH( (int) g2_blkrec.len[i] );
+		call_package( wxt, ih );
+		w = POP();
+		if (w < 0)
+			break;
+		total += w;
+		foff += (int) g2_blkrec.len[i];
+	}
+	RET( total );
+}
+
 /* ( -- cstr ) */
 static void
 grub2fs_files_get_fstype( grub2fs_info_t *mi )
@@ -366,6 +446,7 @@ NODE_METHODS( grub2fs ) = {
 	{ "load",	grub2fs_files_load	},
 	{ "dir",	grub2fs_files_dir	},
 	{ "blocks-of",	grub2fs_files_blocks_of	},
+	{ "write-file",	grub2fs_files_write_file },
 
 	/* special */
 	{ "get-fstype",	grub2fs_files_get_fstype },
