@@ -22,8 +22,19 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 TREE="$WORKDIR/openbios"
 IMG="${OPENBIOS_BUILD_IMG:-localhost/openbios-build:latest}"
-OUT="$WORKDIR/grub2fs"                        # lab-owned firmware output
-BUILDROOT="$WORKDIR/grub2fs-build"            # throwaway build copy
+
+# GRUB2FS_ONLY=1 builds a firmware with the OLD grubfs package NOT registered
+# (CONFIG_GRUBFS=false), so grub2fs is the ONLY filesystem reader. The fs-tiers
+# track (POC-5) needs per-reader attribution: a read through this firmware is
+# unambiguously grub2fs's, with no probe-order guess about which package handled it
+# (the stock grubfs-only firmware is the other single-reader half). Default (unset)
+# keeps grubfs registered too, as POC-1b..4 shipped.
+GRUB2FS_ONLY="${GRUB2FS_ONLY:-}"
+if [[ -n "$GRUB2FS_ONLY" ]]; then
+  OUT="$WORKDIR/grub2fs-only"; BUILDROOT="$WORKDIR/grub2fs-only-build"
+else
+  OUT="$WORKDIR/grub2fs"; BUILDROOT="$WORKDIR/grub2fs-build"
+fi
 COPY="$BUILDROOT/openbios"
 
 [[ -d "$TREE" ]] || { echo "no OpenBIOS tree at $TREE — run openbios-the-rival-that-shipped/build-openbios.sh unix first" >&2; exit 2; }
@@ -57,6 +68,12 @@ cp "$HERE/upstream-grub/fat.h" "$HERE/upstream-grub/exfat.h" "$COPY/include/grub
 cd "$COPY"
 sed -i 's#<include href="grubfs/build.xml"/>#<include href="grubfs/build.xml"/>\n <include href="grub2fs/build.xml"/>#' fs/build.xml
 sed -i 's#<option name="CONFIG_GRUBFS" type="boolean" value="true"/>#<option name="CONFIG_GRUBFS" type="boolean" value="true"/>\n  <option name="CONFIG_FSYS_GRUB2FS" type="boolean" value="true"/>#' config/examples/amd64_config.xml
+if [[ -n "$GRUB2FS_ONLY" ]]; then
+  # grub2fs-only: turn the old grubfs package OFF so grub2fs is the sole reader
+  # (the #ifdef CONFIG_GRUBFS guard around grubfs_init() then compiles it out).
+  sed -i 's#<option name="CONFIG_GRUBFS" type="boolean" value="true"/>#<option name="CONFIG_GRUBFS" type="boolean" value="false"/>#' config/examples/amd64_config.xml
+  echo "grub2fs: GRUB2FS_ONLY — grubfs package disabled (CONFIG_GRUBFS=false); grub2fs is the sole fs reader"
+fi
 sed -i 's#\(mkdir -p \$OBJDIR/target/fs/grubfs\)#\1\n    mkdir -p $OBJDIR/target/fs/grub2fs#' config/scripts/switch-arch
 sed -i 's#extern void \tgrubfs_init( void );#extern void \tgrubfs_init( void );\nextern void \tgrub2fs_init( void );#' packages/packages.h
 python3 - <<'PY'
