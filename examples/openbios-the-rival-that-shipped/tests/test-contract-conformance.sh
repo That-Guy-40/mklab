@@ -30,7 +30,8 @@ UD="$UB.dict"
 
 DSL="$LAB_DIR/dsl"
 for f in struct contract sha256 cbfs cbfs-conform elf elf-conform fdt fdt-read \
-         fdt-conform eventlog evlog-conform; do
+         fdt-conform eventlog evlog-conform cpio cpio-conform pe pe-conform \
+         bootparams bootparams-conform; do
     [[ -f "$DSL/$f.fth" ]] \
         || fail "missing $DSL/$f.fth — this checker stages the SHIPPED files, never re-implements them"
 done
@@ -49,6 +50,12 @@ cp "$DSL/fdt-read.fth"     "$STAGE/FDTREAD.FTH"
 cp "$DSL/fdt-conform.fth"  "$STAGE/FDTC.FTH"
 cp "$DSL/eventlog.fth"     "$STAGE/EVLOG.FTH"
 cp "$DSL/evlog-conform.fth" "$STAGE/EVLOGC.FTH"
+cp "$DSL/cpio.fth"         "$STAGE/CPIO.FTH"
+cp "$DSL/cpio-conform.fth" "$STAGE/CPIOC.FTH"
+cp "$DSL/pe.fth"           "$STAGE/PE.FTH"
+cp "$DSL/pe-conform.fth"   "$STAGE/PEC.FTH"
+cp "$DSL/bootparams.fth"       "$STAGE/BP.FTH"
+cp "$DSL/bootparams-conform.fth" "$STAGE/BPC.FTH"
 
 # ── fixture byte images: a valid + corrupt CBFS region and FDT blob ──────────
 python3 - "$STAGE" <<'PY'
@@ -68,6 +75,39 @@ open(o + '/CCBFS.BIN', 'wb').write(b'XXXXXXXX' + b'\0' * 56)   # stomped magic
 hdr = lambda magic: be(magic, 0x28, 0x28, 0x28, 0x28, 0x11, 0x10, 0, 0, 0)
 open(o + '/VFDT.BIN', 'wb').write(hdr(0xd00dfeed))
 open(o + '/CFDT.BIN', 'wb').write(hdr(0xdeadbeef))
+# CPIO: a valid TRAILER-only newc archive (opens on ASCII "070701"); corrupt = flipped magic.
+def newc(name, data):
+    namez = name.encode() + b'\0'
+    h = b'070701' + b''.join(b'%08X' % x for x in
+        [0, 0, 0, 0, 1, 0, len(data), 0, 0, 0, 0, len(namez), 0])
+    b = h + namez;  b += b'\0' * ((-len(b)) % 4)
+    b += data;      b += b'\0' * ((-len(b)) % 4)
+    return b
+vcpio = newc('TRAILER!!!', b'')
+open(o + '/VCPIO.BIN', 'wb').write(vcpio)
+open(o + '/CCPIO.BIN', 'wb').write(b'07070X' + vcpio[6:])
+# PE: a minimal PE32+ (MZ, e_lfanew→PE\0\0, COFF, optmagic 0x20b, one section); corrupt = stomp MZ.
+pe = bytearray(0xc0)
+pe[0:2] = b'MZ'
+struct.pack_into('<I', pe, 0x3c, 0x40)         # e_lfanew
+pe[0x40:0x44] = b'PE\0\0'
+struct.pack_into('<H', pe, 0x44, 0x8664)       # Machine
+struct.pack_into('<H', pe, 0x46, 1)            # NumberOfSections
+struct.pack_into('<H', pe, 0x54, 0x28)         # SizeOfOptionalHeader (COFF+0x10)
+struct.pack_into('<H', pe, 0x58, 0x20b)        # optional-header Magic PE32+
+pe[0x80:0x88] = b'.test\0\0\0'                  # section table @ pe-hdr+0x18+optsize = 0x80
+struct.pack_into('<I', pe, 0x88, 0x1000)       # VirtualSize
+struct.pack_into('<I', pe, 0x8c, 0x1000)       # VirtualAddress
+open(o + '/VPE.BIN', 'wb').write(bytes(pe))
+cpe = bytearray(pe); cpe[0:2] = b'XX'
+open(o + '/CPE.BIN', 'wb').write(bytes(cpe))
+# BOOTPARAMS: the two anchors present; corrupt = wrong boot_flag.
+bp = bytearray(0x300)
+struct.pack_into('<H', bp, 0x1fe, 0xAA55)      # boot_flag
+struct.pack_into('<I', bp, 0x202, 0x53726448)  # "HdrS"
+open(o + '/VBP.BIN', 'wb').write(bytes(bp))
+cbp = bytearray(bp); struct.pack_into('<H', cbp, 0x1fe, 0x1234)
+open(o + '/CBP.BIN', 'wb').write(bytes(cbp))
 PY
 
 # ── fixture MODULES: one conformant, three each with one planted defect ──────
@@ -265,6 +305,66 @@ grep -qa 'evlog-v-corrupt=REFUSED: evlog:' <<<"$OUT" \
     || fail "evlog: evlog-validate did not refuse a stomped SpecID signature BY NAME"
 note "evlog: validates its own authored log, refuses a stomped signature by name, ARCH:4/4"
 
+# CPIO — a TRAILER-only newc archive vs a flipped ASCII magic.
+kbody="$(lev CPIO.FTH)"$'\n'"$(lev CPIOC.FTH)"
+kbody+=$'\n''load hd:\\VCPIO.BIN'$'\n''." cpio-manifest=" cpio-manifest'$'\n'
+kbody+='." cpio-v-valid=" load-base cpio-validate .refusal ." (blank=valid)" cr'$'\n'
+kbody+='." cpio-fields:" cr load-base cpio-fields'$'\n'
+kbody+='load hd:\\CCPIO.BIN'$'\n''." cpio-v-corrupt=" load-base cpio-validate .refusal'
+drive "$kbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "cpio: a required contract word is undefined — core not implemented"
+grep -qaE 'cpio-manifest=.*ARCH:(4/4|x86-only)' <<<"$OUT" \
+    || fail "cpio: NAME-manifest carries no ARCH scope"
+grep -qaE 'cpio-v-valid=.*blank=valid' <<<"$OUT" && ! grep -qa 'cpio-v-valid=REFUSED' <<<"$OUT" \
+    || fail "cpio: cpio-validate refused a valid newc archive"
+grep -qa 'fld| name=c_magic' <<<"$OUT" \
+    || fail "cpio: cpio-fields did not enumerate the header"
+grep -qa 'cpio-v-corrupt=REFUSED: cpio:' <<<"$OUT" \
+    || fail "cpio: cpio-validate did not refuse a flipped newc magic BY NAME"
+note "cpio: validates a newc archive, refuses a flipped magic by name, ARCH:4/4 (ASCII-hex, no byte order)"
+
+# PE — a minimal PE32+ vs a stomped MZ. pe-open reuses the native status opener.
+pbody="$(lev PE.FTH)"$'\n'"$(lev PEC.FTH)"
+pbody+=$'\n''load hd:\\VPE.BIN'$'\n''." pe-manifest=" pe-manifest'$'\n'
+pbody+='." pe-v-valid=" load-base pe-validate .refusal ." (blank=valid)" cr'$'\n'
+pbody+='." pe-open-valid=" load-base c0 pe-open u. cr'$'\n'
+pbody+='." pe-fields:" cr load-base pe-fields'$'\n'
+pbody+='load hd:\\CPE.BIN'$'\n''." pe-open-corrupt=" load-base c0 pe-open u. cr'
+drive "$pbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "pe: a required contract word is undefined — core not implemented"
+grep -qaE 'pe-manifest=.*ARCH:(4/4|x86-only)' <<<"$OUT" \
+    || fail "pe: NAME-manifest carries no ARCH scope"
+grep -qaE 'pe-v-valid=.*blank=valid' <<<"$OUT" && ! grep -qa 'pe-v-valid=REFUSED' <<<"$OUT" \
+    || fail "pe: pe-validate refused a valid PE32+"
+grep -qa 'fld| name=Machine' <<<"$OUT" \
+    || fail "pe: pe-fields did not enumerate the header"
+grep -qa 'pe-open-corrupt=REFUSED: pe: no MZ' <<<"$OUT" \
+    || fail "pe: pe-open did not refuse a stomped MZ BY NAME"
+grep -qa 'pe-open-valid=REFUSED' <<<"$OUT" \
+    && fail "pe: pe-open refused a valid PE32+"
+note "pe: validates a PE32+, refuses a stomped MZ by name, ARCH:4/4 (x86/UEFI format read LE on all four)"
+
+# BOOTPARAMS — anchors present vs a wrong boot_flag. bootparams-open reuses bp-open.
+zbody="$(lev BP.FTH)"$'\n'"$(lev BPC.FTH)"
+zbody+=$'\n''load hd:\\VBP.BIN'$'\n''." bp-manifest=" bootparams-manifest'$'\n'
+zbody+='." bp-v-valid=" load-base bootparams-validate .refusal ." (blank=valid)" cr'$'\n'
+zbody+='." bp-fields:" cr load-base bootparams-fields'$'\n'
+zbody+='load hd:\\CBP.BIN'$'\n''." bp-open-corrupt=" load-base 300 bootparams-open u. cr'
+drive "$zbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "bootparams: a required contract word is undefined — core not implemented"
+grep -qaE 'bp-manifest=.*ARCH:(4/4|x86-only)' <<<"$OUT" \
+    || fail "bootparams: NAME-manifest carries no ARCH scope"
+grep -qaE 'bp-v-valid=.*blank=valid' <<<"$OUT" && ! grep -qa 'bp-v-valid=REFUSED' <<<"$OUT" \
+    || fail "bootparams: bootparams-validate refused a valid zero page"
+grep -qa 'fld| name=boot_flag' <<<"$OUT" \
+    || fail "bootparams: bootparams-fields did not enumerate the header"
+grep -qa 'bp-open-corrupt=REFUSED: bootparams:' <<<"$OUT" \
+    || fail "bootparams: bootparams-open did not refuse a wrong boot_flag BY NAME"
+note "bootparams: validates a zero page, refuses a wrong boot_flag by name, ARCH:4/4 (LE, ppc earns its keep)"
+
 # ── PART 2: the separability guarantee — a slim profile names what is absent ──
 sbody="$(lev CBFS.FTH)"$'\n'"$(lev CBFSC.FTH)"$'\n'"$(lev ELF.FTH)"$'\n'"$(lev ELFC.FTH)"
 sbody+=$'\n''." SLIM:" cr'$'\n'
@@ -284,4 +384,4 @@ grep -qa 'NMODULES=2' <<<"$OUT" \
     || fail "separability: the registry counted something other than the 2 modules the slim profile loaded — a phantom or a missed registration"
 note "separability: slim profile (cbfs+elf) names fdt+evlog absent, present modules not mis-reported, #modules=2"
 
-pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all four modules (cbfs, elf, fdt, evlog) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."
+pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."

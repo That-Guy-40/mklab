@@ -17,10 +17,10 @@ toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-sh
 
 **Contract pin (roadmap §2):** where this lab reuses those `dsl/` modules it targets
 [`contract v1`](../openbios-the-rival-that-shipped/dsl/CONTRACT.md) — the uniform
-`NAME-open`/`-fields`/`-validate`/`-manifest` convention. The convention is defined and
-`elf`/`cbfs`/`fdt`/`evlog` conform; the editors this lab leans on (`pe-edit`/`cpio-edit`)
-conform as their reader halves (`pe`/`cpio`) are brought under the contract. The pin is the
-marker, not a claim those halves conform yet.
+`NAME-open`/`-fields`/`-validate`/`-manifest` convention. The **reader** halves this lab's
+editors sit on (`pe`, `cpio`) **now conform** (`dsl/{pe,cpio}-conform.fth`), alongside
+`elf`/`cbfs`/`fdt`/`evlog`; the **editors** themselves (`pe-edit`/`cpio-edit`) conform through
+the contract's writer extension (`NAME-emit`/`NAME-write`) at roadmap Tier 2.
 
 **The S1 build plan and spike ladder are in [`PLAN.md`](PLAN.md)** — the
 package-method ↔ `grub_fs` mapping, the shim surface, and the grading (`grub-fstest cp`
