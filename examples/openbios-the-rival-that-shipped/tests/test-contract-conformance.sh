@@ -33,7 +33,8 @@ for f in struct contract sha256 cbfs cbfs-conform elf elf-conform fdt fdt-read \
          fdt-conform eventlog evlog-conform cpio cpio-conform pe pe-conform \
          bootparams bootparams-conform \
          pe-edit pe-write-conform cpio-edit cpio-write-conform \
-         bootparams-edit bootparams-write-conform; do
+         bootparams-edit bootparams-write-conform \
+         elf-write elf-emit-conform evlog-emit-conform fdt-emit-conform; do
     [[ -f "$DSL/$f.fth" ]] \
         || fail "missing $DSL/$f.fth — this checker stages the SHIPPED files, never re-implements them"
 done
@@ -64,6 +65,10 @@ cp "$DSL/cpio-edit.fth"        "$STAGE/CPIOEDIT.FTH"
 cp "$DSL/cpio-write-conform.fth" "$STAGE/CPIOW.FTH"
 cp "$DSL/bootparams-edit.fth"  "$STAGE/BPEDIT.FTH"
 cp "$DSL/bootparams-write-conform.fth" "$STAGE/BPW.FTH"
+cp "$DSL/elf-write.fth"          "$STAGE/ELFW.FTH"
+cp "$DSL/elf-emit-conform.fth"   "$STAGE/ELFE.FTH"
+cp "$DSL/evlog-emit-conform.fth" "$STAGE/EVE.FTH"
+cp "$DSL/fdt-emit-conform.fth"   "$STAGE/FDTE.FTH"
 
 # ── fixture byte images: a valid + corrupt CBFS region and FDT blob ──────────
 python3 - "$STAGE" <<'PY'
@@ -481,6 +486,64 @@ grep -qa 'bp-w-intact=old' <<<"$OUT" \
     || fail "bootparams-write: a REFUSED edit still changed the command line — a partial write past the refuse gate"
 note "bootparams-write: command line edited (new=1), code32_start intact (deadbeef); over-size refused (bp| CMDLINE-TOO-BIG), unchanged (old)"
 
+# ── PART 4: the AUTHOR half — NAME-emit graded on a round trip ─────────────────
+# NAME-emit authors a whole artifact; the contract grade here is a ROUND TRIP — the
+# emitted bytes satisfy the module's OWN reader (NAME-validate). Its control: stomp
+# the emitted magic and the SAME validate must refuse by name, so the round trip is
+# not vacuous. This proves emit↔read self-consistency; it does NOT prove the STRONG
+# property (a FOREIGN oracle accepts it — elfkickers / tpm2_eventlog / dtc), which a
+# writer and reader wrong the same way would pass — that grade is the module's smoke
+# track, and is named here, not silently claimed.
+note "author half: each NAME-emit graded on an emit→own-reader round trip, with a magic-stomp control (foreign-oracle correctness is the smoke tracks')"
+
+# ELF — author-exit-elf emits a static exit(0) ELF64; elf-validate must accept it.
+epbody="$(lev ELF.FTH)"$'\n'"$(lev ELFC.FTH)"$'\n'"$(lev ELFW.FTH)"$'\n'"$(lev ELFE.FTH)"
+epbody+=$'\n''0 elf-emit'$'\n''." elf-e-len=" dup u. cr drop'$'\n'
+epbody+='." elf-e-valid=" dup elf-validate .refusal ." (blank=valid)" cr'$'\n'
+epbody+='0 over c!'$'\n''." elf-e-corrupt=" elf-validate .refusal'
+drive "$epbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "elf-emit: a required word is undefined — the author half is not implemented"
+grep -qaE 'elf-e-len=[1-9a-f]' <<<"$OUT" \
+    || fail "elf-emit: authored zero bytes"
+grep -qaE 'elf-e-valid=.*blank=valid' <<<"$OUT" && ! grep -qa 'elf-e-valid=REFUSED' <<<"$OUT" \
+    || fail "elf-emit: the emitted ELF did not satisfy elf-validate — the writer and reader disagree on the format"
+grep -qa 'elf-e-corrupt=REFUSED: bad ELF magic' <<<"$OUT" \
+    || fail "elf-emit: control did not bite — a stomped magic in the emitted bytes was not refused, so the round trip is vacuous"
+note "elf-emit: authored a valid ELF64 (elf-validate accepts it); stomping its magic is refused — round trip real"
+
+# EVLOG — evlog-author emits a crypto-agile log; evlog-validate must accept it.
+evbody="$(lev SHA256.FTH)"$'\n'"$(lev EVLOG.FTH)"$'\n'"$(lev EVLOGC.FTH)"$'\n'"$(lev EVE.FTH)"
+evbody+=$'\n''200 alloc-mem value eb  eb evlog-emit'$'\n''." ev-e-len=" dup u. cr drop'$'\n'
+evbody+='." ev-e-valid=" dup evlog-validate .refusal ." (blank=valid)" cr'$'\n'
+evbody+='0 over 20 + c!'$'\n''." ev-e-corrupt=" evlog-validate .refusal'
+drive "$evbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "evlog-emit: a required word is undefined — the author half is not implemented"
+grep -qaE 'ev-e-len=[1-9a-f]' <<<"$OUT" \
+    || fail "evlog-emit: authored zero bytes"
+grep -qaE 'ev-e-valid=.*blank=valid' <<<"$OUT" && ! grep -qa 'ev-e-valid=REFUSED' <<<"$OUT" \
+    || fail "evlog-emit: the emitted log did not satisfy evlog-validate"
+grep -qa 'ev-e-corrupt=REFUSED: evlog:' <<<"$OUT" \
+    || fail "evlog-emit: control did not bite — a stomped SpecID signature was not refused, so the round trip is vacuous"
+note "evlog-emit: authored a valid log (evlog-validate accepts it); stomping the SpecID signature is refused — round trip real"
+
+# FDT — dt>fdt flattens the LIVE tree; fdt-validate must accept the DTB. Needs fdt-read.
+fmbody="$(lev FDT.FTH)"$'\n'"$(lev FDTREAD.FTH)"$'\n'"$(lev FDTC.FTH)"$'\n'"$(lev FDTE.FTH)"
+fmbody+=$'\n''4000 alloc-mem value fb  fb fdt-emit'$'\n''." fdt-e-len=" dup u. cr drop'$'\n'
+fmbody+='." fdt-e-valid=" dup fdt-validate .refusal ." (blank=valid)" cr'$'\n'
+fmbody+='0 over c!'$'\n''." fdt-e-corrupt=" fdt-validate .refusal'
+drive "$fmbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "fdt-emit: a required word is undefined — the author half is not implemented"
+grep -qaE 'fdt-e-len=[1-9a-f]' <<<"$OUT" \
+    || fail "fdt-emit: dt>fdt flattened zero bytes (OVERFLOW, or no live tree to walk)"
+grep -qaE 'fdt-e-valid=.*blank=valid' <<<"$OUT" && ! grep -qa 'fdt-e-valid=REFUSED' <<<"$OUT" \
+    || fail "fdt-emit: the flattened DTB did not satisfy fdt-validate"
+grep -qa 'fdt-e-corrupt=REFUSED: fdt: bad FDT magic' <<<"$OUT" \
+    || fail "fdt-emit: control did not bite — a stomped magic in the DTB was not refused, so the round trip is vacuous"
+note "fdt-emit: flattened the live tree to a DTB (fdt-validate accepts it); stomping its magic is refused — round trip real"
+
 # ── PART 2: the separability guarantee — a slim profile names what is absent ──
 sbody="$(lev CBFS.FTH)"$'\n'"$(lev CBFSC.FTH)"$'\n'"$(lev ELF.FTH)"$'\n'"$(lev ELFC.FTH)"
 sbody+=$'\n''." SLIM:" cr'$'\n'
@@ -500,4 +563,4 @@ grep -qa 'NMODULES=2' <<<"$OUT" \
     || fail "separability: the registry counted something other than the 2 modules the slim profile loaded — a phantom or a missed registration"
 note "separability: slim profile (cbfs+elf) names fdt+evlog absent, present modules not mis-reported, #modules=2"
 
-pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded on a DELTA: pe-write/cpio-write/bootparams-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write). The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."
+pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded two ways: the EDIT side (Tier 2a) on a DELTA — pe-write/cpio-write/bootparams-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write); the AUTHOR side (Tier 2b) on a ROUND TRIP — elf-emit/evlog-emit/fdt-emit each author a whole artifact its OWN reader validates, with a magic-stomp control that must be refused so the round trip is not vacuous (foreign-oracle correctness is the smoke tracks'). The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."

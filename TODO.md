@@ -179,7 +179,15 @@ close both when the PR lands.
 > `bp-cmdline-set`); the checker grades each on a **delta** (the edit lands, a neighbour does
 > not) with a **refuse-before-write control** (an oversize/invalid edit refused by name, bytes
 > unchanged — verified to bite). `CONTRACT.md` pins the `NAME-write`/`NAME-emit` convention.
-> Remaining: the **author** half `NAME-emit` (elf-write, cbfs-write, evlog-author) — Tier 2b.
+>
+> **Tier 2b done (2026-09-21):** the **author** half `NAME-emit` via
+> `dsl/{elf,evlog,fdt}-emit-conform.fth` (`elf-emit`=`author-exit-elf`, `evlog-emit`=
+> `evlog-author`, `fdt-emit`=`dt>fdt` flattening the live tree), each graded on a **round trip**
+> (the emitted bytes satisfy the module's own `NAME-validate`, with a magic-stomp control so it
+> is not vacuous); the strong foreign-oracle grade (elfkickers / tpm2_eventlog / dtc) stays the
+> module's smoke track. `cbfs`'s writer is in-place surgery graded by `cbfstool`, so it opts in
+> through its smoke track rather than a standalone `NAME-emit`. **The contract's writer surface
+> is now complete** (edit = `NAME-write`, author = `NAME-emit`).
 
 **Do this only after item 1 has `main` green.** The roadmap's
 [§2](FIRMWARE_FAMILY_ROADMAP.md#2-architecture-decision-locked-a-federation-not-a-fusion) specifies
