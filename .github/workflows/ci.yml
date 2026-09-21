@@ -378,13 +378,15 @@ jobs:
         # of this step turned up: test-mac-cli.sh had quietly depended on an ISO maker it
         # has no opinion about, and announced the absence as a regression in `--mac`.
         run: |
-          # --no-install-recommends: the phase-2 argv tests need only the qemu
-          # BINARIES, not qemu's GUI/audio recommends (gstreamer, libsoup). Those
-          # recommends are also what an Azure apt-mirror 404 tends to hit (measured
-          # 2026-09-21: 8× `404 Not Found` on libgstreamer/libsoup left
-          # qemu-system-x86_64 uninstalled and the hard assert below correctly red-lit
-          # the job); dropping them makes the install both leaner and less mirror-fragile.
-          timeout 300 sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-system-arm xorriso \
+          # --no-install-recommends: the phase-2 tests need the qemu BINARIES and the
+          # OVMF UEFI firmware (test-mac-cli's `create --mac` boots a UEFI VM), but NOT
+          # qemu's GUI/audio recommends (gstreamer, libsoup) — which are exactly what an
+          # Azure apt-mirror 404 tends to hit (measured 2026-09-21: 8× `404 Not Found`
+          # on libgstreamer/libsoup left qemu-system-x86_64 uninstalled and the hard
+          # assert below correctly red-lit the job). So drop the recommends but name the
+          # one the tests actually use (`ovmf`) explicitly: leaner, mirror-resilient,
+          # and still complete for what runs here.
+          timeout 300 sudo apt-get install -y --no-install-recommends qemu-system-x86 qemu-system-arm xorriso ovmf \
             || echo "::warning::qemu-system apt-get returned non-zero — the hard assert below is the gate"
           # A precondition THIS step installs is a CI defect when missing, not an
           # UNKNOWN (DEFERRED.md D3). The primary target — qemu-system-x86_64, which
