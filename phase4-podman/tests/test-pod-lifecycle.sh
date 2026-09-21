@@ -53,10 +53,16 @@ done
 note "both services running"
 
 # From inside 'b' (alpine), hit nginx on localhost (same pod, shared net).
-note "b → localhost → a"
-out="$("$LAB_PODMAN" exec "$LAB/b" -- wget -q -O- http://localhost/ 2>&1 || true)"
-grep -qi 'nginx\|welcome' <<<"$out" \
-    || fail "b couldn't reach a via localhost; got: $out"
+# A container that is *running* is not yet a server that is *accepting*: the pod and
+# both containers being listed (await_line above) does not mean nginx is LISTENING.
+# So wait — bounded — for nginx to ANSWER, not merely for its container to exist. This
+# was a readiness race: the old one-shot probe fired into the gap and got "Connection
+# refused" (main red for ~2 days, DEFERRED.md D1). await_match captures-then-tests (no
+# pipe → no SIGPIPE/pipefail inversion) and retries until nginx's page — which contains
+# "nginx" (the stock nginx:alpine welcome page) — comes back.
+note "b → localhost → a (waiting for nginx to answer)"
+out="$(await_match 30 nginx -- "$LAB_PODMAN" exec "$LAB/b" -- wget -q -O- http://localhost/)" \
+    || fail "b couldn't reach a via localhost within 30s; last: ${out:-<no output from wget>}"
 note "pod networking OK"
 
 note "down"
