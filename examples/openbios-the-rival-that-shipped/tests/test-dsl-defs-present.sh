@@ -70,10 +70,13 @@ deps_of() {  # deps_of <file> -> space-separated deps in load order (excl. the f
     fdt-read)      echo "struct fdt" ;;
     fdt-conform)   echo "struct contract fdt fdt-read" ;;
     cpio)          echo "struct" ;;
+    cpio-conform)  echo "struct contract cpio" ;;
     cpio-edit)     echo "struct cpio" ;;
     pe)            echo "struct" ;;
+    pe-conform)    echo "struct contract pe" ;;
     pe-edit)       echo "struct pe" ;;
     bootparams)    echo "struct" ;;
+    bootparams-conform) echo "struct contract bootparams" ;;
     bootparams-edit) echo "struct bootparams" ;;
     optrom)        echo "struct" ;;
     elf-write)     echo "struct elf" ;;

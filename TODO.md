@@ -167,8 +167,14 @@ close both when the PR lands.
 > silent-stop defect is fixed in `cbfs.fth` (`cbfs-list` refuses a corrupt first entry by name — the
 > failing→passing control); `dsl/contract.fth`'s registry names absent modules; and
 > `tests/test-contract-conformance.sh` (headless, in `run-all.sh`) proves itself on planted defects
-> before grading the real modules, plus the slim-profile guarantee. Consumers pinned. The remaining
-> readers (`pe`/`cpio`/`bootparams`, and the writers) conform as they are built — Tier 1+.
+> before grading the real modules, plus the slim-profile guarantee. Consumers pinned.
+>
+> **Tier 1 done too (2026-09-21):** `pe`/`cpio`/`bootparams` now conform via
+> `dsl/{pe,cpio,bootparams}-conform.fth` (each with a biting negative control; the checker grades
+> all **seven** modules), and the two consumer pins are flipped to real. `pe-open`/`bp-open`'s
+> existing status-openers are reused (native xt captured, then redefined for `pe`). Remaining:
+> the **writer** extension `NAME-emit`/`NAME-write` (elf-write, cbfs-write, evlog-author, the
+> editors) — roadmap Tier 2.
 
 **Do this only after item 1 has `main` green.** The roadmap's
 [§2](FIRMWARE_FAMILY_ROADMAP.md#2-architecture-decision-locked-a-federation-not-a-fusion) specifies
