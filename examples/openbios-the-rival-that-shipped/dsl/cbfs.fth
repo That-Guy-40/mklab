@@ -72,8 +72,20 @@ variable cf-len  variable cf-type  variable cf-coff
 \ walk the whole CBFS from region base `rb`, bounded by `max` entries so a corrupt
 \ magic cannot loop forever. Stops at the first non-LARCHIVE (falling off the end,
 \ or reading past a truncated window).
+\ A corrupt FIRST entry USED TO read as an empty archive: the loop below fell
+\ through on the first non-LARCHIVE and printed CBFS-END, so "the ROM is corrupt"
+\ and "the ROM ended" looked identical — the silent-stop rung the CONTRACT's
+\ refusal convention exists to close (dsl/CONTRACT.md; measured 2026-09-21, a
+\ CORRUPT.BIN with a stomped magic listed nothing and complained about nothing).
+\ Now the first entry is checked BEFORE the walk and a bad magic is refused BY
+\ NAME. A non-LARCHIVE reached AFTER at least one good entry is still a normal end
+\ (a real CBFS has no explicit terminator; the walk runs off into padding).
 : cbfs-list ( rb max -- )
   swap dup cbfs-rb !              ( max cur )
+  dup larchive? 0= if
+    ." REFUSED: cbfs: no LARCHIVE magic at off=" cbfs-off .hx8
+    ."  (corrupt first entry, or not a CBFS)" cr  drop exit
+  then
   begin
     over 0>  over larchive?  and
   while

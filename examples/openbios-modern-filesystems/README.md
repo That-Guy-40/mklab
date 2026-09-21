@@ -15,6 +15,13 @@ This lab operationalizes it. It is a sibling of, and composes with, the OpenBIOS
 toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/)
 (the `dsl/` readers and the `cpio-edit.fth` / `pe-edit.fth` editors the endgame reuses).
 
+**Contract pin (roadmap §2):** where this lab reuses those `dsl/` modules it targets
+[`contract v1`](../openbios-the-rival-that-shipped/dsl/CONTRACT.md) — the uniform
+`NAME-open`/`-fields`/`-validate`/`-manifest` convention. The convention is defined and
+`elf`/`cbfs`/`fdt`/`evlog` conform; the editors this lab leans on (`pe-edit`/`cpio-edit`)
+conform as their reader halves (`pe`/`cpio`) are brought under the contract. The pin is the
+marker, not a claim those halves conform yet.
+
 **The S1 build plan and spike ladder are in [`PLAN.md`](PLAN.md)** — the
 package-method ↔ `grub_fs` mapping, the shim surface, and the grading (`grub-fstest cp`
 oracle + old `grubfs` negative control).

@@ -309,21 +309,61 @@ variable (be-probe)
 \ ships here is driven, in `smoke-openbios.sh elf-methods`, against a
 \ deliberately corrupted copy as well as a real one.
 
+\ ── the reason seam: one shape for "bad input" (dsl/CONTRACT.md, contract v1) ──
+\ chk/chk</chk? ABORT with want=/got= — the right shape for a width nobody
+\ implemented or an authoring-time impossibility, and `smoke-openbios.sh
+\ elf-methods` leans on that exact output (it counts `CONSTRAINT:` lines and
+\ greps `want=2  got=0`). The CONTRACT needs the OTHER shape for a FORMAT
+\ INVARIANT: a failure handed back to the caller as a NAMED, RETURNED reason
+\ (NAME-validate ( handle -- c-addr u ), u=0 ⟺ valid), so a capstone can decide
+\ rather than being aborted out from under. Same predicates, ONE flag: with
+\ chk-catch OFF (the default) chk aborts and prints EXACTLY as before; with it
+\ ON, chk stores the reason and THROWs, and `validate` (below) catches it. The
+\ abort path is byte-for-byte unchanged, because nothing turns the flag on but
+\ `validate`, which turns it off again the instant catch returns. This is
+\ roadmap §3 Tier-0's "implemented once at the seam all of them already pass
+\ through", collapsing the abort"/flag/variable/silent-stop quartet to one.
+variable chk-catch                 \ off = abort+print (legacy); on = capture+throw
+variable why-adr  variable why-len \ the last captured reason ( c-addr u )
+63 constant CHK-THROW              \ a distinctive throw code for a captured refusal
+: !why ( c-addr u -- )  why-len !  why-adr ! ;
+\ (chk-fail): the common failure tail. When catching, store the reason and throw
+\ (so the caller's print+abort below is never reached); otherwise return and let
+\ it run. Takes a COPY of the reason ( c-addr u ) so the abort path keeps its own.
+: (chk-fail) ( c-addr u -- )  chk-catch @ if !why CHK-THROW throw then 2drop ;
+
 \ chk  ( actual expected c-addr u -- )   equal, or report both and abort
 : chk
   2over = if 2drop 2drop exit then
+  2dup (chk-fail)
   cr ." CONSTRAINT: " type ."  -- want=" u. ."  got=" u. cr abort ;
 
 \ chk< ( n limit c-addr u -- )           unsigned n < limit, or abort
 : chk<
   2over u< if 2drop 2drop exit then
+  2dup (chk-fail)
   cr ." CONSTRAINT: " type ."  -- limit=" u. ."  got=" u. cr abort ;
 
 \ chk? ( flag c-addr u -- )              an arbitrary predicate, incl. poke's
 \                                        `=>` implication as `0= swap or`
 : chk?
   rot if 2drop exit then
+  2dup (chk-fail)
   cr ." CONSTRAINT: " type cr abort ;
+
+\ validate ( xt -- c-addr u )  run a chk-using check word under the reason seam:
+\ 0-length reason ⟺ valid, else the first failing chk's NAMED reason. This is the
+\ ONE place chk-catch is turned on, and it is turned off again however catch
+\ returns — so every direct caller of chk (elf-methods, authoring) still aborts.
+: validate ( xt -- c-addr u )
+  chk-catch on  catch  chk-catch off
+  ?dup if  drop why-adr @ why-len @  else  0 0  then ;
+\ ?refused ( c-addr u -- c-addr u flag )  true when validate returned a reason
+\ (u<>0); leaves the reason intact for a following .refusal.
+: ?refused ( c-addr u -- c-addr u flag )  dup 0<> ;
+\ .refusal ( c-addr u -- )  print a returned reason "by name", the uniform form
+\ every module and the checker key on. A 0-length reason prints nothing.
+: .refusal ( c-addr u -- )  dup if ." REFUSED: " type cr else 2drop then ;
 
 \ ── bit-fields (REVIEW §G4: "cheap, do it") ────────────────────────
 \ Mask-and-shift over primitives the kernel already has. A p_flags RWX triple or

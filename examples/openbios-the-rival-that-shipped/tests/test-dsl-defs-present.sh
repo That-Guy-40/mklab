@@ -53,17 +53,22 @@ DSL="$LAB_DIR/dsl"
 deps_of() {  # deps_of <file> -> space-separated deps in load order (excl. the file)
   case "$1" in
     struct)        echo "" ;;
+    contract)      echo "struct" ;;
     elf)           echo "struct" ;;
+    elf-conform)   echo "struct contract elf" ;;
     elf32)         echo "struct elf" ;;
     sha256)        echo "struct" ;;
     eventlog)      echo "struct sha256" ;;
+    evlog-conform) echo "struct contract sha256 eventlog" ;;
     cbfs)          echo "struct" ;;
+    cbfs-conform)  echo "struct contract cbfs" ;;
     cbfs-write)    echo "struct cbfs" ;;
     cbfs-payload)  echo "struct cbfs cbfs-write" ;;
     region)        echo "struct" ;;
     lbregion)      echo "struct region" ;;
     fdt)           echo "struct" ;;
     fdt-read)      echo "struct fdt" ;;
+    fdt-conform)   echo "struct contract fdt fdt-read" ;;
     cpio)          echo "struct" ;;
     cpio-edit)     echo "struct cpio" ;;
     pe)            echo "struct" ;;

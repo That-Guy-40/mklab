@@ -160,6 +160,16 @@ close both when the PR lands.
 
 ### Item 2 — the Tier-0 conformance contract + slim-profile checker (the roadmap's unbuilt piece)
 
+> ✅ **DONE 2026-09-21 (`feat/tier0-conformance-contract`, DEFERRED.md D4).** `dsl/CONTRACT.md`
+> at `contract v1`; `struct.fth`'s `chk` seam gained a `chk-catch`/`validate` mode so a refusal is
+> one returned-named-reason shape (the abort+`want=/got=` path unchanged — `elf-methods` untouched);
+> `elf`/`cbfs`/`fdt`/`evlog` conform through sidecars each with a biting negative control; the CBFS
+> silent-stop defect is fixed in `cbfs.fth` (`cbfs-list` refuses a corrupt first entry by name — the
+> failing→passing control); `dsl/contract.fth`'s registry names absent modules; and
+> `tests/test-contract-conformance.sh` (headless, in `run-all.sh`) proves itself on planted defects
+> before grading the real modules, plus the slim-profile guarantee. Consumers pinned. The remaining
+> readers (`pe`/`cpio`/`bootparams`, and the writers) conform as they are built — Tier 1+.
+
 **Do this only after item 1 has `main` green.** The roadmap's
 [§2](FIRMWARE_FAMILY_ROADMAP.md#2-architecture-decision-locked-a-federation-not-a-fusion) specifies
 it and §3 Tier 0 owes it; the 2026-09-16 re-measurement found "the contract's vocabulary already
