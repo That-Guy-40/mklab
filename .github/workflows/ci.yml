@@ -379,16 +379,25 @@ jobs:
         # has no opinion about, and announced the absence as a regression in `--mac`.
         run: |
           timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-arm xorriso \
-            || echo "::warning::qemu-system install failed or timed out — phase 2's argv unit tests will SKIP, so build_qemu_argv is NOT exercised by this run"
+            || echo "::warning::qemu-system apt-get returned non-zero — the hard assert below is the gate"
+          # A precondition THIS step installs is a CI defect when missing, not an
+          # UNKNOWN (DEFERRED.md D3). The primary target — qemu-system-x86_64, which
+          # nine phase-2 rows gate on — is asserted HARD: a 2 s apt that installed
+          # nothing (the swallowed-failure shape: `|| echo "::warning::"` let the run
+          # continue, and every QEMU-gated guard then SKIPped inside a job that claimed
+          # to install the tool) now FAILS the step loudly (::error:: + exit 1) instead
+          # of masquerading as a green run full of quiet SKIPs.
+          if ! command -v qemu-system-x86_64 >/dev/null 2>&1; then
+            echo "::error::qemu-system-x86_64 absent after this step installed qemu-system-x86 — the install failed silently; a precondition this job installs is a CI defect, not an UNKNOWN, so phase 2's argv unit tests must not be allowed to SKIP unnoticed"
+            exit 1
+          fi
+          echo "qemu-system present ($(qemu-system-x86_64 --version | head -1)) — phase 2's argv unit tests will run"
+          # The narrower targets (fewer rows) stay named warnings, not hard fails.
           missing=""
-          for c in qemu-system-x86_64 qemu-system-aarch64 xorrisofs; do
+          for c in qemu-system-aarch64 xorrisofs; do
             command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
           done
-          if [ -n "$missing" ]; then
-            echo "::warning::still missing:$missing — the phase-2 rows gated on it will SKIP, and the end-of-step annotation will name each one"
-          else
-            echo "qemu-system present ($(qemu-system-x86_64 --version | head -1)) — phase 2's argv unit tests will run"
-          fi
+          [ -n "$missing" ] && echo "::warning::still missing:$missing — the narrower phase-2 rows gated on it will SKIP, and the end-of-step annotation will name each one" || true
       - name: Install dnsmasq-base + qemu-user-static (three more rows)
         # TODO 11.2a, second pass. Each install weighed against runner minutes, and the ones
         # NOT done are named below rather than left as a silent omission.
