@@ -76,6 +76,7 @@ FAT and ISO 9660 additionally pull in `charset` (`grub_utf16_to_utf8`), `datetim
 |---|---|---|
 | **POC-1 — build box ✓ DONE** | GRUB 2's `ext2.c` + `fshelp.c` compile against the minimal `grub/` shim headers, then link into `openbios-unix` with the glue + package | `gcc -c` clean; `openbios-unix` built via `build-grub2fs.sh`, `nm` shows `grub2fs_init`/`grub_disk_read`/`grub_ext2_fs`/`grub_fs_register` |
 | **POC-2 — ext2 mount + read ✓ DONE** | `grub2fs` mounts a **modern `mke2fs -t ext2`** image (inode 256, `dir_index`/`filetype`) and `load`s a file; bytes == `grub-fstest cp`; the same image reads `File not found` through `grubfs`, which still reads a classic image (neg control bites) | `smoke-grub2fs.sh` → PASS, headless `openbios-unix` drive vs the `grub-fstest` foreign oracle |
+| S1 `dir` ✓ DONE | `dir hd:\` through grub2fs **lists** a modern `mke2fs` ext2 directory (design notes §4 S1's literal milestone); grubfs's `dir` is a stub AND it cannot mount a modern-ext2 directory, so it cannot list one. Mechanism: `open` succeeds for a directory path (probes `fs_dir`, mirroring iso9660's opendir-then-open) and stores the path in the instance; the `dir` method drives `fs->fs_dir` with a **buffering** hook (printing from inside the driver's C callback faults; the framework's `dir`-word stack is mismatched, so `dir` uses the mounted instance's own state, not the passed args). Subdirectories marked with a trailing `\`. | `smoke-fs-dir.sh` → PASS (all entries == `debugfs`; grubfs control bites) |
 | POC-3 — FAT + ISO 9660 ✓ DONE | add `fat.c`+`iso9660.c` to the build; the new surface: a **real heap for grub2fs** (`grub_malloc`/`free`/`realloc`/`calloc` over a static arena — OpenBIOS has no `realloc` and `free()` is a no-op over a 128 KiB bump, which the ext2 slice tolerated but FAT/ISO do not), `grub_utf16_to_utf8` (charset) + `grub_datetime2unixtime` (datetime) as copied inlines, `grub_get_unaligned16` in types.h, and `grub/fat.h`+`grub/exfat.h` **vendored verbatim** (on-disk structs). Register `grub_fat_init`/`grub_iso9660_init` beside ext2. | grub2fs reads FAT + ISO == `grub-fstest` (positive oracle; 0.97 grubfs also reads basic FAT/ISO, so the "old package can't" control is specific to modern-ext, POC-2) |
 | POC-4 — the byte-order control (ppc DONE) | grub2fs built into the REAL ppc firmware (`build-grub2fs-arch.sh ppc` -> `openbios-qemu.elf`) and driven in `qemu-system-ppc` (BIG-ENDIAN): reads a modern little-endian ext2 image, `/HELLO` byte-for-byte == `grub-fstest`, inode size + data both correct through `grub_le_to_cpu*` (which SWAP on ppc). amd64 LE is proven hosted (`smoke-grub2fs.sh`). **x86 real-firmware + sparc are UNCOVERED-by-name** (sparc: no cross-toolchain in the build container). **Finding: the 1 MiB static-BSS heap overflowed the ppc ROM** (`.bss VMA wraps` — the S0 1 MiB ceiling); fixed by claiming the heap from RAM at first use (`alloc-mem` in `g2_init`), which fits any ROM. | `smoke-grub2fs-arches.sh` — ppc `load hd:\HELLO` via grub2fs == `grub-fstest` |
 | POC-5 — `fs-combo`/`fs-tiers` ✓ DONE (Tier 1) | one **corpus of edge images** read through every reader this lab has (grubfs 0.97, grub2fs) via **single-reader firmwares** (a `GRUB2FS_ONLY=1` build → attribution needs no probe-order guess); the per-format order **derived** from byte-equal grades against a **foreign** oracle (debugfs/mcopy/isoinfo). Result: **ext2 → grub2fs first** (grubfs *partial*, `File not found` on the modern decider); **iso9660 → both eligible, tie UNBROKEN** (needs Tier 2 cost); **fat → grub2fs sole reader here** (grubfs FAT not compiled). Emitted to `fs-tiers.toml`, **bound to the corpus by an anchor sha** (stale → refused). **Tier 2 cost (info blockstats) UNMEASURED** — hosted firmware has no counted block device; **U-Boot/`libsa` (§2.1a/b) not built** — a two-reader table, named as such. | `smoke-fs-tiers.sh` → PASS; controls **A** (reversed ext2 order = LIED), **B** (stale anchor refused), **C** (byte-changed payload read back as new bytes) all bite |
@@ -136,3 +137,28 @@ disk write-seam and method-reachability differ.
 - `smoke-fs-edit-inplace.sh` — the endgame E2: grub2fs `write-file` edits a file in place on a
   real ext2 fs (same-length), host reads the fix, `e2fsck` clean, only the edited bytes change.
   Uses `GRUB2FS_ONLY=1 ENDGAME_WRITE=1 build-grub2fs.sh` (writable firmware, throwaway build only).
+- `smoke-fs-dir.sh` — S1's literal milestone: grub2fs `dir hd:\` lists a modern ext2 directory
+  (== `debugfs`); the stock grubfs control cannot.
+
+## Backlog — the rest of the design note, prioritized
+
+What the [design notes](../../DESIGN-NOTES-modern-filesystems-for-a-frozen-firmware.md) define
+that this lab has **not** built yet, most-valuable/cheapest first. Seam 1 (§2.1) — the GRUB 2
+shim — is complete through the endgame; the rest is breadth (other sources, other OFW routes,
+the store direction) that the note itself frames as *choices*, plus two finishes to work already
+started.
+
+| # | item | §  | effort | what it unlocks / why |
+|---|---|---|---|---|
+| B1 | **Tier 2 cost for `fs-tiers`** — `info blockstats` sector-read deltas per (reader, op), breaking the `iso9660` eligible-tie POC-5 left open | 2.1e | S–M (a QEMU-arch drive + monitor) | finishes the tier table's second half; the only *measured* way to order two eligible readers |
+| B2 | **Endgame E2b — port the same-length write to REAL firmware** (qemu-ppc, real writable IDE) | 2.6 | M | the faithful endgame; **already characterized as a spike above** (ide.c has the ATA write; crux = does a qemu `WIN_WRITE` persist — a `bind_func` test word settles it) |
+| B3 | **Endgame E3 — "boot it"** | 2.6 | M | the rescue arc's finale: break a config on a real root fs, fix it in place, then boot — the sentence the whole note exists to reach, end to end |
+| B4 | **Seam 2 — partition maps** (`grub2parts`: GPT + MBR via GRUB 2's `partmap/`) | 2.2 | S ("for the same price" — same shim) | `dir hd:2,\` on the GPT images the newer labs make; today none reads GPT |
+| B5 | **The decisive-mount dispatcher** (probe order generated from `fs-tiers.toml`, fall-through-by-name) | 2.1d | M | makes 0.97 + grub2fs coexist safely; `fs-tiers.toml` is already the data it consumes |
+| B6 | **Seam 1 other sources — U-Boot `fs/` (§2.1a) + `libsa` (§2.1b) shims** → the shippable multi-source ROM | 2.1a/b/c | L | the license-clean shipping story (GRUB 2 is lab-only); makes `fs-tiers` a real >2-reader table |
+| B7 | **Seam 3 — the loader as a client program** (`libsa-ofw`/`libsa-openbios`) | 2.3 | M | reaches OFW with no firmware change: "boot Linux off a modern ext4 disk on OFW" |
+| B8 | **Seam 4 — transliteration** (`ext4.fth`: GRUB 2's `ext2.c` as the spec for an OFW Forth package) | 2.4 | L (authoring) | OFW's *own* `load` reads modern ext4 — the sister lab's thesis |
+| B9 | **`store-tiers`** — one sweep over the persistence tracks (patches 04–10) emitting `store-tiers.toml` | 2.5 | M | the *other* direction (writing durable bytes), tiered by use, with provenance |
+
+Open questions the note leaves to discuss (§6) are mostly answered by the built work: §6 Q4
+(keep 0.97 ON) is settled; Q3 (ppc fits) is measured (POC-4); Q1/Q5 wait on B6's second source.

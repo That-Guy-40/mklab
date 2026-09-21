@@ -122,6 +122,25 @@ proven by the ext2 row); the x86 real-firmware row; sparc (no sparc cross-toolch
 the build container). Run: `./smoke-grub2fs-arches.sh` → `PASS: grub2fs read a MODERN
 little-endian ext2 filesystem correctly on a BIG-ENDIAN ppc firmware …`.
 
+## 3c. S1's literal `dir` milestone — `./smoke-fs-dir.sh`
+
+Design notes §4's S1 says *"`dir hd:\` … lists a modern image."* POC-1b/2 proved the
+*read*; this proves the **listing**. `dir hd:\` through grub2fs lists a modern `mke2fs`
+ext2 directory (subdirectories marked with a trailing `\`), byte-checked against
+`debugfs -R ls`; the stock 0.97 grubfs cannot (its `dir` is a stub, and it cannot even
+mount a modern-ext2 directory — `File not found`), so the control bites.
+
+```
+$ ./smoke-fs-dir.sh
+```
+
+Notes for the curious: grubfs *and* grub2fs both shipped `dir` as a stub, so this makes
+the modern reader strictly better. Two quirks surfaced and are handled in the code —
+the entry names must be **buffered** and printed *after* `fs_dir` returns (printing from
+inside the driver's C callback faults), and the framework's `dir`-word passes a stack
+that does not match the fs-package `dir` contract, so the method drives the listing from
+the **mounted instance's own state** (the path `open` stored) rather than the passed args.
+
 ## 4. The tier table (POC-5, `fs-combo`/`fs-tiers`) — `./smoke-fs-tiers.sh`
 
 POC-1..4 proved grub2fs *reads* each format. POC-5 asks the §2.1e question: **when

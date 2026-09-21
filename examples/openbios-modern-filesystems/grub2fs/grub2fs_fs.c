@@ -35,6 +35,7 @@ typedef struct {
 	struct grub_disk   disk;
 	struct grub2fs_disk_priv priv;
 	int                mounted;
+	char               openpath[512];  /* the path this instance opened (for dir) */
 } grub2fs_info_t;
 
 DECLARE_NODE( grub2fs, 0, sizeof(grub2fs_info_t), "+/packages/grub2fs-files" );
@@ -53,6 +54,8 @@ grub2fs_bind_disk( grub2fs_info_t *mi, int fd, long long offset )
 	mi->disk.data = &mi->priv;
 	mi->device.disk = &mi->disk;
 }
+
+static int grub2fs_probe_hook( const char *filename, const struct grub_dirhook_info *info, void *data );
 
 /* backslash -> forward slash, like grubfs */
 static void
@@ -106,10 +109,29 @@ grub2fs_files_open( grub2fs_info_t *mi )
 		err = fs->fs_open( &mi->file, path );
 		if (err == GRUB_ERR_NONE) {
 			mi->mounted = 1;
+			strncpy( mi->openpath, path, sizeof(mi->openpath) - 1 );
+			mi->openpath[sizeof(mi->openpath) - 1] = '\0';
 			free( path );
 			RET( -1 );
 		}
 		if (err == GRUB_ERR_FILE_NOT_FOUND || err == GRUB_ERR_BAD_FILE_TYPE) {
+			/* This fs matched but the path is not a FILE — it may be a
+			 * DIRECTORY. Probe fs_dir so an `open` of a directory path
+			 * succeeds (mirroring iso9660_fs.c's opendir-then-open), which is
+			 * what lets the framework then call the `dir` method. A genuinely
+			 * missing path fails fs_dir too and still reports "File not found". */
+			if (fs->fs_dir) {
+				int seen = 0;
+				grub_errno = GRUB_ERR_NONE;
+				fs->fs_dir( &mi->device, path, grub2fs_probe_hook, &seen );
+				if (grub_errno == GRUB_ERR_NONE) {
+					mi->mounted = 1;   /* mounted; the path is a directory */
+					strncpy( mi->openpath, path, sizeof(mi->openpath) - 1 );
+					mi->openpath[sizeof(mi->openpath) - 1] = '\0';
+					free( path );
+					RET( -1 );
+				}
+			}
 			forth_printf("File not found\n");
 			close_io( fd );
 			free( path );
@@ -420,14 +442,90 @@ grub2fs_files_probe( grub2fs_info_t *dummy __attribute__((unused)) )
 	RET( 0 );
 }
 
-/* static method, ( pathstr len ihandle -- ) */
-static void
-grub2fs_files_dir( grub2fs_info_t *dummy __attribute__((unused)) )
+/* per-entry callback: ACCUMULATE one directory entry into a C buffer (a trailing
+ * backslash marks a subdirectory). We do NOT forth_printf here: the hook runs deep
+ * inside the driver's C iteration, and re-entering the Forth interpreter from that
+ * callback faults. So the `dir` method prints the whole buffer AFTER fs_dir returns. */
+#define G2_DIRBUF_SIZE 8192
+static char g2_dirbuf[G2_DIRBUF_SIZE];
+static int  g2_dirbuf_len;
+static int  g2_dirbuf_overflow;
+
+static int
+grub2fs_dir_collect_hook( const char *filename,
+			  const struct grub_dirhook_info *info,
+			  void *data __attribute__((unused)) )
 {
-	forth_printf("dir method not implemented for grub2fs filesystem\n");
-	POP();
-	POP();
-	POP();
+	int nlen = (int) strlen( filename );
+	int need = nlen + (info && info->dir ? 1 : 0) + 1;   /* name [+ '\\'] + '\n' */
+	if (g2_dirbuf_len + need >= G2_DIRBUF_SIZE) {
+		g2_dirbuf_overflow = 1;
+		return 0;
+	}
+	memcpy( g2_dirbuf + g2_dirbuf_len, filename, nlen );
+	g2_dirbuf_len += nlen;
+	if (info && info->dir)
+		g2_dirbuf[g2_dirbuf_len++] = '\\';
+	g2_dirbuf[g2_dirbuf_len++] = '\n';
+	g2_dirbuf[g2_dirbuf_len] = '\0';
+	return 0;
+}
+
+/* ( pathstr len ihandle -- ) — list a directory. Called on the MOUNTED instance
+ * (open-dev of a directory path succeeded above), so we reuse mi's already-bound
+ * device (mi->priv.fd is the parent device fd — NOT re-open_ih'd, which would route
+ * grub_disk_read back through grub2fs's own file `read` and recurse). The GRUB-2
+ * twin of a `dir` method — grubfs's is still a stub, so this lists directories the
+ * shipped 0.97 cannot. */
+static void
+grub2fs_files_dir( grub2fs_info_t *mi )
+{
+	grub_fs_t fs;
+	int listed = 0;
+	const char *path;
+
+	/* The framework's `dir` word passes a stack that does not match the
+	 * fs-package dir contract (its args land as [0, path-ptr, ihandle] and drive
+	 * the interposer differently) — so we ignore those cells and drive the listing
+	 * from the MOUNTED instance itself: `open` stored the opened path in mi, and
+	 * mi's device/fs are already bound. Discard the two arg cells the word pushed
+	 * for the method (the ihandle beneath them is the framework's, for close-dev). */
+	POP(); POP();
+
+	if (!mi->mounted) {
+		forth_printf("grub2fs: dir on an unmounted device\n");
+		return;
+	}
+	path = (mi->openpath[0] != '\0') ? mi->openpath : "/";
+
+	g2_dirbuf_len = 0; g2_dirbuf_overflow = 0; g2_dirbuf[0] = '\0';
+	/* prefer the fs that mounted this instance; fall back to a probe of the list */
+	if (mi->file.fs && mi->file.fs->fs_dir) {
+		grub_errno = GRUB_ERR_NONE;
+		mi->file.fs->fs_dir( &mi->device, path, grub2fs_dir_collect_hook, NULL );
+		listed = (grub_errno == GRUB_ERR_NONE);
+	}
+	for (fs = grub_fs_list; !listed && fs; fs = fs->next) {
+		if (!fs->fs_dir)
+			continue;
+		g2_dirbuf_len = 0; g2_dirbuf_overflow = 0; g2_dirbuf[0] = '\0';
+		grub_errno = GRUB_ERR_NONE;
+		fs->fs_dir( &mi->device, path, grub2fs_dir_collect_hook, NULL );
+		if (grub_errno == GRUB_ERR_NONE) {
+			listed = 1;
+			break;
+		}
+	}
+
+	/* print AFTER fs_dir returns (never from inside the driver's C callback) */
+	if (listed) {
+		forth_printf("\n%s", g2_dirbuf);
+		if (g2_dirbuf_overflow)
+			forth_printf("grub2fs: (listing truncated — more entries than the dir buffer holds)\n");
+	} else {
+		forth_printf("grub2fs: no registered filesystem could list %s\n", path);
+	}
+	/* path aliases mi->openpath — not owned here, nothing to free */
 }
 
 static void
