@@ -31,7 +31,9 @@ UD="$UB.dict"
 DSL="$LAB_DIR/dsl"
 for f in struct contract sha256 cbfs cbfs-conform elf elf-conform fdt fdt-read \
          fdt-conform eventlog evlog-conform cpio cpio-conform pe pe-conform \
-         bootparams bootparams-conform; do
+         bootparams bootparams-conform \
+         pe-edit pe-write-conform cpio-edit cpio-write-conform \
+         bootparams-edit bootparams-write-conform; do
     [[ -f "$DSL/$f.fth" ]] \
         || fail "missing $DSL/$f.fth — this checker stages the SHIPPED files, never re-implements them"
 done
@@ -56,6 +58,12 @@ cp "$DSL/pe.fth"           "$STAGE/PE.FTH"
 cp "$DSL/pe-conform.fth"   "$STAGE/PEC.FTH"
 cp "$DSL/bootparams.fth"       "$STAGE/BP.FTH"
 cp "$DSL/bootparams-conform.fth" "$STAGE/BPC.FTH"
+cp "$DSL/pe-edit.fth"          "$STAGE/PEEDIT.FTH"
+cp "$DSL/pe-write-conform.fth" "$STAGE/PEW.FTH"
+cp "$DSL/cpio-edit.fth"        "$STAGE/CPIOEDIT.FTH"
+cp "$DSL/cpio-write-conform.fth" "$STAGE/CPIOW.FTH"
+cp "$DSL/bootparams-edit.fth"  "$STAGE/BPEDIT.FTH"
+cp "$DSL/bootparams-write-conform.fth" "$STAGE/BPW.FTH"
 
 # ── fixture byte images: a valid + corrupt CBFS region and FDT blob ──────────
 python3 - "$STAGE" <<'PY'
@@ -108,6 +116,42 @@ struct.pack_into('<I', bp, 0x202, 0x53726448)  # "HdrS"
 open(o + '/VBP.BIN', 'wb').write(bytes(bp))
 cbp = bytearray(bp); struct.pack_into('<H', cbp, 0x1fe, 0x1234)
 open(o + '/CBP.BIN', 'wb').write(bytes(cbp))
+
+# ── writer-half DELTA fixtures (Tier 2): richer, so an edit can be reverified ──
+# PE with TWO sections at fixed rawoffs: .cmdline (0x100,"OLD",rawsize 0x20) + a
+# neighbour .other (0x120,"KEEP"). A pe-write of .cmdline must change 0x100 and
+# leave 0x120 alone; an oversize edit must be refused with 0x100 unchanged.
+wpe = bytearray(0x200); wpe[0:2] = b'MZ'
+struct.pack_into('<I', wpe, 0x3c, 0x40);  wpe[0x40:0x44] = b'PE\0\0'
+struct.pack_into('<H', wpe, 0x44, 0x8664)
+struct.pack_into('<H', wpe, 0x46, 2)              # two sections
+struct.pack_into('<H', wpe, 0x54, 0x28)
+struct.pack_into('<H', wpe, 0x58, 0x20b)
+st = 0x80
+wpe[st:st+8] = b'.cmdline'
+struct.pack_into('<I', wpe, st+0x08, 3)           # VirtualSize
+struct.pack_into('<I', wpe, st+0x10, 0x20)        # SizeOfRawData
+struct.pack_into('<I', wpe, st+0x14, 0x100)       # PointerToRawData
+e2 = st+0x28
+wpe[e2:e2+8] = b'.other\0\0'
+struct.pack_into('<I', wpe, e2+0x08, 4)
+struct.pack_into('<I', wpe, e2+0x10, 0x10)
+struct.pack_into('<I', wpe, e2+0x14, 0x120)
+wpe[0x100:0x103] = b'OLD';  wpe[0x120:0x124] = b'KEEP'
+open(o + '/WPE.BIN', 'wb').write(bytes(wpe))
+# cpio with two members: cfg="AAAA", keep="ZZZZ", then TRAILER (offsets 0x74/0xec).
+warc = newc('cfg', b'AAAA') + newc('keep', b'ZZZZ') + newc('TRAILER!!!', b'')
+open(o + '/WCPIO.BIN', 'wb').write(warc)
+# bootparams phys-0 dump: boot_params @0x100, cmd_line_ptr=0x400 → "old", cmdline_size 0x40,
+# a code32_start neighbour = 0xDEADBEEF that a cmdline edit must not touch.
+wbp = bytearray(0x800); Bp = 0x100
+struct.pack_into('<H', wbp, Bp+0x1fe, 0xAA55)
+struct.pack_into('<I', wbp, Bp+0x202, 0x53726448)
+struct.pack_into('<I', wbp, Bp+0x214, 0xDEADBEEF) # code32_start (neighbour)
+struct.pack_into('<I', wbp, Bp+0x228, 0x400)      # cmd_line_ptr
+struct.pack_into('<I', wbp, Bp+0x238, 0x40)       # cmdline_size
+wbp[0x400:0x404] = b'old\0'
+open(o + '/WBP.BIN', 'wb').write(bytes(wbp))
 PY
 
 # ── fixture MODULES: one conformant, three each with one planted defect ──────
@@ -365,6 +409,78 @@ grep -qa 'bp-open-corrupt=REFUSED: bootparams:' <<<"$OUT" \
     || fail "bootparams: bootparams-open did not refuse a wrong boot_flag BY NAME"
 note "bootparams: validates a zero page, refuses a wrong boot_flag by name, ARCH:4/4 (LE, ppc earns its keep)"
 
+# ── PART 3: the WRITER half — NAME-write graded on a DELTA + refuse-before-write ──
+# The edit must land, a NEIGHBOUR must not move (only the delta), and an
+# oversize/invalid edit must be refused BY NAME with the bytes UNCHANGED (no partial
+# write). The refuse assertions ARE the negative controls of this section.
+note "writer half: each NAME-write graded on the delta, with a refuse-before-write control"
+
+# PE — pe-write edits .cmdline (0x100); .other (0x120) must not move.
+wpbody="$(lev PE.FTH)"$'\n'"$(lev PEEDIT.FTH)"$'\n'"$(lev PEW.FTH)"
+wpbody+=$'\n''load hd:\\WPE.BIN'$'\n'
+wpbody+='load-base load-size s" .cmdline" s" NEW=1" pe-write drop'$'\n'
+wpbody+='." pe-w-after=" load-base 100 + cstr type cr'$'\n'
+wpbody+='." pe-w-neighbor=" load-base 120 + 4 type cr'$'\n'
+wpbody+='load hd:\\WPE.BIN'$'\n'
+wpbody+='." pe-w-refuse=" load-base load-size s" .cmdline" load-base 30 pe-write drop cr'$'\n'
+wpbody+='." pe-w-intact=" load-base 100 + cstr type cr'
+drive "$wpbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "pe-write: a required word is undefined — the writer half is not implemented"
+grep -qa 'pe-w-after=NEW=1' <<<"$OUT" \
+    || fail "pe-write: the .cmdline edit did not land (expected NEW=1) — see the drive log"
+grep -qa 'pe-w-neighbor=KEEP' <<<"$OUT" \
+    || fail "pe-write: a NEIGHBOUR section changed — the edit wrote more than the delta"
+grep -qa 'pe-w-refuse=edit| TOO-BIG' <<<"$OUT" \
+    || fail "pe-write: an oversize edit was not refused BY NAME before the write"
+grep -qa 'pe-w-intact=OLD' <<<"$OUT" \
+    || fail "pe-write: a REFUSED edit still changed the bytes — a partial write past the refuse gate"
+note "pe-write: .cmdline edit landed (NEW=1), neighbour intact (KEEP); oversize refused (edit| TOO-BIG), bytes unchanged (OLD)"
+
+# CPIO — cpio-write patches member cfg (0x74); sibling keep (0xec) must not move.
+wcbody="$(lev CPIO.FTH)"$'\n'"$(lev CPIOEDIT.FTH)"$'\n'"$(lev CPIOW.FTH)"
+wcbody+=$'\n''load hd:\\WCPIO.BIN'$'\n'
+wcbody+='load-base load-size 20 s" cfg" s" BBBB" cpio-write drop'$'\n'
+wcbody+='." cpio-w-after=" load-base 74 + 4 type cr'$'\n'
+wcbody+='." cpio-w-sibling=" load-base ec + 4 type cr'$'\n'
+wcbody+='load hd:\\WCPIO.BIN'$'\n'
+wcbody+='." cpio-w-refuse=" load-base load-size 20 s" cfg" s" BB" cpio-write drop cr'$'\n'
+wcbody+='." cpio-w-intact=" load-base 74 + 4 type cr'
+drive "$wcbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "cpio-write: a required word is undefined — the writer half is not implemented"
+grep -qa 'cpio-w-after=BBBB' <<<"$OUT" \
+    || fail "cpio-write: the member edit did not land (expected BBBB)"
+grep -qa 'cpio-w-sibling=ZZZZ' <<<"$OUT" \
+    || fail "cpio-write: a SIBLING member changed — the edit wrote more than the delta"
+grep -qa 'cpio-w-refuse=cpio| LEN-CHANGE' <<<"$OUT" \
+    || fail "cpio-write: a length-changing edit was not refused BY NAME"
+grep -qa 'cpio-w-intact=AAAA' <<<"$OUT" \
+    || fail "cpio-write: a REFUSED edit still changed the member — a partial write past the refuse gate"
+note "cpio-write: member edit landed (BBBB), sibling intact (ZZZZ); length change refused (cpio| LEN-CHANGE), bytes unchanged (AAAA)"
+
+# BOOTPARAMS — bootparams-write edits the command line; code32_start must not move.
+wbbody="$(lev BP.FTH)"$'\n'"$(lev BPEDIT.FTH)"$'\n'"$(lev BPW.FTH)"
+wbbody+=$'\n''load hd:\\WBP.BIN'$'\n'
+wbbody+='load-base load-size s" new=1" bootparams-write drop'$'\n'
+wbbody+='." bp-w-after=" load-base 400 + cstr type cr'$'\n'
+wbbody+='." bp-w-neighbor=" load-base 314 + le-l@ u. cr'$'\n'
+wbbody+='load hd:\\WBP.BIN'$'\n'
+wbbody+='." bp-w-refuse=" load-base load-size load-base 50 bootparams-write drop cr'$'\n'
+wbbody+='." bp-w-intact=" load-base 400 + cstr type cr'
+drive "$wbbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "bootparams-write: a required word is undefined — the writer half is not implemented"
+grep -qa 'bp-w-after=new=1' <<<"$OUT" \
+    || fail "bootparams-write: the command-line edit did not land (expected new=1)"
+grep -qa 'bp-w-neighbor=deadbeef' <<<"$OUT" \
+    || fail "bootparams-write: code32_start (a NEIGHBOUR field) changed — the edit wrote more than the delta"
+grep -qa 'bp-w-refuse=bp| CMDLINE-TOO-BIG' <<<"$OUT" \
+    || fail "bootparams-write: an over-cmdline_size edit was not refused BY NAME"
+grep -qa 'bp-w-intact=old' <<<"$OUT" \
+    || fail "bootparams-write: a REFUSED edit still changed the command line — a partial write past the refuse gate"
+note "bootparams-write: command line edited (new=1), code32_start intact (deadbeef); over-size refused (bp| CMDLINE-TOO-BIG), unchanged (old)"
+
 # ── PART 2: the separability guarantee — a slim profile names what is absent ──
 sbody="$(lev CBFS.FTH)"$'\n'"$(lev CBFSC.FTH)"$'\n'"$(lev ELF.FTH)"$'\n'"$(lev ELFC.FTH)"
 sbody+=$'\n''." SLIM:" cr'$'\n'
@@ -384,4 +500,4 @@ grep -qa 'NMODULES=2' <<<"$OUT" \
     || fail "separability: the registry counted something other than the 2 modules the slim profile loaded — a phantom or a missed registration"
 note "separability: slim profile (cbfs+elf) names fdt+evlog absent, present modules not mis-reported, #modules=2"
 
-pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."
+pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded on a DELTA: pe-write/cpio-write/bootparams-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write). The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."

@@ -76,11 +76,28 @@ liveness stance — requires it to be one of `HOST-ONLY`/`LIVE`/`SNAPSHOT`.
 
 ## Optional extensions (taken "in part")
 
-- `NAME-emit` / `NAME-write` — the writer half (the edit-and-reverify loop, roadmap Tier 2).
+- `NAME-write ( handle …edit-args -- ok? )` — an **in-place edit**: a *delta*, not a whole
+  re-author. It **refuses BY NAME before any byte moves** and writes **nothing** on refusal
+  (never a partial), returning `true` only when the edit landed. This is the "refuse before the
+  irreversible step" half of roadmap Tier 2. The edit args are per-format (a PE section by name,
+  a cpio member by name, the kernel command line), stated in the module's header; the *shape* is
+  the contract. The refusal keeps the module's own by-name prefix (`edit|`, `cpio|`, `bp|`) — a
+  bool-returning verb that names its reason, the readers' voice one mutation further.
+- `NAME-emit ( …compose-args -- adr len )` — **author** a whole artifact's bytes into a buffer
+  (`elf-write`'s `author-exit-elf`, `evlog-author`, `cbfs-write`'s `cbfs-author`). The writer's
+  other flavour: composing, rather than editing in place.
 - `NAME-live` — a seam-backed handle, for the pacme live inspector.
 
 A module implements only what it has; the contract does not require the writer half of a
 reader. The registry names what is absent rather than treating it as an error.
+
+**The writer half is graded on a DELTA, not a whole artifact** (roadmap Tier 2, and this repo's
+"assert the outcome, not the mechanism"): `tests/test-contract-conformance.sh` reads an artifact,
+calls `NAME-write`, re-reads, and asserts the edited field became the new value **and a neighbour
+did not** — the edit, and *only* the edit. Its **refuse-before-write control** feeds an
+oversized/invalid edit and asserts it is refused by name **and the bytes are unchanged** (a
+partial write, or a write that ran despite a refusal, fails it). A writer graded only on a
+whole authored artifact cannot see either property.
 
 ## The registry (`dsl/contract.fth`)
 
