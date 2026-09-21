@@ -18,7 +18,9 @@ section and watch the measurement change. It is the artifact-focused sibling of 
 > `.linux` section validated by `bootparams-validate`, `.initrd` walked after `cpio-open`, the
 > UKI itself opened by `pe-open` — consuming any of them the same way. The remaining half is the
 > **writer** surface: the in-place editor `pe-edit` now exposes `NAME-write` (Tier 2a, graded
-> on a delta with a refuse-before-write control); the **author** half `NAME-emit` is Tier 2b.
+> on a delta with a refuse-before-write control), and the **author** half `NAME-emit` now exists
+> too (Tier 2b: `elf-emit`/`evlog-emit`/`fdt-emit`, graded on an emit→own-reader round trip). The
+> contract's writer surface is complete; this workbench consumes readers and writers alike at `contract v1`.
 
 > **Re-measured 2026-09-16, against the linuxboot lab's scripts, the host, and the edk2/swtpm
 > fixture.** The thesis holds and the tooling is nearly all on the host. Three corrections:

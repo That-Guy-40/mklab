@@ -83,9 +83,17 @@ liveness stance — requires it to be one of `HOST-ONLY`/`LIVE`/`SNAPSHOT`.
   a cpio member by name, the kernel command line), stated in the module's header; the *shape* is
   the contract. The refusal keeps the module's own by-name prefix (`edit|`, `cpio|`, `bp|`) — a
   bool-returning verb that names its reason, the readers' voice one mutation further.
-- `NAME-emit ( …compose-args -- adr len )` — **author** a whole artifact's bytes into a buffer
-  (`elf-write`'s `author-exit-elf`, `evlog-author`, `cbfs-write`'s `cbfs-author`). The writer's
-  other flavour: composing, rather than editing in place.
+- `NAME-emit ( …compose-args -- adr len )` — **author** a whole artifact's bytes and return
+  them (`elf-emit`=`author-exit-elf`, `evlog-emit`=`evlog-author`, `fdt-emit`=`dt>fdt` flattening
+  the live tree). The writer's other flavour: composing, rather than editing in place. Its
+  contract grade is a **round trip** — the emitted bytes satisfy the module's own `NAME-validate`
+  — with a **magic-stomp control** (corrupt the emitted magic; the same validate must refuse by
+  name) so the round trip is not vacuous. That proves emit↔read *self-consistency*; it does
+  **not** prove the strong property — a **foreign** oracle accepts it (`elfkickers`,
+  `tpm2_eventlog`, `dtc`) — which a writer and reader wrong the same way would pass. That grade
+  is the module's smoke track, and is named, not silently claimed. (`cbfs`'s writer is in-place
+  surgery graded by `cbfstool`, so it opts in through its smoke track rather than a standalone
+  `NAME-emit`.)
 - `NAME-live` — a seam-backed handle, for the pacme live inspector.
 
 A module implements only what it has; the contract does not require the writer half of a
