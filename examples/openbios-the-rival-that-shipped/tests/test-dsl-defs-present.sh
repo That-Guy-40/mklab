@@ -72,12 +72,15 @@ deps_of() {  # deps_of <file> -> space-separated deps in load order (excl. the f
     cpio)          echo "struct" ;;
     cpio-conform)  echo "struct contract cpio" ;;
     cpio-edit)     echo "struct cpio" ;;
+    cpio-write-conform) echo "struct cpio cpio-edit" ;;
     pe)            echo "struct" ;;
     pe-conform)    echo "struct contract pe" ;;
     pe-edit)       echo "struct pe" ;;
+    pe-write-conform) echo "struct pe pe-edit" ;;
     bootparams)    echo "struct" ;;
     bootparams-conform) echo "struct contract bootparams" ;;
     bootparams-edit) echo "struct bootparams" ;;
+    bootparams-write-conform) echo "struct bootparams bootparams-edit" ;;
     optrom)        echo "struct" ;;
     elf-write)     echo "struct elf" ;;
     *)             return 1 ;;

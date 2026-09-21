@@ -172,9 +172,14 @@ close both when the PR lands.
 > **Tier 1 done too (2026-09-21):** `pe`/`cpio`/`bootparams` now conform via
 > `dsl/{pe,cpio,bootparams}-conform.fth` (each with a biting negative control; the checker grades
 > all **seven** modules), and the two consumer pins are flipped to real. `pe-open`/`bp-open`'s
-> existing status-openers are reused (native xt captured, then redefined for `pe`). Remaining:
-> the **writer** extension `NAME-emit`/`NAME-write` (elf-write, cbfs-write, evlog-author, the
-> editors) — roadmap Tier 2.
+> existing status-openers are reused (native xt captured, then redefined for `pe`).
+>
+> **Tier 2a done (2026-09-21):** the three in-place **editors** expose `NAME-write` via
+> `dsl/{pe,cpio,bootparams}-write-conform.fth` (aliases over `pe-section-set`/`cpio-patch`/
+> `bp-cmdline-set`); the checker grades each on a **delta** (the edit lands, a neighbour does
+> not) with a **refuse-before-write control** (an oversize/invalid edit refused by name, bytes
+> unchanged — verified to bite). `CONTRACT.md` pins the `NAME-write`/`NAME-emit` convention.
+> Remaining: the **author** half `NAME-emit` (elf-write, cbfs-write, evlog-author) — Tier 2b.
 
 **Do this only after item 1 has `main` green.** The roadmap's
 [§2](FIRMWARE_FAMILY_ROADMAP.md#2-architecture-decision-locked-a-federation-not-a-fusion) specifies

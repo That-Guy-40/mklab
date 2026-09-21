@@ -17,7 +17,8 @@ section and watch the measurement change. It is the artifact-focused sibling of 
 > `tests/test-contract-conformance.sh`. So this workbench builds on conformant readers — a
 > `.linux` section validated by `bootparams-validate`, `.initrd` walked after `cpio-open`, the
 > UKI itself opened by `pe-open` — consuming any of them the same way. The remaining half is the
-> **writer/editor** surface (`pe-edit`'s `NAME-emit`/`NAME-write`), roadmap Tier 2.
+> **writer** surface: the in-place editor `pe-edit` now exposes `NAME-write` (Tier 2a, graded
+> on a delta with a refuse-before-write control); the **author** half `NAME-emit` is Tier 2b.
 
 > **Re-measured 2026-09-16, against the linuxboot lab's scripts, the host, and the edk2/swtpm
 > fixture.** The thesis holds and the tooling is nearly all on the host. Three corrections:
