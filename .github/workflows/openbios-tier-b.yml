@@ -61,7 +61,17 @@ env:
   # (three boots and a screendump) and is here anyway, because it carries the
   # regression guard for patch 49 — the six 1275 device-register words that
   # shipped EMPTY, whose failure mode is a silent stack shift in an FCode driver.
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt fdt-import cpio pe bootparams uki cmdline-edit cmdline-ptr initrd-swap config-edit uki-edit elf-gate dict-budget marker elf-ladder launcher
+  # event-log/event-replay/event-real/event-bench (the attestation half) are added
+  # here (DEFERRED.md D2): they need only tpm2-tools (installed above) + vendored
+  # fixtures — no coreboot ROM, no live TPM — and are STRICT below (a skip is red).
+  # The cbfs* tracks (cbfs cbfs-live cbfs-write cbfs-payload) are DELIBERATELY NOT
+  # here: they need the built coreboot ROM ($HOME/linuxboot-lab/coreboot), which this
+  # job does not provision — named as CI-unrunnable in DEFERRED.md D2 rather than left
+  # to skip quietly. Provisioning them is a coreboot build step, a separate change.
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods rmw-fields tlv-primitives optrom fdt fdt-import cpio pe bootparams uki cmdline-edit cmdline-ptr initrd-swap config-edit uki-edit elf-gate dict-budget marker elf-ladder launcher event-log event-replay event-real event-bench
+  # Tracks whose preconditions THIS job installs (tpm2-tools) — a 77/SKIP from one of
+  # these is a CI defect (red), not an UNKNOWN, per the strict-gate case in the runner.
+  STRICT_TRACKS: event-log event-replay event-real event-bench
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.
@@ -135,7 +145,12 @@ jobs:
           # eat the runner's hour, and a failed one must be visible rather than
           # turning into a sweep of SKIPs two steps later.
           timeout 180 sudo apt-get update || echo "::warning::apt-get update failed"
-          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc device-tree-compiler binutils elfutils genisoimage \
+          # tpm2-tools: the foreign oracle (tpm2_eventlog) the event-* attestation
+          # tracks grade against — added so the SHA-256 replay + event-log parse run
+          # HERE, not only on the dev host (DEFERRED.md D2). A failed install is made
+          # LOUD by the strict-track gate below (a skip of a track whose preconditions
+          # this job installs is red, not a warning), not by this soft `|| echo`.
+          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc device-tree-compiler binutils elfutils genisoimage tpm2-tools \
             || echo "::warning::install failed — the artifact gate below will say what that cost"
 
       - name: Build x86, amd64 and ppc
@@ -252,7 +267,13 @@ jobs:
             # the track wanted something else — say so rather than counting it green.
             case $r in
               0) ;;
-              77) echo "::warning::$t SKIPPED after a successful build — it needs something this runner lacks" ;;
+              77) case " ${STRICT_TRACKS:-} " in
+                    *" $t "*)
+                      echo "::error::$t SKIPPED, but this job installs its preconditions (tpm2-tools) — a skip here is a CI defect, not an UNKNOWN; the attestation half must be verified HERE, not only on the dev host"
+                      rc=1 ;;
+                    *)
+                      echo "::warning::$t SKIPPED after a successful build — it needs something this runner lacks" ;;
+                  esac ;;
               *) rc=1 ;;
             esac
             ran=$((ran + 1))
