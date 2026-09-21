@@ -9,6 +9,14 @@ section and watch the measurement change. It is the artifact-focused sibling of 
 (`dsl/pe.fth`) — the format both labs need. Tracked as
 [`TODO.md` §30](TODO.md#30-the-uki-workbench--the-unified-kernel-image-as-the-subject-2026-09-14).*
 
+> **Contract pin (roadmap §2):** this workbench **consumes `{pe, cpio, bootparams}` at
+> `contract v1`** — the convention in
+> [`dsl/CONTRACT.md`](examples/openbios-the-rival-that-shipped/dsl/CONTRACT.md). That contract is
+> now defined and `elf`/`cbfs`/`fdt`/`evlog` conform to it; `pe`/`cpio`/`bootparams` are Tier-1
+> readers that gain their `NAME-open`/`-fields`/`-validate`/`-manifest` sidecars as this workbench
+> is built, so drift closes at the moment of building rather than after. This pin is the marker
+> the roadmap asks each capstone to carry, not a claim those three readers conform yet.
+
 > **Re-measured 2026-09-16, against the linuxboot lab's scripts, the host, and the edk2/swtpm
 > fixture.** The thesis holds and the tooling is nearly all on the host. Three corrections:
 > **(1) no UKI exists on disk today** — `~/linuxboot-lab` has neither the `vmlinuz`/`initramfs.cpio`
