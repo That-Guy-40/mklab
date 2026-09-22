@@ -34,7 +34,8 @@ for f in struct contract sha256 cbfs cbfs-conform elf elf-conform fdt fdt-read \
          bootparams bootparams-conform \
          pe-edit pe-write-conform cpio-edit cpio-write-conform \
          bootparams-edit bootparams-write-conform \
-         elf-write elf-emit-conform evlog-emit-conform fdt-emit-conform; do
+         elf-write elf-emit-conform evlog-emit-conform fdt-emit-conform \
+         identify; do
     [[ -f "$DSL/$f.fth" ]] \
         || fail "missing $DSL/$f.fth — this checker stages the SHIPPED files, never re-implements them"
 done
@@ -69,6 +70,7 @@ cp "$DSL/elf-write.fth"          "$STAGE/ELFW.FTH"
 cp "$DSL/elf-emit-conform.fth"   "$STAGE/ELFE.FTH"
 cp "$DSL/evlog-emit-conform.fth" "$STAGE/EVE.FTH"
 cp "$DSL/fdt-emit-conform.fth"   "$STAGE/FDTE.FTH"
+cp "$DSL/identify.fth"           "$STAGE/IDENT.FTH"
 
 # ── fixture byte images: a valid + corrupt CBFS region and FDT blob ──────────
 python3 - "$STAGE" <<'PY'
@@ -157,6 +159,8 @@ struct.pack_into('<I', wbp, Bp+0x228, 0x400)      # cmd_line_ptr
 struct.pack_into('<I', wbp, Bp+0x238, 0x40)       # cmdline_size
 wbp[0x400:0x404] = b'old\0'
 open(o + '/WBP.BIN', 'wb').write(bytes(wbp))
+# a blob no module claims — the capstone identify's negative control.
+open(o + '/GARB.BIN', 'wb').write(b'\xde\xad\xbe\xef' * 0x20)
 PY
 
 # ── fixture MODULES: one conformant, three each with one planted defect ──────
@@ -544,6 +548,31 @@ grep -qa 'fdt-e-corrupt=REFUSED: fdt: bad FDT magic' <<<"$OUT" \
     || fail "fdt-emit: control did not bite — a stomped magic in the DTB was not refused, so the round trip is vacuous"
 note "fdt-emit: flattened the live tree to a DTB (fdt-validate accepts it); stomping its magic is refused — round trip real"
 
+# ── PART 5: the CAPSTONE — a consumer that identifies any format via the registry ──
+# dsl/identify.fth walks the registry and tries each module's NAME-validate, with no
+# per-format knowledge. It must name each format and — the negative control — say
+# "unrecognised" for a blob no module claims (else it is a rubber stamp).
+note "capstone: identify names a format by trying every registered module's NAME-validate"
+idbody="$(lev CBFS.FTH)"$'\n'"$(lev CBFSC.FTH)"$'\n'"$(lev ELF.FTH)"$'\n'"$(lev ELFC.FTH)"
+idbody+=$'\n'"$(lev FDT.FTH)"$'\n'"$(lev FDTREAD.FTH)"$'\n'"$(lev FDTC.FTH)"$'\n'"$(lev IDENT.FTH)"
+idbody+=$'\n''40 alloc-mem value ih  ih elf64-new'$'\n'
+idbody+='." id-elf=" ih 40 identify'$'\n'
+idbody+='load hd:\\VCBFS.BIN'$'\n''." id-cbfs=" load-base load-size identify'$'\n'
+idbody+='load hd:\\VFDT.BIN'$'\n''." id-fdt=" load-base load-size identify'$'\n'
+idbody+='load hd:\\GARB.BIN'$'\n''." id-garb=" load-base load-size identify'
+drive "$idbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "identify: a required word is undefined — the capstone is not implemented"
+grep -qa 'id-elf=IDENTIFY: elf ' <<<"$OUT" \
+    || fail "identify: did not name an authored ELF64 'elf' — registry dispatch missed a registered module"
+grep -qa 'id-cbfs=IDENTIFY: cbfs ' <<<"$OUT" \
+    || fail "identify: did not name a CBFS region 'cbfs'"
+grep -qa 'id-fdt=IDENTIFY: fdt ' <<<"$OUT" \
+    || fail "identify: did not name a device-tree blob 'fdt'"
+grep -qa 'id-garb=IDENTIFY: unrecognised' <<<"$OUT" \
+    || fail "identify: a garbage blob was CLAIMED by some module — the dispatcher is a rubber stamp (a validate that accepts anything, or identify not checking the verdict)"
+note "capstone: identify named elf/cbfs/fdt by registry dispatch and refused a garbage blob (unrecognised)"
+
 # ── PART 2: the separability guarantee — a slim profile names what is absent ──
 sbody="$(lev CBFS.FTH)"$'\n'"$(lev CBFSC.FTH)"$'\n'"$(lev ELF.FTH)"$'\n'"$(lev ELFC.FTH)"
 sbody+=$'\n''." SLIM:" cr'$'\n'
@@ -563,4 +592,4 @@ grep -qa 'NMODULES=2' <<<"$OUT" \
     || fail "separability: the registry counted something other than the 2 modules the slim profile loaded — a phantom or a missed registration"
 note "separability: slim profile (cbfs+elf) names fdt+evlog absent, present modules not mis-reported, #modules=2"
 
-pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded two ways: the EDIT side (Tier 2a) on a DELTA — pe-write/cpio-write/bootparams-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write); the AUTHOR side (Tier 2b) on a ROUND TRIP — elf-emit/evlog-emit/fdt-emit each author a whole artifact its OWN reader validates, with a magic-stomp control that must be refused so the round trip is not vacuous (foreign-oracle correctness is the smoke tracks'). The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."
+pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded two ways: the EDIT side (Tier 2a) on a DELTA — pe-write/cpio-write/bootparams-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write); the AUTHOR side (Tier 2b) on a ROUND TRIP — elf-emit/evlog-emit/fdt-emit each author a whole artifact its OWN reader validates, with a magic-stomp control that must be refused so the round trip is not vacuous (foreign-oracle correctness is the smoke tracks'). And the CAPSTONE dsl/identify.fth CONSUMES the contract: it names elf/cbfs/fdt by walking the registry and trying each module's NAME-validate with no per-format knowledge, and refuses a garbage blob (unrecognised) — the federation's payoff in one word. The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."
