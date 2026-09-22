@@ -91,9 +91,11 @@ liveness stance — requires it to be one of `HOST-ONLY`/`LIVE`/`SNAPSHOT`.
   name) so the round trip is not vacuous. That proves emit↔read *self-consistency*; it does
   **not** prove the strong property — a **foreign** oracle accepts it (`elfkickers`,
   `tpm2_eventlog`, `dtc`) — which a writer and reader wrong the same way would pass. That grade
-  is the module's smoke track, and is named, not silently claimed. (`cbfs`'s writer is in-place
-  surgery graded by `cbfstool`, so it opts in through its smoke track rather than a standalone
-  `NAME-emit`.)
+  is the module's smoke track, and is named, not silently claimed. (`cbfs` opts in on the EDIT
+  side — `cbfs-write` is a same-length entry-content patch, a `NAME-write` graded on a delta
+  like the others — rather than a standalone `NAME-emit`: its author path `cbfs-author` is
+  in-place surgery that adds an entry to an existing archive, graded whole by `cbfstool` in the
+  cbfs-write smoke track, not a from-nothing author.)
 - `NAME-live` — a seam-backed handle, for the pacme live inspector.
 
 A module implements only what it has; the contract does not require the writer half of a
