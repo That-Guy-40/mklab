@@ -1,5 +1,15 @@
 # The UKI Workbench — a Lab Plan v1 (2026-09-14; feasibility re-measured 2026-09-16)
 
+> **BUILT — PR1 (the capstone consumer): [`examples/uki-workbench/`](examples/uki-workbench/README.md).**
+> The standalone lab now exists and **consumes `{pe, bootparams, cpio}` at `contract v1` through
+> `identify` and `NAME-write`**: `uki-dissect.fth` names a real UKI's container (pe), `.linux`
+> (bootparams) and `.initrd` (cpio) with no per-format code (`smoke-uki-dissect.sh`), and the
+> in-RAM rescue edits — `pe-write` grows `.cmdline`, `cpio-write` flips a config inside `.initrd` —
+> land as scoped deltas with biting refuse-before-write controls (`smoke-uki-rescue.sh`). This is
+> **Spike 2** re-expressed as a contract consumer plus **Spikes 6/10** (in-RAM half). Still **PR2 /
+> deferred** (below): the persisted rescue (Spike 8-basic re-emit + the Spike 11 showcase) and the
+> **attestation strand** (Spikes 3/4/5, 8-full: `.pcrsig`/OVMF+swtpm/Authenticode) — UNKNOWN, not PASS.
+
 *Proposed **new lab**: **`uki-workbench/`**. The linuxboot lab **builds** Unified Kernel Images
 with `ukify` and **boots** them under OVMF, but never **takes one apart**. This lab makes the UKI
 **the subject**: read its PE structure and named sections, extract and verify each, check the
