@@ -35,7 +35,7 @@ for f in struct contract sha256 cbfs cbfs-conform elf elf-conform fdt fdt-read \
          pe-edit pe-write-conform cpio-edit cpio-write-conform \
          bootparams-edit bootparams-write-conform \
          elf-write elf-emit-conform evlog-emit-conform fdt-emit-conform \
-         identify; do
+         cbfs-write cbfs-write-conform identify; do
     [[ -f "$DSL/$f.fth" ]] \
         || fail "missing $DSL/$f.fth — this checker stages the SHIPPED files, never re-implements them"
 done
@@ -71,6 +71,8 @@ cp "$DSL/elf-emit-conform.fth"   "$STAGE/ELFE.FTH"
 cp "$DSL/evlog-emit-conform.fth" "$STAGE/EVE.FTH"
 cp "$DSL/fdt-emit-conform.fth"   "$STAGE/FDTE.FTH"
 cp "$DSL/identify.fth"           "$STAGE/IDENT.FTH"
+cp "$DSL/cbfs-write.fth"         "$STAGE/CBFSWR.FTH"
+cp "$DSL/cbfs-write-conform.fth" "$STAGE/CBFSWC.FTH"
 
 # ── fixture byte images: a valid + corrupt CBFS region and FDT blob ──────────
 python3 - "$STAGE" <<'PY'
@@ -161,6 +163,14 @@ wbp[0x400:0x404] = b'old\0'
 open(o + '/WBP.BIN', 'wb').write(bytes(wbp))
 # a blob no module claims — the capstone identify's negative control.
 open(o + '/GARB.BIN', 'wb').write(b'\xde\xad\xbe\xef' * 0x20)
+# a CBFS with two raw entries (cfg="AAAA", keep="ZZZZ") — the cbfs-write DELTA fixture;
+# each entry padded to a region-relative 64-byte boundary so cbfs-find steps correctly.
+def cbfs_raw(name, content):
+    off = 0x20
+    nf = name.encode() + b'\0'; nf += b'\0' * (off - 24 - len(nf))
+    blob = b'LARCHIVE' + be(len(content), 0x50, 0, off) + nf + content
+    return blob + b'\0' * ((-(off + len(content))) % 0x40)
+open(o + '/WCBFS.BIN', 'wb').write(cbfs_raw('cfg', b'AAAA') + cbfs_raw('keep', b'ZZZZ') + b'\xff' * 16)
 PY
 
 # ── fixture MODULES: one conformant, three each with one planted defect ──────
@@ -490,6 +500,31 @@ grep -qa 'bp-w-intact=old' <<<"$OUT" \
     || fail "bootparams-write: a REFUSED edit still changed the command line — a partial write past the refuse gate"
 note "bootparams-write: command line edited (new=1), code32_start intact (deadbeef); over-size refused (bp| CMDLINE-TOO-BIG), unchanged (old)"
 
+# CBFS — cbfs-write patches entry cfg's content; sibling keep must not move.
+wkbody="$(lev CBFS.FTH)"$'\n'"$(lev CBFSWR.FTH)"$'\n'"$(lev CBFSWC.FTH)"
+wkbody+=$'\n''load hd:\\WCBFS.BIN'$'\n'
+wkbody+='load-base 20 s" cfg" s" BBBB" cbfs-write drop'$'\n'
+wkbody+='." cbw-after=" load-base 20 s" cfg" cbfs-find drop type cr'$'\n'
+wkbody+='." cbw-sibling=" load-base 20 s" keep" cbfs-find drop type cr'$'\n'
+wkbody+='load hd:\\WCBFS.BIN'$'\n'
+wkbody+='." cbw-lenchg=" load-base 20 s" cfg" s" BB" cbfs-write drop cr'$'\n'
+wkbody+='." cbw-intact=" load-base 20 s" cfg" cbfs-find drop type cr'$'\n'
+wkbody+='." cbw-noent=" load-base 20 s" nope" s" BBBB" cbfs-write drop cr'
+drive "$wkbody"
+grep -qa 'undefined word' <<<"$OUT" \
+    && fail "cbfs-write: a required word is undefined — the writer half is not implemented"
+grep -qa 'cbw-after=BBBB' <<<"$OUT" \
+    || fail "cbfs-write: the entry-content edit did not land (expected BBBB)"
+grep -qa 'cbw-sibling=ZZZZ' <<<"$OUT" \
+    || fail "cbfs-write: a SIBLING entry changed — the edit wrote more than the delta"
+grep -qa 'cbw-lenchg=cbfs| LEN-CHANGE' <<<"$OUT" \
+    || fail "cbfs-write: a length-changing edit was not refused BY NAME"
+grep -qa 'cbw-intact=AAAA' <<<"$OUT" \
+    || fail "cbfs-write: a REFUSED edit still changed the entry — a partial write past the refuse gate"
+grep -qa 'cbw-noent=cbfs| NO-ENTRY' <<<"$OUT" \
+    || fail "cbfs-write: patching an absent entry was not refused BY NAME"
+note "cbfs-write: entry edit landed (BBBB), sibling intact (ZZZZ); length change and a missing entry each refused by name, bytes unchanged (AAAA)"
+
 # ── PART 4: the AUTHOR half — NAME-emit graded on a round trip ─────────────────
 # NAME-emit authors a whole artifact; the contract grade here is a ROUND TRIP — the
 # emitted bytes satisfy the module's OWN reader (NAME-validate). Its control: stomp
@@ -592,4 +627,4 @@ grep -qa 'NMODULES=2' <<<"$OUT" \
     || fail "separability: the registry counted something other than the 2 modules the slim profile loaded — a phantom or a missed registration"
 note "separability: slim profile (cbfs+elf) names fdt+evlog absent, present modules not mis-reported, #modules=2"
 
-pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded two ways: the EDIT side (Tier 2a) on a DELTA — pe-write/cpio-write/bootparams-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write); the AUTHOR side (Tier 2b) on a ROUND TRIP — elf-emit/evlog-emit/fdt-emit each author a whole artifact its OWN reader validates, with a magic-stomp control that must be refused so the round trip is not vacuous (foreign-oracle correctness is the smoke tracks'). And the CAPSTONE dsl/identify.fth CONSUMES the contract: it names elf/cbfs/fdt by walking the registry and trying each module's NAME-validate with no per-format knowledge, and refuses a garbage blob (unrecognised) — the federation's payoff in one word. The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."
+pass "contract v1: struct.fth's reason seam + dsl/contract.fth's registry, and all seven modules (cbfs, elf, fdt, evlog — Tier 0; cpio, pe, bootparams — Tier 1) conform through per-module sidecars — each implements the required core, its manifest carries an ARCH scope, its validate refuses a corrupt fixture BY NAME and accepts a valid one, cbfs-list refuses a corrupt first entry (the closed silent-stop defect), and a slim profile names every absent module. The WRITER half (Tier 2) is graded two ways: the EDIT side (Tier 2a) on a DELTA — pe-write/cpio-write/bootparams-write/cbfs-write each land an edit while a neighbour stays put, and each refuses an oversize/invalid edit BY NAME with the bytes unchanged (no partial write); the AUTHOR side (Tier 2b) on a ROUND TRIP — elf-emit/evlog-emit/fdt-emit each author a whole artifact its OWN reader validates, with a magic-stomp control that must be refused so the round trip is not vacuous (foreign-oracle correctness is the smoke tracks'). And the CAPSTONE dsl/identify.fth CONSUMES the contract: it names elf/cbfs/fdt by walking the registry and trying each module's NAME-validate with no per-format knowledge, and refuses a garbage blob (unrecognised) — the federation's payoff in one word. The checker proved itself first: a conformant fixture passed and three planted defects (no arch scope, a lenient validate, a missing validate) were each caught."

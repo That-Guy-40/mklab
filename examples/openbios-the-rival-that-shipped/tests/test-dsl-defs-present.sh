@@ -63,6 +63,7 @@ deps_of() {  # deps_of <file> -> space-separated deps in load order (excl. the f
     cbfs)          echo "struct" ;;
     cbfs-conform)  echo "struct contract cbfs" ;;
     cbfs-write)    echo "struct cbfs" ;;
+    cbfs-write-conform) echo "struct cbfs cbfs-write" ;;
     cbfs-payload)  echo "struct cbfs cbfs-write" ;;
     region)        echo "struct" ;;
     lbregion)      echo "struct region" ;;
