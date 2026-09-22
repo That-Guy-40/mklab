@@ -86,6 +86,7 @@ deps_of() {  # deps_of <file> -> space-separated deps in load order (excl. the f
     elf-emit-conform)   echo "struct elf elf-write" ;;
     evlog-emit-conform) echo "struct sha256 eventlog" ;;
     fdt-emit-conform)   echo "struct fdt" ;;
+    identify)           echo "struct contract" ;;
     *)             return 1 ;;
   esac
 }
