@@ -724,7 +724,7 @@ members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/",
            "open-firmware-debugs-itself/",
            "openbios-the-rival-that-shipped/", "openbios-clib-hello-to-emacs/",
            "open-firmware-native-habitats/", "openbios-modern-filesystems/",
-           "zfsbootmenu-boot-environments/",
+           "uki-workbench/", "zfsbootmenu-boot-environments/",
            "kdump-kexec-lab/", "virtualbmc-ipmi-lab/", "bmc-toolkit/",
            "metal-as-a-service/", "root-password-reset/", "tiny-linux-experiments/",
            "pxe-boot-mechanics/", "chroot-netboot-minimal.toml"]
