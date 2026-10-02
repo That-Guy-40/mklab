@@ -46,8 +46,13 @@ Three pickle-vs-Forth-vs-foreign subjects, each a one-verdict track, all verifie
   span (== the field's `offset..size`) headless. The **pacme source build** (deps.sh has the recipe:
   `git clone https://sourceware.org/git/pacme.git`, autotools into a lab-local prefix) lands here —
   PR1/PR2 do not build pacme because the bridge/seam/pickle spikes use the `poke` CLI alone.
-- **Spike 4 — edit live.** Gated on Spike 0's measured hazard: pause the guest / route through the
-  guest's store words; refuse a malformed edit **before** the write.
+- **Spike 4 — edit live — DONE, verified live** ([`smoke-pacme-edit.sh`](smoke-pacme-edit.sh)).
+  Resolved Spike 0's write-path question: attaching the IDE NVRAM node with **`share-rw=on`** makes
+  the writable NBD export accepted, so poke edits `boot-file=A`→`B` in the LIVE store and a fresh
+  boot reads exactly `B` (nothing zapped — a same-length value edit keeps the OFW partition valid).
+  Controls bite: unshared node → writable export refused (the Spike-0 hazard, re-measured); an
+  out-of-bounds poke write refused before it lands. The firmware observes the edit at its next boot
+  (NVRAM's access model), stated.
 - **Spike 5 — live RAM.** The one bespoke C `pk_register_iod` device onto QEMU's gdbstub (the API
   supports exactly one foreign IOD); until it exists, RAM views are `SNAPSHOT`, labelled.
 
