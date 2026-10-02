@@ -21,6 +21,22 @@ pacme already is (a screen manager over pokelets talking to `poked` over a Unix 
 is the only shape that is both legal and sane. The lab's deliverable is **the bridge + the
 grading**, not a new reader.
 
+## Status — Spike 3-full (the interactive acme UI), verified
+
+The interactive tmux UI is **built from source and GRADED headlessly** — the strand the lab
+deferred because "we do not verify a TUI." [`build-pacme.sh`](build-pacme.sh) builds pacme (its
+pokelets + launcher) into a lab-local prefix, and [`smoke-pacme-ui.sh`](smoke-pacme-ui.sh) drives
+the real UI with [`tools/ttydrive`](../../tools/ttydrive): launch pacme, trigger Layout 2 (a
+`plet-repl` pane + a `plet-out` pane), type a poke read into the REPL, and read the value off the
+**plet-out pane**. The grade is the lab's standing discipline, now through the UI: three readers of
+one live-flattened device tree agree — the Forth `dsl/fdt.fth` produced the DTB, `fdt.pk` reads its
+header headless, and the **pacme UI's** magic (`d00dfeed`) and totalsize match both. Control: the
+UI read one field over is not the magic (position-specific). **The UI is graded against the toolkit,
+never trusted as its own oracle.** Honest boundary (UNKNOWN≠PASS): this measures the UI's *data
+path* (REPL → poked → plet-out); pixel layout, colors and ergonomics stay a by-hand judgement (see
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md)). pacme links no libpoke — it runs beside `poked` on the
+host, the standing GPLv3 wall.
+
 ## Status — Spike 5 (live RAM), verified live
 
 poke now reads **and edits the running firmware's RAM**, over a bespoke **gdbstub IO device** —
@@ -129,15 +145,14 @@ itself — the repo's standing rule). Both scripts SKIP by name without poke / q
 | [`smoke-pacme-edit.sh`](smoke-pacme-edit.sh) (Spike 4) | poke edits `boot-file=A`→`B` in the LIVE NVRAM store (share-rw NBD); a fresh boot reads `B` | unshared node → writable export refused (Spike-0 hazard); an out-of-bounds poke write refused before it lands |
 | [`smoke-pacme-span.sh`](smoke-pacme-span.sh) (Spike 3-lite) | poke's field byte-span (`'offset`/`'size`) == `dsl/fdt.fth`'s field-offset table — poke and the toolkit agree on *where* each field lives | the span one field over does not read the magic (spans are position-specific) |
 | [`smoke-pacme-live-ram.sh`](smoke-pacme-live-ram.sh) (Spike 5) | `pokegdb` reads a firmware-written nonce in LIVE RAM (== QMP `xp`); a snapshot file stays at N1 while the live handle re-reads N2; poke writes N3 and QMP + the firmware both see it | a read one page over does not find the nonce; a vacuous "live" cannot pass (live==N2 ∧ snap==N1 ∧ N1≠N2) |
+| [`smoke-pacme-ui.sh`](smoke-pacme-ui.sh) (Spike 3-full) | pacme's UI (built by [`build-pacme.sh`](build-pacme.sh), driven by `tools/ttydrive`) shows magic + totalsize for the live-flattened device tree, equal to `fdt.pk`'s headless reading and the spec's `d00dfeed` | the UI read one field over (offset 4) is not the magic; the plet-out pane must actually carry the value (ttydrive `wait`, not assumed) |
 
-## Deferred — named as spikes with their crux (see [`PLAN.md`](PLAN.md)), not bare TODOs
+## All spikes landed
 
-- **Spike 3-full** — the interactive acme UI (`poked` + pokelets over tmux), where a click jumps the
-  byte view to a field's span. Its **headless gradeable core is built** ([`smoke-pacme-span.sh`](smoke-pacme-span.sh),
-  Spike 3-lite: poke reports a field's byte span and it matches the toolkit's layout); what remains is
-  the tmux pokelet UI itself + the **pacme source build** (`deps.sh` has the recipe). This is the one
-  remaining deferred spike — its defining feature is an interactive TUI, which this repo does not
-  "verify" headlessly; the substance (the `poked` protocol seam) is what a future PR would grade.
+Every spike in the design note's plan (0, 1, 2, 3-lite, **3-full**, 4, 5) is **built and graded**.
+What remains is not a spike but a *by-hand judgement*: the pacme UI's visual ergonomics (layout,
+colours, interactive feel) — which a person evaluates with the manual drive in
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md). Everything machine-checkable is checked.
 
 ## Layout
 
@@ -160,6 +175,8 @@ pacme-inspects-the-firmware/
 ├── gdb-iod.c               Spike 5 — `pokegdb`: a libpoke embed with a gdbstub-backed IO device
 ├── build-gdb-iod.sh        Spike 5 — compile pokegdb (links the shipped libpoke.so; no -dev needed)
 ├── smoke-pacme-live-ram.sh Spike 5 — poke reads+edits the firmware's LIVE RAM (gdb m/M, QMP oracle)
+├── build-pacme.sh          Spike 3-full — build pacme from source into a lab-local prefix (no sudo)
+├── smoke-pacme-ui.sh       Spike 3-full — pacme's tmux UI driven by ttydrive, graded vs the toolkit
 └── vendor/                 byte-exact, attributed libpoke.h (the one header pokegdb needs)
 ```
 
@@ -175,6 +192,8 @@ OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-cbfs.sh # Spike 2 (CBFS)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-edit.sh # Spike 4 (edit live)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-span.sh # Spike 3-lite (field spans)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-live-ram.sh # Spike 5 (live RAM via gdbstub IOD)
+./build-pacme.sh                                      # Spike 3-full: build pacme from source
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-ui.sh   # Spike 3-full (the tmux UI, graded)
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. Needs GNU poke (`sudo apt-get install -y

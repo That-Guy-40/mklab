@@ -82,6 +82,37 @@ You can also drive `pokegdb` by hand once the firmware is booted with `-gdb tcp:
 (Reads the live 32-bit word at guest-physical `0x100000`. `pokegdb` detaches with a gdb `D` packet
 on exit so it leaves the guest **running** — QEMU's gdbstub halts the vCPU on attach.)
 
+## 2c. Spike 3-full — the pacme acme UI, built and graded
+
+Build pacme from source (no sudo, lab-local `.pacme/`), then grade its tmux UI headlessly:
+
+```
+! examples/pacme-inspects-the-firmware/build-pacme.sh
+! OPENBIOS_WORKDIR=~/openbios-lab examples/pacme-inspects-the-firmware/smoke-pacme-ui.sh
+```
+
+Success signature:
+
+```
+  - toolkit (fdt.pk headless): magic=d00dfeed totalsize=<N>
+  - pacme UI (plet-out pane): magic=d00dfeed totalsize=<N>
+  - grade: pacme UI == fdt.pk == 0xd00dfeed on magic, and == on totalsize (<N>) — three readers …
+PASS: Spike 3-full: pacme's interactive tmux UI, driven headlessly by tools/ttydrive, displays …
+```
+
+**Driving the UI by hand** (the part a machine does not grade — layout and feel). With `poked`
+running and pacme built, launch the UI in a real terminal, press `C-g F2` for Layout 2 (a REPL +
+an output pane), and type poke at the `#!poke!#` prompt:
+
+```
+! poked -S /tmp/poked-$(id -u).ipc &
+! PATH=examples/pacme-inspects-the-firmware/.pacme/bin:$PATH examples/pacme-inspects-the-firmware/.pacme/bin/pacme
+```
+
+Then, in the REPL pane: `var f = open("…/live.dtb")`, `set_endian(ENDIAN_BIG)`,
+`printf("%u32x\n", uint<32> @ 0#B)` — the result (`d00dfeed`) renders in the `plet-out` pane. Prefix
+is `C-g` (not tmux's `C-b`); `C-g O` adds another output pane. Quit with `C-g &` / `C-g :kill-server`.
+
 ## 3. Watch a control bite (the repo's rule: run it, don't reason it)
 
 Make poke read one byte past the real offset and confirm the seam-faithful assertion flips to FAIL:
