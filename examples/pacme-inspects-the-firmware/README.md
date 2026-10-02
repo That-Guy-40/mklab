@@ -107,11 +107,14 @@ itself — the repo's standing rule). Both scripts SKIP by name without poke / q
 | [`smoke-pacme-pe.sh`](smoke-pacme-pe.sh) (Spike 2, PE) | shipped `pe.pk` == `dsl/pe.fth` == `objdump` on a UKI's COFF header | a flipped `PE\0\0` refused by the signature invariant |
 | [`smoke-pacme-cbfs.sh`](smoke-pacme-cbfs.sh) (Spike 2, CBFS) | `cbfs.pk` == `dsl/cbfs.fth` == `cbfstool` on the ROM's first entry | a non-`LARCHIVE` mapping refused by `cbfs.pk` |
 | [`smoke-pacme-edit.sh`](smoke-pacme-edit.sh) (Spike 4) | poke edits `boot-file=A`→`B` in the LIVE NVRAM store (share-rw NBD); a fresh boot reads `B` | unshared node → writable export refused (Spike-0 hazard); an out-of-bounds poke write refused before it lands |
+| [`smoke-pacme-span.sh`](smoke-pacme-span.sh) (Spike 3-lite) | poke's field byte-span (`'offset`/`'size`) == `dsl/fdt.fth`'s field-offset table — poke and the toolkit agree on *where* each field lives | the span one field over does not read the magic (spans are position-specific) |
 
 ## Deferred — named as spikes with their crux (see [`PLAN.md`](PLAN.md)), not bare TODOs
 
-- **Spike 3** — the acme UI (`poked` + pokelets over tmux): click a struct field → the byte view
-  jumps to its span. The pacme source build (`deps.sh` has the recipe) lands here.
+- **Spike 3-full** — the interactive acme UI (`poked` + pokelets over tmux), where a click jumps the
+  byte view to a field's span. Its **headless gradeable core is built** ([`smoke-pacme-span.sh`](smoke-pacme-span.sh),
+  Spike 3-lite: poke reports a field's byte span and it matches the toolkit's layout); what remains is
+  the tmux pokelet UI itself + the **pacme source build** (`deps.sh` has the recipe).
 - **Spike 5** — live RAM via a bespoke `pk_register_iod` device on QEMU's gdbstub; until it exists,
   RAM views are `SNAPSHOT`, labelled.
 
@@ -131,7 +134,8 @@ pacme-inspects-the-firmware/
 ├── smoke-pacme-fdt.sh      Spike 2 (FDT + NAME-live) — fdt.pk == dsl/fdt.fth == fdtdump; fdt-live LIVE
 ├── smoke-pacme-pe.sh       Spike 2 (PE, HOST-ONLY) — pe.pk == dsl/pe.fth == objdump on a UKI
 ├── smoke-pacme-cbfs.sh     Spike 2 (CBFS, HOST-ONLY) — cbfs.pk == dsl/cbfs.fth == cbfstool
-└── smoke-pacme-edit.sh     Spike 4 — poke edits the LIVE NVRAM store; a fresh boot reads the edit
+├── smoke-pacme-edit.sh     Spike 4 — poke edits the LIVE NVRAM store; a fresh boot reads the edit
+└── smoke-pacme-span.sh     Spike 3-lite — poke's field byte-span == the toolkit's field layout
 ```
 
 ## Running it
@@ -144,6 +148,7 @@ OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-fdt.sh  # Spike 2 (FDT) + NAME-liv
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-pe.sh   # Spike 2 (PE)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-cbfs.sh # Spike 2 (CBFS)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-edit.sh # Spike 4 (edit live)
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-span.sh # Spike 3-lite (field spans)
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. Needs GNU poke (`sudo apt-get install -y
