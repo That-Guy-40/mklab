@@ -1,0 +1,103 @@
+# pacme inspects the firmware — GNU poke as a live, graded inspector of a running OpenBIOS
+
+GNU poke's acme-style UI (**pacme**) is a structured binary inspector. This lab points it
+not at a captured file but at a **running OpenBIOS firmware's own bytes**, live, over a seam —
+and grades every structured view against the toolkit's Forth reader of the *same* bytes. It is
+the interactive, live sibling of the [`pe.pk` host oracle](../../UKI_WORKBENCH_LAB_PLAN.md#4a-the-pe-oracle-gnu-pokes-pepk)
+the UKI workbench adopted: two independent readers on one live buffer, now with a UI.
+
+**The full design and rationale live in the plan:**
+[`DESIGN-NOTES-pacme-a-live-firmware-inspector.md`](../../DESIGN-NOTES-pacme-a-live-firmware-inspector.md)
+(TODO §32). This lab operationalizes it. It is a host-side sibling of, and consumes, the OpenBIOS
+toolkit in [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/) — its
+firmware, its serial driver, and its `dsl/` readers (the grader for later spikes).
+
+**The framing is LOCKED (design note §1): pacme runs on the HOST, not in the firmware.**
+Porting poke *into* OpenBIOS is closed twice over — libpoke is a parser + JIT + GC + bignum +
+pickle system assuming POSIX (reimplementing it is reimplementing poke), and it is **GPLv3**
+while OpenBIOS is **GPLv2-only** (the same license wall GRUB 2 and `pe.pk` hit). Aggregation
+across a socket is not linking, so running poke beside QEMU is not a workaround — it is what
+pacme already is (a screen manager over pokelets talking to `poked` over a Unix socket), and it
+is the only shape that is both legal and sane. The lab's deliverable is **the bridge + the
+grading**, not a new reader.
+
+## Status — PR1: the bridge is chosen and the seam is proven (Spikes 0 + 1), verified live
+
+Measured end to end on this host (OpenBIOS x86 under QEMU/KVM, GNU poke 4.0):
+
+- **Spike 0 — the bridge, DECIDED ([`bridge.sh`](bridge.sh)).** A running OpenBIOS session holds
+  its NVRAM in a real block **node** (the IDE store the `persist` track boots). QEMU's QMP
+  `block-export-add type=nbd` exposes that **live** node; poke opens `nbd+unix:///…` and reads the
+  bytes the firmware just wrote. Honesty label: **`LIVE: block-only`**. The FILE surface (the
+  backing image / a `pmemsave` snapshot) is the `SNAPSHOT` fallback; the gdbstub IOD for live RAM
+  is Spike 5 (RAM stays `SNAPSHOT` until it exists).
+  - **The one hazard, MEASURED not assumed:** a **writable** export of the in-use node is
+    **refused** — *"Permission conflict on node '#blockN': permissions 'write' are both required …
+    and unshared by block device 'ide1-hd1'."* So Spike 4 (edit live) cannot be a naive writable
+    export behind QEMU's back; its honest shape is *pause the guest* or *route the edit through the
+    guest's own store words*. The decision is settled by QEMU's block-permission system, not by us.
+- **Spike 1 — the seam is faithful ([`smoke-pacme-seam.sh`](smoke-pacme-seam.sh)).** poke, reading
+  the live IDE NVRAM over the NBD bridge, sees the firmware's own nonce bytes **byte-for-byte equal
+  to `od`** of the store — the seam carries data faithfully before any pickle interprets it. **The
+  control bites:** poke's read is also compared against a one-byte-flipped span and must mismatch,
+  so the equality is a real byte comparison, not a tautology (and the assertion was watched to fail
+  on an off-by-one read).
+
+Teardown is **by PID** (the socket path is in QEMU's argv, so a pattern-kill would match QEMU
+itself — the repo's standing rule). Both scripts SKIP by name without poke / qemu / the firmware.
+
+## What this lab is NOT (scope guards, from the design note §6)
+
+- **Not poke inside the firmware.** libpoke stays a host process; nothing GPLv3 is linked into the
+  GPLv2 image.
+- **Not a poke or pacme fork.** Stock `poked` + stock pokelets; the pickles are ours, the engine is
+  upstream's.
+- **Confined to the workbench's own QEMU** — owned bytes only (this lab's firmware session, its own
+  images and sockets). Defensive, emulated, own machine.
+- **Not a debugger for the firmware's code** — it reads/edits *structured firmware data*; gdb-for-code
+  is the [`open-firmware-debugs-itself`](../open-firmware-debugs-itself/) lab's axis.
+
+## The tracks this lab defines
+
+| track | what it proves | the control that must bite |
+|---|---|---|
+| [`bridge.sh`](bridge.sh) (Spike 0) | the bridge chosen (NBD, live block-only); the writable-export hazard measured (refused) | the node must be real — an empty node-name would refuse for the wrong reason (fixed; the refusal is the true permission conflict) |
+| [`smoke-pacme-seam.sh`](smoke-pacme-seam.sh) (Spike 1) | poke's bytes over the seam == `od` of the live store | poke's read vs a one-byte-flipped span must MISMATCH (and the equality fails on an off-by-one read) |
+
+## Deferred — named as spikes with their crux (see [`PLAN.md`](PLAN.md)), not bare TODOs
+
+- **Spike 2 + the contract's `NAME-live`** — point `pe.pk`/an fdt/cbfs pickle at the live buffer;
+  each field pacme decodes == the Forth toolkit's read; a one-byte-off pickle refused by name. This
+  is where the dsl modules gain **`NAME-live`** (the seam-backed live handle + a `LIVE`/`SNAPSHOT`
+  manifest label), so the contract extension lands exactly when pacme consumes it.
+- **Spike 3** — the acme UI (`poked` + pokelets over tmux): click a struct field → the byte view
+  jumps to its span. The pacme source build (`deps.sh` has the recipe) lands here.
+- **Spike 4** — edit live, shaped by Spike 0's measured hazard (pause / through-the-guest; refuse
+  before the irreversible step).
+- **Spike 5** — live RAM via a bespoke `pk_register_iod` device on QEMU's gdbstub; until it exists,
+  RAM views are `SNAPSHOT`, labelled.
+
+## Layout
+
+```
+pacme-inspects-the-firmware/
+├── README.md               this file
+├── PLAN.md                 PR1 coverage vs. the deferred spikes (links the design note)
+├── MANUAL_TESTING.md       the ! commands + success signatures
+├── deps.sh                 name + CHECK the external deps (poke required; pacme = Spike 3)
+├── lib-bridge.sh           the seam: launch OpenBIOS + QMP NBD export + poke read + teardown-by-PID
+├── bridge.sh               Spike 0 — the bridge DECISION + the writable-export hazard, measured
+└── smoke-pacme-seam.sh     Spike 1 — poke's bytes over the seam == the firmware's own bytes
+```
+
+## Running it
+
+```sh
+./deps.sh                                             # readiness (install poke if MISSING)
+OPENBIOS_WORKDIR=~/openbios-lab ./bridge.sh           # Spike 0: the bridge + the hazard
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-seam.sh # Spike 1: the seam is faithful
+```
+
+Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. Needs GNU poke (`sudo apt-get install -y
+poke`), `qemu-system-x86_64`, and a built OpenBIOS x86 firmware
+(`../openbios-the-rival-that-shipped/build-openbios.sh x86`). See [`MANUAL_TESTING.md`](MANUAL_TESTING.md).
