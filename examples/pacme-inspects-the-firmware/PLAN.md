@@ -21,21 +21,31 @@ in **[`../../DESIGN-NOTES-pacme-a-live-firmware-inspector.md`](../../DESIGN-NOTE
 The shared bringup/QMP/teardown logic is in [`lib-bridge.sh`](lib-bridge.sh); [`deps.sh`](deps.sh)
 names and checks the external deps (GNU poke required now; pacme = Spike 3).
 
+## What PR2 delivers (DONE, verified live) — Spike 2 + the contract's `NAME-live`
+
+Three pickle-vs-Forth-vs-foreign subjects, each a one-verdict track, all verified on `openbios-unix`
++ GNU poke 4.0:
+- **FDT (LIVE)** — `fdt.pk` == `dsl/fdt.fth` == `fdtdump` on OpenBIOS's live flattened device tree;
+  and **`fdt-live`** (the contract's **`NAME-live`**, added to
+  `../openbios-the-rival-that-shipped/dsl/fdt-conform.fth`) re-flattens the live `/dt` each call — a
+  tree change grows the live re-read while an independent snapshot does not. `dsl/CONTRACT.md` now
+  specifies `NAME-live` concretely; `tests/test-contract-conformance.sh` implements the previously
+  spec-only **liveness-label grade** + the behavioral live-vs-snapshot grade (its control bites: a
+  static `-live` is caught). `NAME-live` landed with its consumer, not as a stub.
+- **PE (HOST-ONLY)** — poke's shipped `pe.pk` == `dsl/pe.fth` == `objdump` on a UKI's COFF header.
+- **CBFS (HOST-ONLY)** — our `cbfs.pk` == `dsl/cbfs.fth` == `cbfstool` on the ROM's first entry.
+- Each control watched to bite (pickle magic/signature refusals; the three-reader grade fails on a
+  deliberately misread field; the static-`fdt-live` live grade). poke CLI only — the pacme UI is
+  Spike 3. **Honest liveness:** only FDT is live (the one firmware structure with a dsl reader);
+  pe/cbfs are static files, so no `NAME-live` — their live forms are the Spike-5 gdbstub IOD.
+
 ## What this lab defers (with the crux, so each is a spike and not a bare TODO)
 
-- **Spike 2 + the contract's `NAME-live` — PR2.** Point `pe.pk` / an fdt / a cbfs pickle at the
-  live buffer; each field pacme decodes == the Forth toolkit's read of the same bytes; a
-  one-byte-off or truncated pickle is refused by name. **This is where `NAME-live` is built** — the
-  dsl module gains `NAME-live ( -- handle )` (the seam-backed, re-reading live view, vs. a snapshot
-  copy) + a `LIVE`/`SNAPSHOT` manifest label, and the conformance checker grades pacme's read
-  against it. `NAME-live` lands here, with its consumer, not as a speculative stub.
-  **Crux:** what `NAME-live` concretely binds to on a QEMU-backed firmware (the live NBD/IOS view
-  vs. a captured snapshot), and how the checker drives a live-vs-snapshot distinction headless.
 - **Spike 3 — the acme UI.** `poked` + the tmux pokelets; a click on a struct field jumps the byte
   view to its span. **Crux:** wiring the pokelets over `poked`'s socket and grading the highlighted
   span (== the field's `offset..size`) headless. The **pacme source build** (deps.sh has the recipe:
   `git clone https://sourceware.org/git/pacme.git`, autotools into a lab-local prefix) lands here —
-  PR1 does not build pacme because the bridge/seam spikes use the `poke` CLI alone.
+  PR1/PR2 do not build pacme because the bridge/seam/pickle spikes use the `poke` CLI alone.
 - **Spike 4 — edit live.** Gated on Spike 0's measured hazard: pause the guest / route through the
   guest's store words; refuse a malformed edit **before** the write.
 - **Spike 5 — live RAM.** The one bespoke C `pk_register_iod` device onto QEMU's gdbstub (the API

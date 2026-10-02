@@ -40,7 +40,17 @@ if [[ -f "$FW" ]]; then ok "OpenBIOS x86 firmware ($FW)"
 else no "OpenBIOS x86 firmware — build it:  (cd ../openbios-the-rival-that-shipped && ./build-openbios.sh x86)"; fi
 
 echo
-echo "== NEEDED FROM SPIKE 3 — the acme UI (NOT built or required in PR1) =="
+echo "== SPIKE 2 — the three pickle-vs-Forth subjects (each track SKIPs by name without its own) =="
+command -v fdtdump >/dev/null && ok "fdtdump (device-tree-compiler) — the FDT oracle (smoke-pacme-fdt.sh)" || note "fdtdump absent — smoke-pacme-fdt.sh SKIPs"
+command -v objdump >/dev/null && ok "objdump (binutils) — the PE oracle (smoke-pacme-pe.sh)" || note "objdump absent — smoke-pacme-pe.sh SKIPs"
+command -v ukify >/dev/null && ok "ukify (systemd-ukify) — builds the UKI subject (smoke-pacme-pe.sh)" || note "ukify absent — smoke-pacme-pe.sh SKIPs"
+CBROM="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}/build-openbios/coreboot.rom"
+if [[ -f "$CBROM" && -x "${CBROM%/*}/cbfstool" ]]; then ok "coreboot.rom + cbfstool — the CBFS subject+oracle (smoke-pacme-cbfs.sh)"
+else note "coreboot.rom/cbfstool absent (set COREBOOT_DIR) — smoke-pacme-cbfs.sh SKIPs"; fi
+echo "       (fdt.pk + cbfs.pk are ours, in this dir; pe.pk is poke's shipped pickle)"
+
+echo
+echo "== NEEDED FROM SPIKE 3 — the acme UI (NOT built or required in PR1/PR2) =="
 command -v tmux >/dev/null && ok "tmux (pacme's screen manager)" || note "tmux absent — needed for the Spike-3 UI"
 if command -v pacme >/dev/null || [[ -x "$(dirname "$0")/.pacme/bin/plet-repl" ]]; then
     ok "pacme present"
