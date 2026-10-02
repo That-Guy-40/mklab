@@ -21,6 +21,26 @@ pacme already is (a screen manager over pokelets talking to `poked` over a Unix 
 is the only shape that is both legal and sane. The lab's deliverable is **the bridge + the
 grading**, not a new reader.
 
+## Status — Spike 5 (live RAM), verified live
+
+poke now reads **and edits the running firmware's RAM**, over a bespoke **gdbstub IO device** —
+closing the lab's last `SNAPSHOT`-only boundary ([`smoke-pacme-live-ram.sh`](smoke-pacme-live-ram.sh)).
+libpoke lets an embedding program register a *foreign* IOD (`pk_register_iod`), and QEMU's own
+gdbstub answers memory reads/writes for the **live** guest; so [`gdb-iod.c`](gdb-iod.c) — built as
+`pokegdb` by [`build-gdb-iod.sh`](build-gdb-iod.sh), against a byte-exact, attributed
+[`vendor/libpoke.h`](vendor/README.md) — makes poke's `pread`/`pwrite` into gdb `m`/`M`
+packets to a running OpenBIOS. The grade is three-way and then some: the firmware writes a nonce,
+we **locate it in physical RAM by scanning** a `pmemsave` dump (a Forth address is *not* a physical
+one on x86 OpenBIOS — the ofmem offset is real, so we never assume), and poke-over-gdbstub, the QMP
+`xp` oracle, and the firmware all agree. Then the live-vs-snapshot split: the firmware overwrites
+the cell and the **same** poke reader sees the new value through the gdbstub IOD (LIVE) while a
+snapshot *file* still reads the old one (SNAPSHOT). Finally poke **writes** a value that QMP
+confirms in live guest RAM and the firmware reads back from its own buffer — the RAM analogue of
+Spike 4's edit-live. **Honest boundary:** this holds because OpenBIOS x86 runs with CR0.PG=0 (no
+paging), so a gdb linear address *is* the guest-physical one and equals QMP `xp`; the IOD makes no
+translation claim, the gdbstub is a QEMU debug transport (`-gdb`, a lab instrument), x86 only, and
+libpoke is GPLv3 — host-side, never linked into the firmware.
+
 ## Status — Spike 4 (edit live), verified live
 
 poke **edits** a value in the running firmware's NVRAM store over the bridge, and the firmware
@@ -70,7 +90,7 @@ Measured end to end on this host (OpenBIOS x86 under QEMU/KVM, GNU poke 4.0):
   `block-export-add type=nbd` exposes that **live** node; poke opens `nbd+unix:///…` and reads the
   bytes the firmware just wrote. Honesty label: **`LIVE: block-only`**. The FILE surface (the
   backing image / a `pmemsave` snapshot) is the `SNAPSHOT` fallback; the gdbstub IOD for live RAM
-  is Spike 5 (RAM stays `SNAPSHOT` until it exists).
+  is Spike 5 (**now built** — see the Spike 5 status above).
   - **The one hazard, MEASURED not assumed:** a **writable** export of the in-use node is
     **refused** — *"Permission conflict on node '#blockN': permissions 'write' are both required …
     and unshared by block device 'ide1-hd1'."* So Spike 4 (edit live) cannot be a naive writable
@@ -108,15 +128,16 @@ itself — the repo's standing rule). Both scripts SKIP by name without poke / q
 | [`smoke-pacme-cbfs.sh`](smoke-pacme-cbfs.sh) (Spike 2, CBFS) | `cbfs.pk` == `dsl/cbfs.fth` == `cbfstool` on the ROM's first entry | a non-`LARCHIVE` mapping refused by `cbfs.pk` |
 | [`smoke-pacme-edit.sh`](smoke-pacme-edit.sh) (Spike 4) | poke edits `boot-file=A`→`B` in the LIVE NVRAM store (share-rw NBD); a fresh boot reads `B` | unshared node → writable export refused (Spike-0 hazard); an out-of-bounds poke write refused before it lands |
 | [`smoke-pacme-span.sh`](smoke-pacme-span.sh) (Spike 3-lite) | poke's field byte-span (`'offset`/`'size`) == `dsl/fdt.fth`'s field-offset table — poke and the toolkit agree on *where* each field lives | the span one field over does not read the magic (spans are position-specific) |
+| [`smoke-pacme-live-ram.sh`](smoke-pacme-live-ram.sh) (Spike 5) | `pokegdb` reads a firmware-written nonce in LIVE RAM (== QMP `xp`); a snapshot file stays at N1 while the live handle re-reads N2; poke writes N3 and QMP + the firmware both see it | a read one page over does not find the nonce; a vacuous "live" cannot pass (live==N2 ∧ snap==N1 ∧ N1≠N2) |
 
 ## Deferred — named as spikes with their crux (see [`PLAN.md`](PLAN.md)), not bare TODOs
 
 - **Spike 3-full** — the interactive acme UI (`poked` + pokelets over tmux), where a click jumps the
   byte view to a field's span. Its **headless gradeable core is built** ([`smoke-pacme-span.sh`](smoke-pacme-span.sh),
   Spike 3-lite: poke reports a field's byte span and it matches the toolkit's layout); what remains is
-  the tmux pokelet UI itself + the **pacme source build** (`deps.sh` has the recipe).
-- **Spike 5** — live RAM via a bespoke `pk_register_iod` device on QEMU's gdbstub; until it exists,
-  RAM views are `SNAPSHOT`, labelled.
+  the tmux pokelet UI itself + the **pacme source build** (`deps.sh` has the recipe). This is the one
+  remaining deferred spike — its defining feature is an interactive TUI, which this repo does not
+  "verify" headlessly; the substance (the `poked` protocol seam) is what a future PR would grade.
 
 ## Layout
 
@@ -135,7 +156,11 @@ pacme-inspects-the-firmware/
 ├── smoke-pacme-pe.sh       Spike 2 (PE, HOST-ONLY) — pe.pk == dsl/pe.fth == objdump on a UKI
 ├── smoke-pacme-cbfs.sh     Spike 2 (CBFS, HOST-ONLY) — cbfs.pk == dsl/cbfs.fth == cbfstool
 ├── smoke-pacme-edit.sh     Spike 4 — poke edits the LIVE NVRAM store; a fresh boot reads the edit
-└── smoke-pacme-span.sh     Spike 3-lite — poke's field byte-span == the toolkit's field layout
+├── smoke-pacme-span.sh     Spike 3-lite — poke's field byte-span == the toolkit's field layout
+├── gdb-iod.c               Spike 5 — `pokegdb`: a libpoke embed with a gdbstub-backed IO device
+├── build-gdb-iod.sh        Spike 5 — compile pokegdb (links the shipped libpoke.so; no -dev needed)
+├── smoke-pacme-live-ram.sh Spike 5 — poke reads+edits the firmware's LIVE RAM (gdb m/M, QMP oracle)
+└── vendor/                 byte-exact, attributed libpoke.h (the one header pokegdb needs)
 ```
 
 ## Running it
@@ -149,6 +174,7 @@ OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-pe.sh   # Spike 2 (PE)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-cbfs.sh # Spike 2 (CBFS)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-edit.sh # Spike 4 (edit live)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-span.sh # Spike 3-lite (field spans)
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-live-ram.sh # Spike 5 (live RAM via gdbstub IOD)
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. Needs GNU poke (`sudo apt-get install -y

@@ -50,6 +50,14 @@ else note "coreboot.rom/cbfstool absent (set COREBOOT_DIR) — smoke-pacme-cbfs.
 echo "       (fdt.pk + cbfs.pk are ours, in this dir; pe.pk is poke's shipped pickle)"
 
 echo
+echo "== SPIKE 5 — live RAM via a gdbstub IO device (pokegdb; smoke-pacme-live-ram.sh) =="
+command -v "${CC:-cc}" >/dev/null && ok "C compiler (${CC:-cc}) — builds pokegdb from gdb-iod.c" || note "no C compiler — build-gdb-iod.sh SKIPs (set CC=…, or install gcc)"
+if ldconfig -p 2>/dev/null | grep -q 'libpoke\.so'; then ok "libpoke runtime (pokegdb links it directly — no -dev package or pkg-config needed)"
+else note "libpoke runtime absent — it ships with the poke package above"; fi
+[[ -f "$(dirname "$0")/vendor/libpoke.h" ]] && ok "vendored libpoke.h (the one header pokegdb needs — see vendor/README.md)" || note "vendor/libpoke.h missing (should be checked in)"
+note "(the gdbstub is QEMU's own -gdb transport; smoke-pacme-live-ram.sh adds it to the launch — nothing to install)"
+
+echo
 echo "== NEEDED FROM SPIKE 3 — the acme UI (NOT built or required in PR1/PR2) =="
 command -v tmux >/dev/null && ok "tmux (pacme's screen manager)" || note "tmux absent — needed for the Spike-3 UI"
 if command -v pacme >/dev/null || [[ -x "$(dirname "$0")/.pacme/bin/plet-repl" ]]; then

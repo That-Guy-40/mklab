@@ -1,0 +1,1385 @@
+/* libpoke.h - Public header for libpoke.  */
+
+/* Copyright (C) 2020, 2021, 2022, 2023, 2024 Jose E. Marchesi */
+
+/* This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef LIBPOKE_H
+#define LIBPOKE_H
+
+#include <stdlib.h>
+#include <stdint.h>
+#include <stdarg.h>
+
+#if defined BUILDING_LIBPOKE && HAVE_VISIBILITY
+#define LIBPOKE_API __attribute__ ((visibility ("default")))
+#else
+#define LIBPOKE_API
+#endif
+
+#if (defined __GNUC__ && __GNUC__ + (__GNUC_MINOR__ >= 3) > 3)                \
+    || (defined __clang__ && __clang_major__ >= 3)
+#define LIBPOKE_NONNULL(...) __attribute__ ((nonnull (__VA_ARGS__)))
+#else
+#define LIBPOKE_NONNULL(...)
+#endif
+
+typedef struct _pk_compiler *pk_compiler;
+typedef struct _pk_ios *pk_ios;
+typedef uint64_t pk_val;
+
+/* The following status codes are returned by pk_errno function.  */
+
+#define PK_OK 0
+#define PK_ERROR 1
+#define PK_ENOMEM 2
+#define PK_EEOF 3
+#define PK_EINVAL 4
+
+/* The following macros are standard exception codes defined in
+   pkl-rt.pk.  */
+
+#define PK_EC_GENERIC       0
+#define PK_EC_DIV_BY_ZERO   1
+#define PK_EC_NO_IOS        2
+#define PK_EC_NO_RETURN     3
+#define PK_EC_OUT_OF_BOUNDS 4
+#define PK_EC_EOF           6
+#define PK_EC_MAP           7
+#define PK_EC_CONV          8
+#define PK_EC_ELEM          9
+#define PK_EC_CONSTRAINT   10
+#define PK_EC_IO           11
+#define PK_EC_SIGNAL       12
+#define PK_EC_IOFLAGS      13
+#define PK_EC_INVAL        14
+#define PK_EC_EXIT         15
+#define PK_EC_ASSERT       16
+#define PK_EC_OVERFLOW     17
+#define PK_EC_PERM         18
+#define PK_EC_STACK        19
+
+struct pk_color
+{
+  int red;
+  int green;
+  int blue;
+};
+
+/* Terminal output callbacks.  */
+
+struct pk_term_if
+{
+  /* Flush the output in the terminal.  */
+  void (*flush_fn) (pk_compiler pkc);
+
+  /* Output a NULL-terminated C string.  */
+  void (*puts_fn) (pk_compiler pkc, const char *str);
+
+  /* Output a formatted string.  */
+  void (*printf_fn) (pk_compiler pkc, const char *format, ...);
+
+  /* Output LVL levels of indentation, using STEP white chars in each
+     indentation level.  */
+  void (*indent_fn) (pk_compiler pkc, unsigned int lvl, unsigned int step);
+
+  /* Mark the beginning of a styling class with name CLASS.  */
+  void (*class_fn) (pk_compiler pkc, const char *aclass);
+
+  /* Mark the end of a styling class with name CLASS.  This function
+     returns 0 if the given class is not active and therefore can't be
+     ended.  1 otherwise.  */
+  int (*end_class_fn) (pk_compiler pkc, const char *aclass);
+
+  /* Mark the beginning of an hyperlink with url URL and identifier
+     ID.  The identifier can be NULL.  */
+  void (*hyperlink_fn) (pk_compiler pkc, const char *url, const char *id);
+
+  /* Mark the end of the current hyperlink.  This function returns 0
+     if there is no currently an hyperlink open to close.  1
+     otherwise.  */
+  int (*end_hyperlink_fn) (pk_compiler pkc);
+
+  /* Get the current foreground color.  */
+  struct pk_color (*get_color_fn) (pk_compiler pkc);
+
+  /* Get the current background color.  */
+  struct pk_color (*get_bgcolor_fn) (pk_compiler pkc);
+
+  /* Set the foreground color.  */
+  void (*set_color_fn) (pk_compiler pkc, struct pk_color color);
+
+  /* Set the background color.  */
+  void (*set_bgcolor_fn) (pk_compiler pkc, struct pk_color color);
+};
+
+/* Create and return a new Poke incremental compiler.
+
+   TERM_IF is a pointer to a struct pk_term_if containing pointers to
+   functions providing the output routines to be used by the
+   incremental compiler.
+
+   If there is an error creating the compiler this function returns
+   NULL.  */
+
+pk_compiler pk_compiler_new (struct pk_term_if *term_if) LIBPOKE_API;
+
+/* Like pk_compiler_new, but accepts an extra argument with flags,
+   which are defined below.  */
+
+#define PK_F_NOSTDTYPES 1 /* Do not define standard types.  */
+
+pk_compiler pk_compiler_new_with_flags (struct pk_term_if *term_if,
+                                        uint32_t flags) LIBPOKE_API;
+
+/* Destroy an instance of a Poke incremental compiler.
+
+   PKC is a previously created incremental compiler.  */
+
+void pk_compiler_free (pk_compiler pkc) LIBPOKE_API;
+
+/* Register/unregister a new thread (other than the thread that called
+   pk_compiler_new) that calls any of the services provided by the
+   library.  */
+
+void pk_register_thread (void) LIBPOKE_API;
+void pk_unregister_thread (void) LIBPOKE_API;
+
+/* Error code of last operation.
+
+   This function returns the status corresponding to the given PK
+   compiler.  This status is updated by every call performed in
+   the API, and is one of the PK_* status codes defined above.
+   If PKC is NULL returns PK_ERROR.  */
+
+int pk_errno (pk_compiler pkc) LIBPOKE_API;
+
+/* Set/get user-defined opaque data to the compiler instance.
+   The pointer is accessible whenever an instance of a Poke incremental
+   compiler is available (including from callbacks).  */
+
+void pk_set_user_data (pk_compiler pkc, void *user_data) LIBPOKE_API;
+void *pk_get_user_data (pk_compiler pkc) LIBPOKE_API;
+
+/* Compile and execute a Poke program from the given file FILENAME.
+
+   EXIT_EXCEPTION is a pointer to a pk_val variable that is set to an
+   Exception value if the execution results in an unhandled exception,
+   PK_NULL otherwise.
+
+   Return PK_ERROR in case of a compilation error.  Otherwise,
+   return PK_OK.  */
+
+int pk_compile_file (pk_compiler pkc, const char *filename,
+                     pk_val *exit_exception)
+    LIBPOKE_API LIBPOKE_NONNULL (1, 2, 3);
+
+/* Compile and execute a Poke program from a memory buffer.
+
+   BUFFER is a NULL-terminated string.
+
+   If not NULL, *END is set to the first character in BUFFER that is
+   not part of the compiled entity.
+
+   Return PK_ERROR in case of a compilation error.  Otherwise,
+   return PK_OK.
+
+   EXIT_EXCEPTION is a pointer to a pk_val variable that is set to an
+   Exception value if the execution results in an unhandled exception,
+   PK_NULL otherwise.  */
+
+int pk_compile_buffer (pk_compiler pkc, const char *buffer,
+                       const char **end, pk_val *exit_exception)
+    LIBPOKE_API LIBPOKE_NONNULL (1, 2, 4);
+
+/* Like pk_compile_buffer, but gets the following extra arguments.
+
+   SOURCE is a string identifying the source of the code.  This will
+   often be a file name, or a string like "<stdin>".
+
+   LINE and COLUMN specify the relative location of BUFFER in SOURCE.
+   Both lines and columns start numbering at one, i.e. the first
+   column/line is the column/line number 1.  */
+
+int pk_compile_buffer_with_loc (pk_compiler pkc, const char *buffer,
+                                const char *source,
+                                uint32_t line, uint32_t column,
+                                const char **end, pk_val *exit_exception)
+  LIBPOKE_API LIBPOKE_NONNULL (1, 2, 7);
+
+/* Like pk_compile_buffer but compile and execute a single Poke
+   statement, which may evaluate to a value if it is an "expression
+   statement".
+
+   VAL, if given, is a pointer to a pk_val variable that is set to the
+   result value of an expression-statement, or to PK_NULL.
+
+   EXIT_EXCEPTION is a pointer to a pk_val variable that is set to an
+   Exception value if the execution results in an unhandled exception,
+   PK_NULL otherwise.  */
+
+int pk_compile_statement (pk_compiler pkc, const char *buffer,
+                          const char **end, pk_val *val,
+                          pk_val *exit_exception)
+    LIBPOKE_API LIBPOKE_NONNULL (1, 2, 5);
+
+/* Like pk_compile_statement, but gets the following extra arguments.
+
+   SOURCE is a string identifying the source of the code.  This will
+   often be a file name, or a string like "<stdin>".
+
+   LINE and COLUMN specify the relative location of BUFFER in SOURCE.
+   Both lines and columns start numbering at one, i.e. the first
+   column/line is the column/line number 1.  */
+
+int pk_compile_statement_with_loc (pk_compiler pkc, const char *buffer,
+                                   const char *source,
+                                   uint32_t line, uint32_t column,
+                                   const char **end, pk_val *val,
+                                   pk_val *exit_exception)
+    LIBPOKE_API LIBPOKE_NONNULL (1, 2, 8);
+
+/* Like pk_compile_buffer but compile and execute a single Poke
+   expression, which evaluates to a value.
+
+   VAL, if given, is a pointer to a pk_val variable that is set to the
+   result value of executing the expression.
+
+   Return PK_ERROR in case of a compilation error, PK_OK otherwise.
+
+   EXIT_EXCEPTION is a pointer to a pk_val variable that is set to an
+   Exception value if the execution results in an unhandled exception,
+   PK_NULL otherwise.  */
+
+int pk_compile_expression (pk_compiler pkc, const char *buffer,
+                           const char **end, pk_val *val,
+                           pk_val *exit_exception)
+    LIBPOKE_API LIBPOKE_NONNULL (1, 2, 5);
+
+/* Like pk_compile_expression, but gets the following extra arguments.
+
+   SOURCE is a string identifying the source of the code.  This will
+   often be a file name, or a string like "<stdin>".
+
+   LINE and COLUMN specify the relative location of BUFFER in SOURCE.
+   Both lines and columns start numbering at one, i.e. the first
+   column/line is the column/line number 1.  */
+
+int pk_compile_expression_with_loc (pk_compiler pkc, const char *buffer,
+                                    const char *source,
+                                    uint32_t line, uint32_t column,
+                                    const char **end, pk_val *val,
+                                    pk_val *exit_exception)
+    LIBPOKE_API LIBPOKE_NONNULL (1, 2, 8);
+
+/* Load a module using the given compiler.
+
+   If the given module has been already be loaded, it is loaded again
+   and all the definitions are re-defined.  This is the same behavior
+   than the `load' Poke language construction.
+
+   EXIT_EXCEPTION is a pointer to a pk_val variable that is set to an
+   Exception value if the moudle load results in an unhandled exception,
+   PK_NULL otherwise.
+
+   Return PK_ERROR in case of a compilation error.  Otherwise,
+   return PK_OK.  */
+
+int pk_load (pk_compiler pkc, const char *module,
+             pk_val *exit_exception) LIBPOKE_API LIBPOKE_NONNULL (1, 2, 3);
+
+/* Print a disassembly of a named function.
+
+   FNAME is the name of the function to disassemble.  It should be
+   defined in the global environment of the incremental compiler.
+
+   NATIVE_P is a flag determining whether to emit a native disassembly
+   or a PVM disassembly.
+
+   If there is no function named FNAME, return PK_ERROR.  Otherwise,
+   return PK_OK.  */
+
+int pk_disassemble_function (pk_compiler pkc, const char *fname,
+                             int native_p) LIBPOKE_API;
+
+/* Print a disassembly of the body of the given function value.
+
+   VAL is a function value.
+
+   NATIVE_P is a flag determining whether to emit a native disassembly
+   or a PVM disassembly.
+
+   If VAL is not a valid function value, return PK_ERROR.  Otherwise
+   return PK_OK.  */
+
+int pk_disassemble_function_val (pk_compiler pkc, pk_val val,
+                                 int native_p) LIBPOKE_API;
+
+/* Print a disassembly of an expression.
+
+   STR is a NULL-terminated string containing a Poke expression.
+
+   NATIVE_P is a flag determining whether to emit a native disassembly
+   or a PVM disassembly.
+
+   If STR is not a valid Poke expression, return PK_ERROR.  Otherwise
+   return PK_OK.  */
+
+int pk_disassemble_expression (pk_compiler pkc, const char *str,
+                               int native_p) LIBPOKE_API;
+
+/* Print a profiling summary corresponding to the current state of the
+   PVM.  */
+
+void pk_print_profile (pk_compiler pkc) LIBPOKE_API;
+
+/* Reset the profiling counters.  If the PVM hasn't been compiled with
+   profiling support this is a no-operation.  */
+
+void pk_reset_profile (pk_compiler pkc) LIBPOKE_API;
+
+/* Set the QUIET_P flag in the compiler.  If this flag is set, the
+   incremental compiler emits as few output as possible.  */
+
+void pk_set_quiet_p (pk_compiler pkc, int quiet_p) LIBPOKE_API;
+
+/* Set the DEBUG_P flag in the compiler.  If this flag is set, the
+   incremental compiler:
+
+   - Creates and saves the abstract syntax tree (AST) intermediate
+     representation of the last compiled program, expression or
+     statement, whose textual representation is then available using
+     the pk_get_debug_ast service.  */
+
+void pk_set_debug_p (pk_compiler pkc, int debug_p) LIBPOKE_API;
+
+/* Get a printable representation of the last program, expression or
+   statement compiled in debug mode.  This function returns NULL if no
+   such program has been compiled.  */
+
+const char *pk_get_debug_ast (pk_compiler pkc) LIBPOKE_API;
+
+/* Install a handler for alien tokens in the incremental compiler.
+   The handler gets a string with the token identifier (for $foo it
+   would get `foo') and should return a pk_alien_token struct with the
+   resulting token.  If the handler returns NULL, then the alien token
+   is not recognized as such in the compiler and ERRMSG points to an
+   explicative error message.  */
+
+#define PK_ALIEN_TOKEN_IDENTIFIER 0
+#define PK_ALIEN_TOKEN_INTEGER    1
+#define PK_ALIEN_TOKEN_OFFSET     2
+#define PK_ALIEN_TOKEN_STRING     3
+
+struct pk_alien_token
+{
+  int kind;
+  union
+  {
+    char *identifier;
+
+    struct
+    {
+      uint64_t magnitude;
+      int width;
+      int signed_p;
+    } integer;
+
+    struct
+    {
+      uint64_t magnitude;
+      int width;
+      int signed_p;
+      uint64_t unit;
+    } offset;
+
+    struct
+    {
+      const char *str;
+    } string;
+
+  } value;
+};
+
+typedef struct pk_alien_token *(*pk_alien_token_handler_fn) (const char *id,
+                                                             char **errmsg);
+
+typedef struct pk_alien_token *(*pk_alien_dtoken_handler_fn) (char delim,
+                                                              const char *id,
+                                                              char **errmsg);
+
+/* Register a handler for simple $foo::bar alien tokens.  */
+void pk_set_alien_token_fn (pk_compiler pkc,
+                            pk_alien_token_handler_fn cb) LIBPOKE_API;
+
+/* Register a handler for delimited $<...> alien tokens.  */
+void pk_set_alien_dtoken_fn (pk_compiler pkc,
+                             pk_alien_dtoken_handler_fn cb) LIBPOKE_API;
+
+/* Set the LEXICAL_CUCKOLDING_P flag in the compiler.  If this flag is
+   set, alien tokens are recognized and processed by calling the
+   handler installed by pk_set_alien_token_fn.
+
+   Note that the flag will be honored only if the user has installed a
+   handler for alien tokens.  */
+
+void pk_set_lexical_cuckolding_p (pk_compiler pkc,
+                                  int lexical_cuckolding_p) LIBPOKE_API;
+
+/* Complete the name of a variable, function or type declared in the
+   global environment of the given incremental compiler.
+
+   This function is to be called repeatedly when generating potential
+   command line completions.  It returns command line completion based
+   upon the current state of PKC.
+
+   TEXT is the partial word to be completed.  STATE is zero the first
+   time the function is called and non-zero for each subsequent call.
+
+   On each call, the function returns a potential completion.  It
+   returns NULL to indicate that there are no more possibilities
+   left. */
+
+char *pk_completion_function (pk_compiler pkc,
+                              const char *text, int state) LIBPOKE_API;
+
+/* Complete the name of an IOS.
+
+   PREFIX is a prefix appended to the IOS handlers as they are
+   checked.  This is to establish the context where an IOS is to be
+   recognized.  For example, for an application that uses the
+   $<HANDLER> notation for accessing IO spaces, the prefix would be
+   "$<".
+
+   TEXT is the partial word to be completed.  STATE is zero the first
+   time the function is called and non-zero for each subsequent call.
+
+   On each call, the function returns the name of an IOS for which
+   that tag and TEXT share a common substring. It returns NULL to
+   indicate that there are no more such names.  */
+
+char *pk_ios_completion_function (pk_compiler pkc,
+                                  const char *prefix,
+                                  const char *x, int state) LIBPOKE_API;
+
+/* Return the handler operated by the given IO space.  */
+
+const char *pk_ios_handler (pk_ios ios) LIBPOKE_API;
+
+/* Return the current IO space, or NULL if there are open spaces in
+   the given Poke compiler.  */
+
+pk_ios pk_ios_cur (pk_compiler pkc) LIBPOKE_API;
+
+/* Set the current IO space in the given incremental compiler.  */
+
+void pk_ios_set_cur (pk_compiler pkc, pk_ios ios) LIBPOKE_API;
+
+/* Return the IO space operating the given non-empty HANDLER.  Based on
+   the FLAGS search use different strategies for matching the HANDLER.
+
+   Return NULL if no such space exist in the given Poke incremental
+   compiler.  */
+
+#define PK_IOS_SEARCH_F_EXACT   0  /* Match the whole HANDLER string.  */
+#define PK_IOS_SEARCH_F_PARTIAL 1  /* Match if HANDLER is a sub-string.  */
+
+pk_ios pk_ios_search (pk_compiler pkc, const char *handler,
+                      uint32_t flags) LIBPOKE_API;
+
+/* Return the IO space having the given ID.  Return NULL if no such
+   space exist in the given Poke incremental compiler.  */
+
+pk_ios pk_ios_search_by_id (pk_compiler pkc, int id) LIBPOKE_API;
+
+/* Return the ID of the given IO space.  */
+
+int pk_ios_get_id (pk_ios ios) LIBPOKE_API;
+
+/* Return the name of the device interface.  */
+
+const char *pk_ios_get_dev_if_name (pk_ios ios) LIBPOKE_API;
+
+/* Return the size of the given IO space, in bytes.  */
+
+uint64_t pk_ios_size (pk_ios ios) LIBPOKE_API;
+
+/* Return the bias of the given IO space, in bits.
+
+   Each IO space has a bias associated with it, which by default is 0
+   bits.  This bias is applied to the offset given to every read/write
+   operation.  */
+
+uint64_t pk_ios_get_bias (pk_ios ios) LIBPOKE_API;
+
+/* Return the flags which are active in a given IOS.  */
+
+#define PK_IOS_F_READ     1
+#define PK_IOS_F_WRITE    2
+#define PK_IOS_F_CREATE  16
+
+uint64_t pk_ios_flags (pk_ios ios) LIBPOKE_API;
+
+/* Open an IO space using a handler and if set_cur is set to 1, make
+   the newly opened IO space the current space.  Return PK_IOS_NOID
+   if there is an error opening the space (such as an unrecognized
+   handler). Otherwise, the ID of the new IOS.
+   The error code can be retrieved by pk_errno function.
+
+   FLAGS is a bitmask.  The least significant 32 bits are reserved for
+   common flags (the PK_IOS_F_* above).  The most significant 32 bits
+   are reserved for IOD specific flags.
+
+   If no PK_IOS_F_READ or PK_IOS_F_WRITE flags are specified, then the
+   IOS will be opened in whatever mode makes more sense.  */
+
+#define PK_IOS_NOID (-1) /* Represents an invalid IO space identifier */
+
+int pk_ios_open (pk_compiler pkc,
+                 const char *handler, uint64_t flags, int set_cur_p) LIBPOKE_API;
+
+/* Close the given IO space, freing all used resources and flushing
+   the space cache associated with the space.  */
+
+void pk_ios_close (pk_compiler pkc, pk_ios ios) LIBPOKE_API;
+
+/* Map over all the IO spaces in a given incremental compiler,
+   executing a handler.  */
+
+typedef void (*pk_ios_map_fn) (pk_ios ios, void *data);
+void pk_ios_map (pk_compiler pkc, pk_ios_map_fn cb, void *data) LIBPOKE_API;
+
+/* Map over the declarations defined in the given incremental
+   compiler, executing a handler.
+
+   PKC is a Poke incremental compiler.
+
+   KIND is one of the PK_DECL_KIND_* values defined below.  It
+   determines what subset of declarations will be processed by the
+   handler.
+
+   HANDLER is a function of type pk_map_decl_fn.  This callback gets
+   the following arguments when invoked by pk_decl_map:
+
+     KIND is one of the PK_DECL_KIND_* values defined below.
+
+     SOURCE is a NULL-terminated string somehow denoting the source of
+     the declaration.  This may be a file name, or a descriptive
+     string like "<stdin>".
+
+     NAME is a NULL-terminated string with the name of the entity
+     that is declared.
+
+     TYPE is a NULL-terminated string with the printed representation
+     of the type of the entity that is declared.  This is NULL for
+     PKL_DECL_KIND_TYPE.
+
+     FIRST_LINE, LAST_LINE, FIRST_COLUMN and LAST_COLUMN contain the
+     location of the declaration of the entity that is declared.
+
+     VALUE is either the value of the declared entity, or PK_NULL for
+     PK_DECL_KIND_TYPE.
+
+     DATA is a user-provided pointer at pk_decl_map invocation.
+
+   DATA is a pointer that is passed to the provided callback.  This
+   can be NULL.  */
+
+#define PK_DECL_KIND_VAR 0
+#define PK_DECL_KIND_FUNC 1
+#define PK_DECL_KIND_TYPE 2
+
+typedef void (*pk_map_decl_fn) (int kind,
+                                const char *source,
+                                const char *name,
+                                const char *type,
+                                int first_line, int last_line,
+                                int first_column, int last_column,
+                                pk_val value,
+                                void *data);
+void pk_decl_map (pk_compiler pkc, int kind,
+                  pk_map_decl_fn handler, void *data) LIBPOKE_API;
+
+/* Determine whether there is a declaration with the given name, of
+   the given type.  */
+
+int pk_decl_p (pk_compiler pkc, const char *name, int kind) LIBPOKE_API;
+
+/* Given the name of a variable declared in the compiler, return its
+   value.
+
+   If there is no variable defined with name NAME, return PK_NULL.  */
+
+pk_val pk_decl_val (pk_compiler pkc, const char *name) LIBPOKE_API;
+
+/* Given the name of a variable declared in the compiler, set a new
+   value to it.
+
+   If there is no variable defined with NAME, then this is a
+   no-operation.  */
+
+void pk_decl_set_val (pk_compiler pkc, const char *name, pk_val val)
+  LIBPOKE_API;
+
+/* Declare a variable in the global environment of the given
+   incremental compiler.
+
+   If the operation is successful, return PK_OK.  If a variable with name
+   VARNAME already exists in the environment, return PK_ERROR.  */
+
+int pk_defvar (pk_compiler pkc, const char *varname, pk_val val) LIBPOKE_API;
+
+/* Call a Poke function.
+
+   CLS is the closure for the function to call.
+
+   RET is set to the value returned by the function, or to NULL if
+   it is a void function.
+
+   EXIT_EXCEPTION, if not NULL, is a pointer to a pk_val variable that
+   is set to an Exception value if the function call results in an
+   unhandled exception, PK_NULL otherwise.
+
+   NARG is the number of arguments that follow and that are passed in
+   the function call.  Note that PK_NULL values should be added for
+   "not specified" actuals for formals that have default values.
+
+   NARG function arguments follow.
+
+   Return PK_ERROR if there is a problem performing the operation, or if the
+   execution of the function results in an unhandled exception.
+   Return PK_OK otherwise.
+
+   Note that calling a method needs for the corresponding struct value
+   holding the method to be passed as the _last_ argument in the
+   pk_call.  */
+
+int pk_call (pk_compiler pkc, pk_val cls,
+             pk_val *ret, pk_val *exit_exception,
+             int narg, ...) LIBPOKE_API;
+
+/* Get and set properties of the incremental compiler.  */
+
+int pk_obase (pk_compiler pkc) LIBPOKE_API;
+void pk_set_obase (pk_compiler pkc, int obase) LIBPOKE_API;
+
+unsigned int pk_oacutoff (pk_compiler pkc) LIBPOKE_API;
+void pk_set_oacutoff (pk_compiler pkc, unsigned int oacutoff) LIBPOKE_API;
+
+unsigned int pk_odepth (pk_compiler pkc) LIBPOKE_API;
+void pk_set_odepth (pk_compiler pkc, unsigned int odepth) LIBPOKE_API;
+
+unsigned int pk_oindent (pk_compiler pkc) LIBPOKE_API;
+void pk_set_oindent (pk_compiler pkc, unsigned int oindent) LIBPOKE_API;
+
+int pk_omaps (pk_compiler pkc) LIBPOKE_API;
+void pk_set_omaps (pk_compiler pkc, int omaps_p) LIBPOKE_API;
+
+int pk_autoremap (pk_compiler pkc) LIBPOKE_API;
+void pk_set_autoremap (pk_compiler pkc, int autoremap_p) LIBPOKE_API;
+
+enum pk_omode
+  {
+    PK_PRINT_FLAT,
+    PK_PRINT_TREE
+  };
+
+enum pk_omode pk_omode (pk_compiler pkc) LIBPOKE_API;
+void pk_set_omode (pk_compiler pkc, enum pk_omode omode) LIBPOKE_API;
+
+int pk_error_on_warning (pk_compiler pkc) LIBPOKE_API;
+void pk_set_error_on_warning (pk_compiler pkc,
+                              int error_on_warning_p) LIBPOKE_API;
+
+enum pk_endian
+  {
+    PK_ENDIAN_LSB,
+    PK_ENDIAN_MSB
+  };
+
+enum pk_endian pk_endian (pk_compiler pkc) LIBPOKE_API;
+void pk_set_endian (pk_compiler pkc, enum pk_endian endian) LIBPOKE_API;
+
+enum pk_nenc
+  {
+    PK_NENC_1,
+    PK_NENC_2
+  };
+
+enum pk_nenc pk_nenc (pk_compiler pkc) LIBPOKE_API;
+void pk_set_nenc (pk_compiler pkc, enum pk_nenc nenc) LIBPOKE_API;
+
+int pk_pretty_print (pk_compiler pkc) LIBPOKE_API;
+void pk_set_pretty_print (pk_compiler pkc, int pretty_print_p) LIBPOKE_API;
+
+/*** API for manipulating Poke values.  ***/
+
+/* PK_NULL is an invalid pk_val.
+   This value should be the same than PVM_NULL in pvm.h.  */
+
+#define PK_NULL 0x7ULL
+
+/* Signed integers.  */
+
+/* Build and return a Poke integer.
+
+   VALUE is the numerical value for the new integer.
+   SIZE is the number of bits composing the integer.
+
+   Return PK_NULL if SIZE exceeds the maximum number of bits supported
+   in Poke integers.  */
+
+pk_val pk_make_int (pk_compiler pkc, int64_t value, int size) LIBPOKE_API;
+
+/* Return the numerical value stored in the given Poke integer.
+   VAL should be a Poke value of the right type.  */
+
+int64_t pk_int_value (pk_val val) LIBPOKE_API;
+
+/* Return the size (in bits) of the given Poke integer.
+   VAL should be a Poke value of the right type.  */
+
+int pk_int_size (pk_val val) LIBPOKE_API;
+
+/* Unsigned integers.  */
+
+/* Build and return a Poke unsigned integer.
+
+   VALUE is the numerical value for the new integer.
+   SIZE is the number of bits composing the integer.
+
+   Return NULL if SIZE exceeds the maximum number of bits supported in
+   Poke integers.  */
+
+pk_val pk_make_uint (pk_compiler pkc, uint64_t value, int size) LIBPOKE_API;
+
+/* Return the numerical value stored in the given Poke unsigned
+   integer.
+
+   VAL should be a Poke value of the right type.  */
+
+uint64_t pk_uint_value (pk_val val) LIBPOKE_API;
+
+/* Return the size (in bits) of the given Poke unsigned integer.
+   VAL should be a Poke value of the right type.  */
+
+int pk_uint_size (pk_val val) LIBPOKE_API;
+
+/* Strings.  */
+
+/* Build and return a Poke string.
+
+   STR is a NULL-terminated string, a copy of which will become the
+   value of the Poke string.  */
+
+pk_val pk_make_string (pk_compiler pkc, const char *str) LIBPOKE_API;
+
+/* Return a NULL-terminated string with the value of the given Poke
+   string.  */
+
+const char *pk_string_str (pk_val val) LIBPOKE_API;
+
+/* Offsets.  */
+
+/* Build and return a Poke offset.
+
+   MAGNITUDE is either a Poke integer or a Poke unsigned integer, with
+   the magnitude of the offset.
+
+   UNIT is an unsigned 64-bit Poke integer specifying the unit of the
+   offset, i.e. the multiple of the base unit, which is the bit.
+
+   If any of the arguments is not of the right type return PK_NULL.
+   Otherwise return the created offset.  */
+
+pk_val pk_make_offset (pk_compiler pkc, pk_val magnitude,
+                       pk_val unit) LIBPOKE_API;
+
+/* Return the magnitude of the given Poke offset.  */
+
+pk_val pk_offset_magnitude (pk_val val) LIBPOKE_API;
+
+/* Return the unit of the given Poke offset.  */
+
+pk_val pk_offset_unit (pk_val val) LIBPOKE_API;
+
+/* Structs. */
+
+/* Build and return a Poke struct.
+
+   NFIELDS is an uint<64> Poke value specifying the number of fields
+   in the struct.  This can be uint<64>0 for an empty struct.
+
+   TYPE is a type Poke value specifying the type of the struct.
+
+   The fields and methods in the created struct are initialized to
+   PK_NULL.  */
+
+pk_val pk_make_struct (pk_compiler pkc, pk_val nfields,
+                       pk_val type) LIBPOKE_API;
+
+/* Get the number of fields of a struct. */
+
+pk_val pk_struct_nfields (pk_val sct) LIBPOKE_API;
+
+/* Get the value of a struct field given the name of the field.
+
+   SCT is the field value.
+
+   FNAME is a C string with the name of the field in the struct.
+
+   If FNAME doesn't identify a field in the struct, PK_NULL is
+   returned.  */
+
+pk_val pk_struct_ref_field_value (pk_val sct, const char *fname)
+  LIBPOKE_API;
+
+/* Set the value of a struct field given the name of the field.
+
+   SCT is the struct value.
+
+   FNAME is a C string with the name of the field in the struct.
+
+   VALUE is the new value for this field.
+
+   If FNAME doesn't identify a field in the struct, struct remains
+   unchanged.  */
+
+void pk_struct_ref_set_field_value (pk_val sct, const char *fname,
+                                    pk_val value) LIBPOKE_API;
+
+/* Get the bit-offset of the field of a struct, relative to the
+   beginning of the struct.
+
+   SCT is the struct value.
+   IDX is the index of the field in the struct.
+
+   The returned bit-offset is an uint<64>.
+
+   If IDX is invalid, PK_NULL is returned. */
+
+pk_val pk_struct_field_boffset (pk_val sct, uint64_t idx) LIBPOKE_API;
+
+/* Set the bit-offset of the field of an struct, relative to the
+   beginning of the struct.
+
+   ARRAY is the struct value.
+
+   IDX is the index of the field in the struct.
+
+   BOFFSET is an uint<64> value with the bit-offset of the field.
+
+   If IDX is invalid, struct remains unchanged. */
+
+void pk_struct_set_field_boffset (pk_val sct, uint64_t idx,
+                                  pk_val boffset) LIBPOKE_API;
+
+/* Get the NAME of the struct field.
+
+   SCT is the struct value.
+
+   IDX is the index of the field in the struct.
+
+   If IDX is invalid, PK_NULL is returned. */
+
+pk_val pk_struct_field_name (pk_val sct, uint64_t idx) LIBPOKE_API;
+
+/* Set the NAME of the struct field.
+
+   SCT is the struct value.
+
+   IDX is the index of the field in the struct.
+
+   NAME is the string name for this field.
+
+   If IDX is invalid, struct remains unchanged. */
+
+void pk_struct_set_field_name (pk_val sct, uint64_t idx,
+                               pk_val name) LIBPOKE_API;
+
+/* Get the VALUE of the struct field.
+
+   SCT is the struct value.
+
+   IDX is the index of the field in the struct.
+
+   If IDX is invalid, PK_NULL is returned. */
+
+pk_val pk_struct_field_value (pk_val sct, uint64_t idx) LIBPOKE_API;
+
+/* Set the VALUE of the struct field.
+
+   SCT is the struct value.
+
+   IDX is the index of the field in the struct.
+
+   VALUE is the new value for this field.
+
+   If IDX is invalid, struct remains unchanged. */
+
+void pk_struct_set_field_value (pk_val sct, uint64_t idx,
+                                pk_val value) LIBPOKE_API;
+
+/* Arrays.  */
+
+/* Build and return an empty Poke array.
+
+   NELEM is a hint on the number of the elements that the array will
+   hold.  If it is not clear how many elements the array will hold,
+   pass zero here.
+
+   ARRAY_TYPE is the type of the array.  Note, this is an array type,
+   not the type of the elements.  */
+
+pk_val pk_make_array (pk_compiler pkc, pk_val nelem,
+                      pk_val array_type) LIBPOKE_API;
+
+/* Get the number of elements in the given array value, as an
+   uint<64>.  */
+
+pk_val pk_array_nelem (pk_val array) LIBPOKE_API;
+
+/* Get the value of the element of an array.
+
+   ARRAY is the array value.
+   IDX is the index of the element in the array.
+
+   If IDX is invalid, PK_NULL is returned. */
+
+pk_val pk_array_elem_value (pk_val array, uint64_t idx) LIBPOKE_API;
+
+/* Insert a new element into an array.
+
+   More than one element may be created, depending on the provided
+   index.  In that case, all the new elements contain a copy of VAL.
+
+   If the index corresponds to an existing element, the array remains
+   unchanged.
+
+   This function sets the bit-offset of the inserted elements.  */
+
+void pk_array_insert_elem (pk_val array, uint64_t idx, pk_val val)
+  LIBPOKE_API;
+
+/* Set the value of the element of an array.
+
+   ARRAY is the array value.
+   IDX is the index of the element whose value is set.
+   VAL is the new value for the array element.
+
+   This function may change the bit-offsets of the elements following
+   the element just inserted.
+
+   If IDX is invalid, array remains unchanged. */
+
+void pk_array_set_elem (pk_val array, uint64_t idx, pk_val val) LIBPOKE_API;
+
+/* Get the bit-offset of the element of an array, relative to the
+   beginning of the array.
+
+   ARRAY is the array value.
+   IDX is the index of the element in the array.
+
+   The returned bit-offset is an uint<64>.
+
+   If IDX is invalid, PK_NULL is returned. */
+
+pk_val pk_array_elem_boffset (pk_val array, uint64_t idx) LIBPOKE_API;
+
+/* Return the size of VAL, in bits.  */
+
+uint64_t pk_sizeof (pk_val val) LIBPOKE_API;
+
+/* Integral types.  */
+
+/* Build and return an integral type.
+
+   SIZE is an uint<64> with the size, in bits, of the integral type.
+   SIGNED_P is an int<32> with a boolean specifying whether the type
+   is signed or not.  */
+
+pk_val pk_make_integral_type (pk_compiler pkc, pk_val size,
+                              pk_val signed_p) LIBPOKE_API;
+
+/* Return an uint<64> containing the size, in bits, of the given
+   integral type.  */
+
+pk_val pk_integral_type_size (pk_val type) LIBPOKE_API;
+
+/* Return an int<32> with a boolean specifying whether the given
+   integral type is signed or not.  */
+
+pk_val pk_integral_type_signed_p (pk_val type) LIBPOKE_API;
+
+/* The string type.  */
+
+/* Build and return the string type.  */
+
+pk_val pk_make_string_type (pk_compiler pkc) LIBPOKE_API;
+
+/* The `any' type.  */
+
+/* Build and return the `any' type.  */
+
+pk_val pk_make_any_type (pk_compiler pkc) LIBPOKE_API;
+
+/* Offset types.  */
+
+/* Build and return an offset type.
+
+   BASE_TYPE is an integral type denoting the type of the base value
+   of the offset.
+
+   UNIT is an uint<64> with the unit of the offset type.  The unit is
+   a multiple of the base unit, which is the bit.
+
+   REF_TYPE is either PK_NULL or the type of the referenced type if the
+   offset is also a reference or pointer.  */
+
+pk_val pk_make_offset_type (pk_compiler pkc, pk_val base_type, pk_val unit,
+                            pk_val ref_type) LIBPOKE_API;
+
+/* Get the base type of a given offset type.  */
+
+pk_val pk_offset_type_base_type (pk_val type) LIBPOKE_API;
+
+/* Get the unit of a given offset type.  */
+
+pk_val pk_offset_type_unit (pk_val type) LIBPOKE_API;
+
+/* Struct types. */
+
+/* Build and return a struct type.
+
+   NFIELDS is the number of struct fields on this struct.
+
+   NAME is a string containing the name of a struct type.
+
+   FNAMES is a C array containing the name of each struct field.
+
+   FTYPES is a C array containing the types of each struct field. */
+
+pk_val pk_make_struct_type (pk_compiler pkc, pk_val nfields, pk_val name,
+                            pk_val *fnames, pk_val *ftypes) LIBPOKE_API;
+
+/* Get the type of a struct.
+   This function is DEPRECATED; please use pk_typeof instead.  */
+
+pk_val pk_struct_type (pk_val sct) LIBPOKE_API;
+
+/* Allocate space for struct fields names and field types. */
+
+void pk_allocate_struct_attrs (pk_val nfields,
+pk_val **fnames, pk_val **ftypes) LIBPOKE_API;
+
+/* Get the name of a struct type.
+   If the struct type is anonymous, PK_NULL is returned.
+   This function is DEPRECATED; please use pk_type_name instead.  */
+
+pk_val pk_struct_type_name (pk_val type) LIBPOKE_API;
+
+/* Get the number of fields of a struct type.
+
+   The returned value is an uint<64> */
+
+pk_val pk_struct_type_nfields (pk_val type) LIBPOKE_API;
+
+/* Get the name of a field in a struct type.
+
+   TYPE is a struct type.
+
+   IDX is the index of the field in a struct type.
+
+   If IDX is invalid, PK_NULL is returned.
+
+   If the struct field is anonymous, PK_NULL is returned.  */
+
+pk_val pk_struct_type_fname (pk_val type, uint64_t idx) LIBPOKE_API;
+
+/* Set the name of a field of a struct type.
+
+   TYPE is a struct type.
+
+   IDX is the index of the field in a struct type.
+
+   NAME is a string containing the name of the field in a struct type.
+
+   If IDX is invalid, type remains unchanged.  */
+
+void pk_struct_type_set_fname (pk_val type, uint64_t idx,
+                               pk_val field_name) LIBPOKE_API;
+
+/* Get type of a field in the struct.
+
+   TYPE is a struct type.
+
+   IDX is the index of the struct field.
+
+   If IDX is invalid, PK_NULL is returned.  */
+
+pk_val pk_struct_type_ftype (pk_val type, uint64_t idx) LIBPOKE_API;
+
+/* Set the type of a field of a struct type.
+
+   TYPE is a struct type.
+
+   IDX is the index of the field in a struct type.
+
+   TYPE is the type of the field in a struct type.
+
+   If IDX is invalid, type remains unchanged.  */
+
+void pk_struct_type_set_ftype (pk_val type, uint64_t idx,
+                               pk_val field_type) LIBPOKE_API;
+
+/* Array types.  */
+
+/* Build and return an array type.
+
+   ETYPE is the type of the elements of the array.
+   BOUND is either:
+   - A ()any closure returning PK_NULL to denote an unbounded array.
+   - A closure ()uint<64> to denote an array type bounded by number of
+     elements.
+   - A closure ()offset<uint<64>,1> to denote an array type bounded by
+     size.  */
+
+pk_val pk_make_array_type (pk_compiler pkc, pk_val etype,
+                           pk_val bound) LIBPOKE_API;
+
+/* Get the type of the elements of the given array type.  */
+
+pk_val pk_array_type_etype (pk_val type) LIBPOKE_API;
+
+/* Get the bound of the given array type.
+   This is always PK_NULL at this point.  */
+
+pk_val pk_array_type_bound (pk_val type) LIBPOKE_API;
+
+/* Mapped values.  */
+
+/* Return a boolean indicating whether the given value is mappable or
+   not.  */
+
+int pk_val_mappable_p (pk_val val) LIBPOKE_API;
+
+/* Return a boolean indicating whether the given value is mapped or
+   not.  */
+
+int pk_val_mapped_p (pk_val val) LIBPOKE_API;
+
+/* Set MAPPED_P flag of the given value indicating whether the given
+   value is mapped or not.
+
+   For non-mappable values, this is a no-operation.  Note that this
+   just sets the flag.  */
+
+void pk_val_set_mapped (pk_val val, int mapped_p) LIBPOKE_API;
+
+/* Return a boolean indicating whether data integrity for the given
+   value is enforced or not.  */
+
+int pk_val_strict_p (pk_val val) LIBPOKE_API;
+
+/* Set STRICT flag of the given value indicating whether data
+   integrity is enforced or not.
+
+   For non-mappable values, this is a no-operation.  Note that this
+   just sets the flag.  */
+
+void pk_val_set_strict (pk_val val, int strict_p) LIBPOKE_API;
+
+/* Return the IOS identifier, an int<32>, in which the given value is
+   mapped.  If the value is not mapped, return PK_NULL.  */
+
+pk_val pk_val_ios (pk_val val) LIBPOKE_API;
+
+/* Set the IOS, an int<32>, in which the given value is mapped.
+
+   For non-mappable values, this is a no-operation.  Note that this
+   just sets the IOS property.  */
+
+void pk_val_set_ios (pk_val val, pk_val ios) LIBPOKE_API;
+
+/* Return the offset in which the given value is mapped, as an offset value.
+   If the value is not mapped, return PK_NULL.  */
+
+pk_val pk_val_offset (pk_val val) LIBPOKE_API;
+
+/* Set the offset in which the given value is mapped.
+
+   For non-mappable values, this is a no-operation.  Note that this
+   just sets the property.  */
+
+void pk_val_set_offset (pk_val val, pk_val offset) LIBPOKE_API;
+
+/* Return the bit offset in which the given value is mapped, as an
+   uint<64>.
+
+   If the value is not mapped, return PK_NULL.  */
+
+pk_val pk_val_boffset (pk_val val) LIBPOKE_API;
+
+/* Set the bit offset in which the given value is mapped.
+   BOFFSET is expected to be an uint<64>.
+
+   For non-mappable values, this is a no-operation.  Note that this
+   just sets the property.  */
+
+void pk_val_set_boffset (pk_val val, pk_val boffset) LIBPOKE_API;
+
+/* Other operations on values.  */
+
+/* Return the type of the given value.  If the value is itself a type,
+   return it.  */
+
+pk_val pk_typeof (pk_val val) LIBPOKE_API;
+
+/* Given a type value, return its code.  */
+
+#define PK_TYPE_UNKNOWN 0
+#define PK_TYPE_INT     1
+#define PK_TYPE_UINT    2
+#define PK_TYPE_STRING  3
+#define PK_TYPE_OFFSET  4
+#define PK_TYPE_ARRAY   5
+#define PK_TYPE_STRUCT  6
+#define PK_TYPE_CLOSURE 7
+#define PK_TYPE_VOID    8
+
+int pk_type_code (pk_val val) LIBPOKE_API;
+
+/* Given a type value, return its name.
+
+   If the provided type is anonymous, PK_NULL is returned.  */
+
+pk_val pk_type_name (pk_val type) LIBPOKE_API;
+
+/* Given a value, return its kind.  */
+
+#define PK_VAL_UNKNOWN 0
+#define PK_VAL_INT     1
+#define PK_VAL_UINT    2
+#define PK_VAL_STRING  3
+#define PK_VAL_OFFSET  4
+#define PK_VAL_ARRAY   5
+#define PK_VAL_STRUCT  6
+#define PK_VAL_CLOSURE 7
+#define PK_VAL_TYPE    8
+
+int pk_val_kind (pk_val val) LIBPOKE_API;
+
+/* Compare two Poke values.
+
+   Returns 1 if they match, 0 otherwise.  */
+
+int pk_val_equal_p (pk_val val1, pk_val val2) LIBPOKE_API;
+
+/* Print the given value using the current PKC settings.
+
+   If printing the value implies to run a struct pretty-printer or to
+   execute some other code in the PVM, *EXIT_EXCEPTION is set to an
+   exception value if the operation gets interrupted by an unhandled
+   exception.  Otherwise *EXIT_EXCEPTION is set to PK_NULL.  NULL can
+   be passed for this argument as well.  */
+
+void pk_print_val (pk_compiler pkc, pk_val val,
+                   pk_val *exit_exception) LIBPOKE_API;
+
+/* Foreign IO devices interface.  */
+
+typedef uint64_t pk_iod_off;
+
+/* These must match the IOD_* values in ios-dev.h  */
+#define PK_IOD_OK      0
+#define PK_IOD_ERROR  -1
+#define PK_IOD_EIOFF  -2
+#define PK_IOD_EFLAGS -3
+#define PK_IOD_ENOMEM -4
+#define PK_IOD_EOF    -5
+#define PK_IOD_EINVAL -6
+#define PK_IOD_EMMAP  -7
+
+struct pk_iod_if
+{
+  /* Return the name of this device interface. Cannot return NULL. */
+
+  const char *(*get_if_name) ();
+
+  /* Determine whether the provided HANDLER is recognized as a valid
+     device spec by this backend, and if so, return its normalized
+     form (caller will free).  In case of error, return NULL.  This function
+     sets the ERROR to error code or to PK_IOD_OK.  */
+  char * (*handler_normalize) (const char *handler, uint64_t flags, int* error);
+
+  /* Open a device using the provided HANDLER.  Return the opened
+     device, or NULL in case of errors.  Set the ERROR to error code or to
+     PK_IOD_OK.  Note that this function assumes that HANDLER is recognized as
+     a handler by the backend.  DATA is the `data' pointer below, intended to
+     be used as an IOD-specific payload specified by the author of IOD.  */
+  void * (*open) (const char *handler, uint64_t flags, int *error, void *data);
+
+  /* Close the given device.  Return the error code if there was an error
+     during the operation, PK_IOD_OK otherwise.  */
+  int (*close) (void *dev);
+
+  /* Read a small byte buffer from the given device at the given byte offset.
+     Return PK_IOD_OK on success, or PK_IOD_EOF on error, including on short
+     reads.  */
+  int (*pread) (void *dev, void *buf, size_t count, pk_iod_off offset);
+
+  /* Write a small byte buffer to the given device at the given byte offset.
+     Return PK_IOS_OK on success, or PK_IOD_EOF on error, including short
+     writes.  */
+  int (*pwrite) (void *dev, const void *buf, size_t count, pk_iod_off offset);
+
+  /* Return the flags of the device, as it was opened.  */
+  uint64_t (*get_flags) (void *dev);
+
+  /* Return the size of the device, in bytes.  */
+  pk_iod_off (*size) (void *dev);
+
+  /* If called on a in-stream, free the buffer before OFFSET.  If called on
+     an out-stream, flush the data till OFFSET and free the buffer before
+     OFFSET.  Otherwise, do not do anything.  Return PK_IOS_OK in success and
+     an error code on failure.  */
+  int (*flush) (void *dev, pk_iod_off offset);
+
+  /* IOD-specific data payload that will be passed to OPEN function.  If not
+     used, it should be NULL.  */
+  void *data;
+};
+
+/* Register a foreign IO device in the Poke compiler.
+
+   IOD_IF is a pointer to a struct pk_iod_if containing pointers to
+   functions providing the IO device implementation.
+
+   At the moment it is only supported to register just one foreign IO
+   device.
+
+   Return PK_ERROR if some error occurs.
+   Return PK_OK otherwise. */
+
+int pk_register_iod (pk_compiler pkc, struct pk_iod_if *iod_if)
+  LIBPOKE_API;
+
+/* Given a string, determine whether it corresponds to a Poke
+   keyword.  */
+
+int pk_keyword_p (pk_compiler pkc, const char *str)
+  LIBPOKE_API;
+
+#endif /* ! LIBPOKE_H */
