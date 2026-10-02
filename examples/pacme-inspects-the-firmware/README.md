@@ -21,6 +21,20 @@ pacme already is (a screen manager over pokelets talking to `poked` over a Unix 
 is the only shape that is both legal and sane. The lab's deliverable is **the bridge + the
 grading**, not a new reader.
 
+## Status — Spike 4 (edit live), verified live
+
+poke **edits** a value in the running firmware's NVRAM store over the bridge, and the firmware
+**reads it** on its next boot — the editor side of the store note's survives-and-is-observed test
+([`smoke-pacme-edit.sh`](smoke-pacme-edit.sh)). Spike 0 measured that a writable export of the
+in-use IDE node is *refused*; this spike resolves the write path: attach the node with
+**`share-rw=on`** (the device permits a second writer) and the writable export is **accepted**.
+poke edits `boot-file=A`→`B` in the LIVE store; a fresh boot reads exactly `B`, nothing zapped (a
+same-length value edit keeps the OFW nvram partition valid). The edit is LIVE (poke writes a
+running QEMU's node over NBD); the firmware observes it at its next boot — NVRAM's access model,
+stated. **Controls bite:** without `share-rw` the writable export is refused (the Spike-0 hazard —
+the write path is permission-gated, not a free-for-all behind QEMU's back); an out-of-bounds poke
+write is refused before any byte lands (refuse before the irreversible step).
+
 ## Status — PR2: Spike 2 (pickle vs the Forth toolkit) + the contract's NAME-live, verified live
 
 Spike 2 points a GNU poke **pickle** at a firmware structure and grades every field against
@@ -92,13 +106,12 @@ itself — the repo's standing rule). Both scripts SKIP by name without poke / q
 | [`smoke-pacme-fdt.sh`](smoke-pacme-fdt.sh) (Spike 2, FDT + NAME-live) | `fdt.pk` == `dsl/fdt.fth` == `fdtdump` on the live DTB; `fdt-live` re-reads a tree change | flipped-magic blob refused by `fdt.pk`; a static `fdt-live` fails the live grade (snap==live) |
 | [`smoke-pacme-pe.sh`](smoke-pacme-pe.sh) (Spike 2, PE) | shipped `pe.pk` == `dsl/pe.fth` == `objdump` on a UKI's COFF header | a flipped `PE\0\0` refused by the signature invariant |
 | [`smoke-pacme-cbfs.sh`](smoke-pacme-cbfs.sh) (Spike 2, CBFS) | `cbfs.pk` == `dsl/cbfs.fth` == `cbfstool` on the ROM's first entry | a non-`LARCHIVE` mapping refused by `cbfs.pk` |
+| [`smoke-pacme-edit.sh`](smoke-pacme-edit.sh) (Spike 4) | poke edits `boot-file=A`→`B` in the LIVE NVRAM store (share-rw NBD); a fresh boot reads `B` | unshared node → writable export refused (Spike-0 hazard); an out-of-bounds poke write refused before it lands |
 
 ## Deferred — named as spikes with their crux (see [`PLAN.md`](PLAN.md)), not bare TODOs
 
 - **Spike 3** — the acme UI (`poked` + pokelets over tmux): click a struct field → the byte view
   jumps to its span. The pacme source build (`deps.sh` has the recipe) lands here.
-- **Spike 4** — edit live, shaped by Spike 0's measured hazard (pause / through-the-guest; refuse
-  before the irreversible step).
 - **Spike 5** — live RAM via a bespoke `pk_register_iod` device on QEMU's gdbstub; until it exists,
   RAM views are `SNAPSHOT`, labelled.
 
@@ -117,7 +130,8 @@ pacme-inspects-the-firmware/
 ├── cbfs.pk                 (pe.pk is poke's shipped pickle — no authoring)
 ├── smoke-pacme-fdt.sh      Spike 2 (FDT + NAME-live) — fdt.pk == dsl/fdt.fth == fdtdump; fdt-live LIVE
 ├── smoke-pacme-pe.sh       Spike 2 (PE, HOST-ONLY) — pe.pk == dsl/pe.fth == objdump on a UKI
-└── smoke-pacme-cbfs.sh     Spike 2 (CBFS, HOST-ONLY) — cbfs.pk == dsl/cbfs.fth == cbfstool
+├── smoke-pacme-cbfs.sh     Spike 2 (CBFS, HOST-ONLY) — cbfs.pk == dsl/cbfs.fth == cbfstool
+└── smoke-pacme-edit.sh     Spike 4 — poke edits the LIVE NVRAM store; a fresh boot reads the edit
 ```
 
 ## Running it
@@ -129,6 +143,7 @@ OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-seam.sh # Spike 1: the seam is fai
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-fdt.sh  # Spike 2 (FDT) + NAME-live
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-pe.sh   # Spike 2 (PE)
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-cbfs.sh # Spike 2 (CBFS)
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-edit.sh # Spike 4 (edit live)
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. Needs GNU poke (`sudo apt-get install -y
