@@ -334,7 +334,13 @@ built and green on all four arches, the roadmap's genuinely-missing Tier 1 reade
 ([`UKI_WORKBENCH_LAB_PLAN.md`](UKI_WORKBENCH_LAB_PLAN.md), pointer at [§30](#30-the-uki-workbench--the-unified-kernel-image-as-the-subject-2026-09-14)),
 and its scope is confirmed with the user before building, per the usual rule for Spike/lab work.*
 
-- [ ] **NEXT — `examples/uki-workbench/`, realizing [Spike 2 of the UKI workbench](UKI_WORKBENCH_LAB_PLAN.md#spike-2--extract-and-grade-each-section-by-what-it-is):
+- [x] **✅ DONE 2026-10-02 (#475) — `examples/uki-workbench/` built, realizing [Spike 2](UKI_WORKBENCH_LAB_PLAN.md#spike-2--extract-and-grade-each-section-by-what-it-is)
+      as a CONTRACT consumer.** `uki-dissect.fth` opens a real UKI with `pe-open`, then hands `.linux`
+      and `.initrd` to the registry-driven `identify` — naming container→pe, .linux→bootparams,
+      .initrd→cpio with no per-format code — graded against objdump/file/cpio; plus the in-RAM rescue
+      edits (`pe-write` .cmdline, `cpio-write` a config inside .initrd), controls watched to bite. The
+      original bullet (the per-reader grade) is covered too by the rival lab's `uki` track (#443).
+      Deferred (PR2): persisted rescue + the attestation strand (Spikes 3/4/5). Original text:
       extract each UKI section and grade it by *what it is*.** The two prerequisites Spike 2 named as
       if built now exist and are merged: the `pe` track already reads a real UKI's section table and
       hands `.initrd` to `cpio.fth` (the handoff, proven end to end on all four arches), and
@@ -356,6 +362,9 @@ and its scope is confirmed with the user before building, per the usual rule for
       confirmed with the user before starting, not assumed here.
 - [ ] **Then the RESCUE ARC — [UKI plan Spikes 6–11](UKI_WORKBENCH_LAB_PLAN.md#the-rescue-arc--editing-a-boot-artifact-command-line-initrd-config-spikes-611-added-2026-09-17),
       mutating a boot artifact — command line, initrd, and config blobs (added 2026-09-17 at the user's
+      request; expanded the same day to 9–11).** _(IN-RAM half DONE 2026-10-02 via #475's
+      `smoke-uki-rescue.sh` — `pe-write`/`cpio-write` through the contract; the PERSISTED showcase
+      (`uki-edit.sh` re-emit, the rival lab's `showcase-rescue.sh`) and the attestation strand remain.)_
       request; expanded the same day to 9–11).** The motive is an emergency **rescue boot** — fix a
       machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
       readers already *find* these; this arc *mutates* them, on the write words that already exist
@@ -6692,6 +6701,17 @@ UNMEASURED and said so: parsing the OVMF `VARS` firmware volume from outside (Sp
 *Discussion draft, not scheduled — a proposed **new lab** (`pacme-inspects-the-firmware/`), written
 up in [`DESIGN-NOTES-pacme-a-live-firmware-inspector.md`](DESIGN-NOTES-pacme-a-live-firmware-inspector.md);
 this is the pointer.*
+
+> **BUILT — PR1 (Spikes 0+1), verified live 2026-10-02:** [`examples/pacme-inspects-the-firmware/`](examples/pacme-inspects-the-firmware/README.md).
+> Spike 0 ([`bridge.sh`](examples/pacme-inspects-the-firmware/bridge.sh)) decides the bridge — QEMU
+> QMP `block-export-add type=nbd` of the live OpenBIOS IDE NVRAM node, poke opens `nbd+unix:///…`
+> (`LIVE: block-only`; FILE/`pmemsave` the `SNAPSHOT` fallback; gdbstub IOD = Spike 5) — and the
+> writable-export hazard is **measured** (REFUSED: `ide1-hd1` won't share write), settling Spike 4's
+> shape. Spike 1 ([`smoke-pacme-seam.sh`](examples/pacme-inspects-the-firmware/smoke-pacme-seam.sh))
+> proves the seam faithful (poke over NBD == `od`), control watched to bite. **Deferred (PR2+):**
+> Spike 2 + the contract's **`NAME-live`** (pickles graded vs the Forth toolkit; the handle lands
+> with its consumer), the acme UI (Spike 3, where pacme is built from sourceware), edit-live (4),
+> live-RAM IOD (5).
 
 Could GNU poke's acme-inspired C interface (pacme) run **under OpenBIOS** as a client, like the
 [MicroEMACS port](examples/openbios-clib-hello-to-emacs/README.md)? **No, twice over:** its "core"
