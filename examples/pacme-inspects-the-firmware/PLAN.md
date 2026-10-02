@@ -58,8 +58,21 @@ Three pickle-vs-Forth-vs-foreign subjects, each a one-verdict track, all verifie
   Controls bite: unshared node → writable export refused (the Spike-0 hazard, re-measured); an
   out-of-bounds poke write refused before it lands. The firmware observes the edit at its next boot
   (NVRAM's access model), stated.
-- **Spike 5 — live RAM.** The one bespoke C `pk_register_iod` device onto QEMU's gdbstub (the API
-  supports exactly one foreign IOD); until it exists, RAM views are `SNAPSHOT`, labelled.
+- **Spike 5 — live RAM — DONE, verified live** ([`smoke-pacme-live-ram.sh`](smoke-pacme-live-ram.sh),
+  [`gdb-iod.c`](gdb-iod.c) → `pokegdb`). A bespoke C `pk_register_iod` device (the API supports
+  exactly one foreign IOD) whose `pread`/`pwrite` are gdb RSP `m`/`M` packets to QEMU's gdbstub, so
+  poke reads AND edits the LIVE guest. The firmware writes a nonce; we **locate it in physical RAM
+  by scanning a `pmemsave` dump** (Forth addr ≠ physical on x86 — ofmem offset is real, so never
+  assumed); poke-over-gdbstub, QMP `xp`, and the firmware agree. The firmware overwrites the cell →
+  the same poke reader sees N2 via the gdbstub IOD (LIVE) while a snapshot *file* stays at N1
+  (SNAPSHOT); poke then writes N3 and QMP + the firmware both read it back. **Crux resolved by
+  measurement:** QEMU's gdbstub answers `m`/`M` while the guest *runs* (no halt needed) but HALTS
+  the vCPU on attach and leaves it halted on a bare disconnect, so the IOD sends a `D` (detach) on
+  close to leave the guest running — and `D` is rejected (`E22`) if `qSupported` negotiated
+  `multiprocess+`, so the handshake stays plain. **Honest boundary:** OpenBIOS x86 runs CR0.PG=0
+  (no paging) so a gdb linear address *is* the guest-physical one (== QMP `xp`); the IOD makes no
+  translation claim; the gdbstub is a QEMU `-gdb` debug transport (a lab instrument); x86 only;
+  libpoke GPLv3, host-side. So RAM is no longer `SNAPSHOT`-only — the live handle is the gdbstub IOD.
 
 ## Grading discipline (the repo's rules, applied here)
 

@@ -1,0 +1,6 @@
+# build artifacts of build-gdb-iod.sh (Spike 5) — the source is gdb-iod.c
+/pokegdb
+/.build.err
+# a lab-local pacme source build (Spike 3-full), if one is ever made here
+/.pacme/
+/pacme-src/

@@ -55,6 +55,33 @@ PASS: the seam is faithful: GNU poke, reading the LIVE OpenBIOS IDE NVRAM over t
 the firmware's own N nonce bytes byte-for-byte equal to od of the store … (LIVE: block-only)
 ```
 
+## 2b. Spike 5 — poke reads and EDITS the firmware's LIVE RAM (gdbstub IOD)
+
+```
+! OPENBIOS_WORKDIR=~/openbios-lab examples/pacme-inspects-the-firmware/smoke-pacme-live-ram.sh
+```
+
+Builds `pokegdb` (the libpoke embed with a gdbstub IO device), boots OpenBIOS x86 with a gdbstub,
+has the firmware write a nonce, locates it in physical RAM, and grades three things. Success
+signature:
+
+```
+  - grade 1: poke-over-gdbstub=<hex>, QMP xp=<hex>, firmware wrote=<hex> — all three agree; the IOD reads the LIVE guest
+  - control: a read 64 KiB past the cell is '00000000', not the nonce — the offset is specific
+  - grade 2: firmware overwrote N1=<hex> -> N2=<hex>; LIVE (gdbstub)=<hex> sees it, SNAPSHOT (file)=<hex> does not …
+  - grade 3: poke wrote N3=<hex> into live RAM; QMP oracle=<hex> and the firmware's own 'buf l@'=<hex> both see it …
+PASS: Spike 5: GNU poke reads and EDITS the firmware's LIVE RAM over a bespoke gdbstub IO device …
+```
+
+You can also drive `pokegdb` by hand once the firmware is booted with `-gdb tcp:127.0.0.1:PORT`:
+
+```
+! examples/pacme-inspects-the-firmware/pokegdb gdb://127.0.0.1:PORT 'set_endian(ENDIAN_LITTLE);' 'printf("%u32x\n", uint<32> @ 0x100000#B);'
+```
+
+(Reads the live 32-bit word at guest-physical `0x100000`. `pokegdb` detaches with a gdb `D` packet
+on exit so it leaves the guest **running** — QEMU's gdbstub halts the vCPU on attach.)
+
 ## 3. Watch a control bite (the repo's rule: run it, don't reason it)
 
 Make poke read one byte past the real offset and confirm the seam-faithful assertion flips to FAIL:
