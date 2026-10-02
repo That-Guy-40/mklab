@@ -41,11 +41,16 @@ Three pickle-vs-Forth-vs-foreign subjects, each a one-verdict track, all verifie
 
 ## What this lab defers (with the crux, so each is a spike and not a bare TODO)
 
-- **Spike 3 — the acme UI.** `poked` + the tmux pokelets; a click on a struct field jumps the byte
-  view to its span. **Crux:** wiring the pokelets over `poked`'s socket and grading the highlighted
-  span (== the field's `offset..size`) headless. The **pacme source build** (deps.sh has the recipe:
-  `git clone https://sourceware.org/git/pacme.git`, autotools into a lab-local prefix) lands here —
-  PR1/PR2 do not build pacme because the bridge/seam/pickle spikes use the `poke` CLI alone.
+- **Spike 3-lite — the field-span GRADE — DONE** ([`smoke-pacme-span.sh`](smoke-pacme-span.sh)).
+  Investigation result (poke 4.0): a mapped value's byte span IS exposed via `'offset`/`'size` on
+  composite (struct/array) values (not scalar field-copies) — `/#B` gives plain bytes. poke's magic
+  field span and FDT_Header extent match `dsl/fdt.fth`'s `fdt-fields` offset table, the span lands on
+  the real magic, and the span one field over does not (control). So poke + the toolkit agree on
+  *where* fields live — the headless core of the acme UI's field-to-byte navigation.
+- **Spike 3-full — the interactive acme UI — deferred.** The tmux pokelets over `poked`'s socket;
+  the **pacme source build** (deps.sh has the recipe: `git clone https://sourceware.org/git/pacme.git`,
+  autotools into a lab-local prefix) lands here. **Crux:** driving + grading a live TUI headlessly;
+  all spikes so far use the `poke` CLI alone (no pacme UI, no sudo).
 - **Spike 4 — edit live — DONE, verified live** ([`smoke-pacme-edit.sh`](smoke-pacme-edit.sh)).
   Resolved Spike 0's write-path question: attaching the IDE NVRAM node with **`share-rw=on`** makes
   the writable NBD export accepted, so poke edits `boot-file=A`→`B` in the LIVE store and a fresh

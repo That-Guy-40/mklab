@@ -32,13 +32,14 @@ The **capstone that consumes the contract**, on the `unix` door, self-proving:
   artifact), and a narrated `showcase-rescue.sh` that boots the unedited artifact to a
   named failure signature first, then rescues it. **Crux:** the showcase needs the OVMF
   boot loop for the cmdline act; the config/initrd acts are gradeable on the host now.
-- **The attestation strand (Spikes 3, 4, 5, 8-full) — deferred, UNKNOWN not PASS.**
-  `.pcrsig`/`.pcrpkey`, the self-predicted PCR vs. an OVMF+swtpm boot, and the
-  Authenticode extract-and-host-verify. **Crux:** the current `build-uki.sh` passes no
-  `--pcr-private-key`, so today's UKI carries no `.pcrsig` (a fixture change, one flag
-  pair away), and the actual-PCR side needs a live OVMF+swtpm — a different theme and a
-  larger build. The plan §3 has the feasibility rows.
-- **NAME-live** — deferred with the contract itself (no pacme consumer yet).
+- **The attestation strand — the SELF-PREDICTION half is DONE** (`smoke-uki-pcrsig.sh`), the
+  BOOT half is deferred. A PCR-keyed UKI (lab keypair, `ukify --pcr-*-key --measure`) carries a
+  `.pcrsig`; an independent `systemd-measure sign` over the UKI's own sections + key + phase-paths
+  reproduces the carried policy digests exactly (host-side, no boot), `.pcrpkey` is the lab key,
+  and a tampered `.cmdline` predicts different digests. **Still deferred, UNKNOWN not PASS:** the
+  carried prediction == an **actual OVMF+swtpm boot's** PCR 11 (needs a live TPM), and the
+  Authenticode extract-and-host-verify. The plan §3 has the feasibility rows.
+- **NAME-live** — DONE as `fdt-live` (#477), consumed by the pacme lab.
 
 ## Grading discipline (the repo's rules, applied here)
 

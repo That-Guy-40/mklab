@@ -55,13 +55,26 @@ claimant**; the profile registers `bootparams` before `pe`, so the meaningful ke
 identity wins. That first-match-by-registration-order is a documented dispatch policy,
 not an accident — and it is why the dissector loads the readers in that order.
 
+## The attestation strand — the self-prediction HALF is built ([`smoke-uki-pcrsig.sh`](smoke-uki-pcrsig.sh))
+
+A UKI built with a PCR key carries its **own signed prediction** of the PCR-11 values a measured
+boot will produce — the `.pcrsig` section (per TPM bank, per boot phase-path) + the `.pcrpkey` to
+check it (the plan's §5 "single richest thing in the lab"). `smoke-uki-pcrsig.sh` grades that
+prediction **host-side, no boot**: it generates a lab keypair, builds a PCR-keyed UKI, and shows an
+independent `systemd-measure sign` over the UKI's **own** sections (`.linux`/`.osrel`/`.cmdline`/
+`.uname`/`.sbat`/`.pcrpkey`) + the same key + ukify's four phase-paths **reproduces the carried
+policy digests exactly** — the self-prediction is a faithful computation over the UKI's own bytes,
+and `.pcrpkey` is the lab signing key. **Control:** a one-byte `.cmdline` change predicts *different*
+digests (the prediction tracks the artifact). **The heavy half stays deferred** — that an **actual
+OVMF+swtpm boot** measures PCR 11 to this value needs a live TPM and is **UNKNOWN, not PASS**, never
+claimed here.
+
 ## What this lab does NOT do (scope guards)
 
-- **The attestation strand is deferred** (plan Spikes 3/4/5, 8-full): reading
-  `.pcrsig`/`.pcrpkey`, checking the UKI's self-predicted TPM measurement against an
-  OVMF+swtpm boot, and the Authenticode signature. Those need a PCR-keyed UKI rebuild
-  and a live OVMF+swtpm — a different theme and heavier infrastructure. **Deferred, not
-  claimed:** UNKNOWN is a verdict distinct from PASS.
+- **The attestation strand's BOOT half is deferred** (plan Spikes 3/4/5, 8-full): checking the
+  carried `.pcrsig` against an **actual OVMF+swtpm boot**, and the Authenticode signature. Those
+  need a live OVMF+swtpm — a different theme and heavier infrastructure. The **self-prediction**
+  half is built (above); the boot measurement is **UNKNOWN, not PASS**.
 - **The persisted rescue is the next increment.** The in-RAM edits here are one-shot
   (the OpenFirmware/OpenBoot form). A firmware RAM edit is not visible to a host tool,
   so it is graded by the firmware's own re-read plus the pre-edit foreign anchor. The
@@ -79,6 +92,7 @@ not an accident — and it is why the dissector loads the readers in that order.
 |---|---|---|
 | `smoke-uki-dissect.sh` | `identify` names container=pe, .linux=bootparams, .initrd=cpio through the contract, matching objdump/file/cpio, with no per-format code | garbage → unrecognised; drop `cpio-conform` → .initrd unclaimed + `need-module cpio` names it absent |
 | `smoke-uki-rescue.sh` | `pe-write` grows .cmdline, `cpio-write` flips a config inside .initrd — each a scoped delta agreeing with a foreign pre-edit oracle | an oversize .cmdline → `edit| TOO-BIG`; a length-changing config edit → `cpio| LEN-CHANGE`; bytes unchanged after each refusal |
+| `smoke-uki-pcrsig.sh` | the UKI's carried `.pcrsig` self-prediction reproduces exactly under an independent `systemd-measure` over its own sections (host-side; the OVMF+swtpm boot is deferred) | a one-byte `.cmdline` change predicts different PCR policy digests |
 
 ## Layout
 
@@ -89,7 +103,8 @@ uki-workbench/
 ├── MANUAL_TESTING.md         the ! commands + success signatures
 ├── uki-dissect.fth           the capstone consumer: dissect a UKI in contract words only
 ├── smoke-uki-dissect.sh      identify NAMES every typed artifact a real UKI carries
-└── smoke-uki-rescue.sh       the in-RAM rescue edits via the contract's NAME-write surface
+├── smoke-uki-rescue.sh       the in-RAM rescue edits via the contract's NAME-write surface
+└── smoke-uki-pcrsig.sh       the UKI's self-predicted PCR-11 measurement, graded host-side
 ```
 
 ## Running it
@@ -98,6 +113,7 @@ uki-workbench/
 # build the firmware once (in the rival lab), then:
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-dissect.sh
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-rescue.sh
+./smoke-uki-pcrsig.sh   # host-only (no firmware/QEMU); needs ukify + systemd-measure
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. They **SKIP by name** without
