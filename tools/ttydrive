@@ -1,0 +1,340 @@
+#!/usr/bin/env bash
+# =============================================================================
+# ttydrive — drive an interactive program in a real terminal, one command at
+# a time
+#
+# Starts a program in a terminal that outlives each ttydrive call (a private
+# tmux server), so a script, a CI job or an AI agent can type into it, press
+# keys, paste, resize it, wait for text, read the screen and collect the exit
+# status — the way a person would use it. The program sees a real terminal:
+# readline, job control (Ctrl-Z), bracketed paste and SIGWINCH all behave
+# normally.
+#
+# Part of socwrap (https://github.com/That-Guy-40/socwrap); its interactive
+# test suite (lib/test_pty.sh) is built on it. Needs bash 4+ and tmux 3.0+.
+# =============================================================================
+set -uo pipefail
+
+TTYDRIVE_VERSION="1.0.0"
+PROG="ttydrive"
+
+usage() {
+    cat <<'EOF'
+Usage: ttydrive [-d DIR] COMMAND [ARGS...]
+
+Sessions
+  start NAME [-s COLSxROWS] [-e VAR=VALUE]... [-C DIR] [--replace] -- CMD [ARGS...]
+                            run CMD in a new terminal (default 100x30)
+  stop NAME | --all         end a session (--all: every session and the server)
+  list                      sessions and their state
+  status NAME               running | exited N | signal N
+
+Input
+  type NAME TEXT|-          type TEXT literally (- reads it from stdin)
+  keys NAME KEY...          press keys by name: Enter Tab Escape BSpace Up Down
+                            Left Right Home End PageUp PageDown F1..F12,
+                            C-c C-d C-z C-r M-x …, or any literal character
+  paste NAME TEXT|-         paste TEXT as a terminal does (bracketed paste
+                            when the program has asked for it)
+  resize NAME COLS ROWS     resize the terminal; the program gets SIGWINCH
+
+Output and waiting
+  screen NAME [--all]       print the visible screen (--all: with scrollback);
+                            trailing spaces are trimmed
+  wait NAME REGEX [-t SECS] [--screen]
+                            wait (default 10s) until an extended regex
+                            matches a line of the scrollback + screen
+                            (--screen: the visible screen only). Lines are
+                            trimmed like `screen`'s: a waiting prompt
+                            ">>> " reads as ">>>"
+  settle NAME [-q MS] [-t SECS]
+                            wait until the screen has not changed for MS
+                            milliseconds (default 500)
+  wait-exit NAME [-t SECS]  wait for the program to end; print its status
+
+Options
+  -d DIR    state directory (default: $TTYDRIVE_DIR, else
+            ${XDG_RUNTIME_DIR:-/tmp}/ttydrive-UID)
+  -h        this help;  -V  version
+
+Exit status: 0 success; 1 timed out / no match; 2 usage error or no such
+session; 3 tmux is not installed.
+
+Example
+  ttydrive start py -- python3 -q
+  ttydrive wait py '^>>>$'
+  ttydrive type py 'print(6 * 7)'; ttydrive keys py Enter
+  ttydrive wait py '^42$' && ttydrive screen py
+  ttydrive keys py C-d; ttydrive wait-exit py      # → 0
+  ttydrive stop py
+EOF
+}
+
+die()  { printf '%s: %s\n' "$PROG" "$*" >&2; exit 2; }
+
+# --- State ---------------------------------------------------------------------
+
+STATE_DIR="${TTYDRIVE_DIR:-${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/ttydrive-$(id -u)}"
+
+# _tmux ARGS... — tmux on ttydrive's private server
+_tmux() {
+    if [[ ! -f "$STATE_DIR/tmux.conf" ]]; then
+        { mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"; } || die "cannot create $STATE_DIR"
+        # remain-on-exit keeps a finished program's screen and exit status;
+        # no status line, so the program gets the whole window; commands are
+        # quoted with printf %q, so tmux must run them with bash.
+        printf '%s\n' 'set -g remain-on-exit on' 'set -g status off' \
+            'set -g history-limit 20000' 'set -g default-terminal screen-256color' \
+            "set -g default-shell $(command -v bash)" > "$STATE_DIR/tmux.conf"
+    fi
+    tmux -S "$STATE_DIR/tmux.sock" -f "$STATE_DIR/tmux.conf" "$@"
+}
+
+_exists() { _tmux has-session -t "=$1" 2>/dev/null; }
+_pane()   { printf '=%s:' "$1"; }   # exact session NAME, as a pane/window target
+_need()   { [[ -n "${1:-}" ]] || die "missing session NAME"; _exists "$1" || die "no such session: $1"; }
+
+# _state NAME — "running", "exited N", "signal N" (the exit status is read
+# from the zombie when tmux has not collected it yet — a busy tmux can take
+# seconds to reap; Linux: field 52 of /proc/PID/stat is the wait status),
+# or "" while the status is not known yet
+_state() {
+    local line st
+    line=$(_tmux list-panes -t "$(_pane "$1")" -F '#{pane_dead} #{pane_dead_status} #{pane_dead_signal} #{pane_pid}' 2>/dev/null | head -n 1)
+    [[ "$line" =~ ^([01])\ ([0-9]*)\ ([0-9]*)\ ([0-9]+)$ ]] || return 1
+    if [[ ${BASH_REMATCH[1]} == 0 ]]; then
+        echo running
+    elif [[ -n "${BASH_REMATCH[2]}" ]]; then
+        echo "exited ${BASH_REMATCH[2]}"
+    elif [[ -n "${BASH_REMATCH[3]}" ]]; then
+        echo "signal ${BASH_REMATCH[3]}"
+    else
+        st=$(awk '{ sub(/.*\) /, ""); print $1, $50 }' "/proc/${BASH_REMATCH[4]}/stat" 2>/dev/null)
+        if [[ "$st" =~ ^Z\ ([0-9]+)$ ]]; then
+            if (( BASH_REMATCH[1] & 127 )); then
+                echo "signal $(( BASH_REMATCH[1] & 127 ))"
+            else
+                echo "exited $(( (BASH_REMATCH[1] >> 8) & 255 ))"
+            fi
+        else
+            echo ""
+        fi
+    fi
+}
+
+_text_arg() {  # _text_arg TEXT — TEXT, or stdin when TEXT is "-"
+    if [[ "$1" == "-" ]]; then cat; else printf '%s' "$1"; fi
+}
+
+_timeout_loops() {  # _timeout_loops SECS — number of 50ms polls
+    [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "not a number of seconds: $1"
+    awk -v s="$1" 'BEGIN { printf "%d", s * 20 }'
+}
+
+# --- Commands --------------------------------------------------------------------
+
+cmd_start() {
+    local name=${1:-} size=100x30 dir="" replace=0 cmd="" arg
+    local -a envs=()
+    [[ -n "$name" && "$name" != -* ]] || die "start: missing session NAME"
+    [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || die "start: NAME may use letters, digits, _ . - only"
+    shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -s) [[ "${2:-}" =~ ^[0-9]+x[0-9]+$ ]] || die "start: -s wants COLSxROWS"; size=$2; shift 2 ;;
+            -e) [[ "${2:-}" == *=* ]] || die "start: -e wants VAR=VALUE"; envs+=("$2"); shift 2 ;;
+            -C) [[ -d "${2:-}" ]] || die "start: -C wants a directory"; dir=$2; shift 2 ;;
+            --replace) replace=1; shift ;;
+            --) shift; break ;;
+            -*) die "start: unknown option $1" ;;
+            *)  break ;;
+        esac
+    done
+    [[ $# -gt 0 ]] || die "start: missing CMD"
+    if _exists "$name"; then
+        [[ $replace -eq 1 ]] || die "start: session $name already exists (use --replace)"
+        _tmux kill-session -t "=$name"
+    fi
+    [[ ${#envs[@]} -gt 0 ]] && cmd="env $(printf '%q ' "${envs[@]}")"
+    for arg in "$@"; do cmd+="$(printf '%q ' "$arg")"; done
+    local -a where=()
+    [[ -n "$dir" ]] && where=(-c "$dir")
+    _tmux new-session -d -s "$name" -x "${size%x*}" -y "${size#*x}" "${where[@]}" "$cmd"
+}
+
+cmd_type() {
+    _need "${1:-}"; [[ $# -ge 2 ]] || die "type: missing TEXT"
+    _tmux send-keys -t "$(_pane "$1")" -l -- "$(_text_arg "$2")"
+}
+
+cmd_keys() {
+    _need "${1:-}"; [[ $# -ge 2 ]] || die "keys: missing KEY"
+    local name=$1; shift
+    _tmux send-keys -t "$(_pane "$name")" -- "$@"
+}
+
+cmd_paste() {
+    _need "${1:-}"; [[ $# -ge 2 ]] || die "paste: missing TEXT"
+    local buf="$STATE_DIR/paste.$1.$$"
+    _text_arg "$2" > "$buf"
+    _tmux load-buffer -b "ttydrive-$1" "$buf"
+    rm -f "$buf"
+    _tmux paste-buffer -p -d -b "ttydrive-$1" -t "$(_pane "$1")"
+}
+
+cmd_resize() {
+    _need "${1:-}"
+    [[ "${2:-}" =~ ^[0-9]+$ && "${3:-}" =~ ^[0-9]+$ ]] || die "resize: wants COLS ROWS"
+    _tmux resize-window -t "$(_pane "$1")" -x "$2" -y "$3"
+}
+
+cmd_screen() {
+    _need "${1:-}"
+    case "${2:-}" in
+        "")    _tmux capture-pane -p -t "$(_pane "$1")" ;;
+        --all) _tmux capture-pane -p -S - -t "$(_pane "$1")" ;;
+        *)     die "screen: unknown option $2" ;;
+    esac
+}
+
+cmd_wait() {
+    local name=${1:-} regex=${2:-} secs=10
+    local -a scope=(--all)
+    _need "$name"; [[ -n "$regex" ]] || die "wait: missing REGEX"
+    shift 2
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -t) secs=${2:-}; shift 2 ;;
+            --screen) scope=(); shift ;;
+            *) die "wait: unknown option $1" ;;
+        esac
+    done
+    local i n
+    n=$(_timeout_loops "$secs")
+    for ((i = 0; i <= n; i++)); do
+        cmd_screen "$name" "${scope[@]}" 2>/dev/null | grep -qE -- "$regex" && return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+cmd_settle() {
+    local name=${1:-} quiet=500 secs=10
+    _need "$name"; shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -q) [[ "${2:-}" =~ ^[0-9]+$ ]] || die "settle: -q wants milliseconds"; quiet=$2; shift 2 ;;
+            -t) secs=${2:-}; shift 2 ;;
+            *) die "settle: unknown option $1" ;;
+        esac
+    done
+    local i n last="" now same=0 need=$(( (quiet + 49) / 50 ))
+    n=$(_timeout_loops "$secs")
+    for ((i = 0; i <= n; i++)); do
+        now=$(cmd_screen "$name" 2>/dev/null)
+        if [[ "$now" == "$last" ]]; then
+            (( ++same >= need )) && return 0
+        else
+            same=0; last=$now
+        fi
+        sleep 0.05
+    done
+    return 1
+}
+
+cmd_wait_exit() {
+    local name=${1:-} secs=10
+    _need "$name"; shift
+    [[ "${1:-}" == -t ]] && { secs=${2:-}; shift 2; }
+    [[ $# -eq 0 ]] || die "wait-exit: unknown option $1"
+    local i n st
+    n=$(_timeout_loops "$secs")
+    for ((i = 0; i <= n; i++)); do
+        st=$(_state "$name")
+        case "$st" in
+            "exited "*) echo "${st#exited }"; return 0 ;;
+            "signal "*) echo "$st"; return 0 ;;
+        esac
+        sleep 0.05
+    done
+    echo timeout
+    return 1
+}
+
+cmd_status() {
+    _need "${1:-}"
+    local st; st=$(_state "$1")
+    echo "${st:-exiting}"
+}
+
+cmd_list() {
+    [[ -S "$STATE_DIR/tmux.sock" ]] || return 0
+    local name
+    for name in $(_tmux list-sessions -F '#{session_name}' 2>/dev/null); do
+        printf '%-20s %s\n' "$name" "$(_state "$name")"
+    done
+}
+
+# _reap PGID... — a program that outlives its terminal's SIGHUP (one that
+# spins on a dead tty, say) would run on unseen: give each pane's process
+# group a second to go, then SIGKILL what is left of it
+_reap() {
+    local g i left
+    for ((i = 0; i < 10; i++)); do
+        left=0
+        for g in "$@"; do kill -0 -- "-$g" 2>/dev/null && left=1; done
+        (( left )) || return 0
+        sleep 0.1
+    done
+    for g in "$@"; do kill -KILL -- "-$g" 2>/dev/null; done
+    return 0
+}
+
+cmd_stop() {
+    local -a groups=()
+    case "${1:-}" in
+        --all)
+            if [[ -S "$STATE_DIR/tmux.sock" ]]; then
+                mapfile -t groups < <(_tmux list-panes -a -F '#{pane_pid}' 2>/dev/null)
+                _tmux kill-server 2>/dev/null
+            fi
+            rm -rf "$STATE_DIR" ;;
+        "")    die "stop: missing session NAME (or --all)" ;;
+        *)     _need "$1"
+               mapfile -t groups < <(_tmux list-panes -s -t "=$1" -F '#{pane_pid}' 2>/dev/null)
+               _tmux kill-session -t "=$1" ;;
+    esac
+    [[ ${#groups[@]} -eq 0 ]] || _reap "${groups[@]}"
+}
+
+# --- Main ------------------------------------------------------------------------
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d) [[ -n "${2:-}" ]] || die "-d wants a directory"; STATE_DIR=$2; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        -V|--version) echo "$PROG $TTYDRIVE_VERSION"; exit 0 ;;
+        -*) die "unknown option $1 (see ttydrive -h)" ;;
+        *) break ;;
+    esac
+done
+[[ $# -gt 0 ]] || { usage >&2; exit 2; }
+command -v tmux >/dev/null 2>&1 || { echo "$PROG: tmux is not installed" >&2; exit 3; }
+
+command=$1; shift
+case "$command" in
+    start)     cmd_start "$@" ;;
+    type)      cmd_type "$@" ;;
+    keys)      cmd_keys "$@" ;;
+    paste)     cmd_paste "$@" ;;
+    resize)    cmd_resize "$@" ;;
+    screen)    cmd_screen "$@" ;;
+    wait)      cmd_wait "$@" ;;
+    settle)    cmd_settle "$@" ;;
+    wait-exit) cmd_wait_exit "$@" ;;
+    status)    cmd_status "$@" ;;
+    list)      cmd_list "$@" ;;
+    stop)      cmd_stop "$@" ;;
+    help)      usage ;;
+    *)         die "unknown command: $command (see ttydrive -h)" ;;
+esac
