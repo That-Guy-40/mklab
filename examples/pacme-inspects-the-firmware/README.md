@@ -21,6 +21,32 @@ pacme already is (a screen manager over pokelets talking to `poked` over a Unix 
 is the only shape that is both legal and sane. The lab's deliverable is **the bridge + the
 grading**, not a new reader.
 
+## Status — PR2: Spike 2 (pickle vs the Forth toolkit) + the contract's NAME-live, verified live
+
+Spike 2 points a GNU poke **pickle** at a firmware structure and grades every field against
+the toolkit's Forth `dsl/` reader of the same bytes **and** a foreign oracle — three readers, one
+artifact — across three subjects, and lands the contract's last extension, **`NAME-live`**:
+
+- **`smoke-pacme-fdt.sh` (FDT — LIVE).** Our [`fdt.pk`](fdt.pk), the firmware's `dsl/fdt.fth`, and
+  `fdtdump` decode OpenBIOS's own live device tree (flattened via `dt>fdt`) and agree on
+  magic/totalsize/off_dt_struct. **`fdt-live`** (the contract's `NAME-live`, in
+  `../openbios-the-rival-that-shipped/dsl/fdt-conform.fth`) re-flattens the live tree each call:
+  a property added in the firmware grows the live re-read while an independent snapshot does not —
+  the live-vs-snapshot distinction, graded (and the conformance checker now implements the liveness
+  label + this behavioral grade). Controls bite: `fdt.pk` refuses a flipped-magic blob; a static
+  `fdt-live` fails the live grade.
+- **`smoke-pacme-pe.sh` (PE — HOST-ONLY).** poke's **shipped** `pe.pk`, `dsl/pe.fth`, and `objdump`
+  agree on a UKI's COFF header (machine `8664`, section count); the PE-signature invariant refuses a
+  flipped `PE\0\0`. A static file, so no live handle — stated.
+- **`smoke-pacme-cbfs.sh` (CBFS — HOST-ONLY).** Our [`cbfs.pk`](cbfs.pk), `dsl/cbfs.fth`, and
+  coreboot's `cbfstool` agree on the ROM's first CBFS entry (name + length); `cbfs.pk` refuses a
+  non-`LARCHIVE` mapping. Big-endian metadata — the complement to PE's little-endian.
+
+**`NAME-live` lands with its consumer, not as a stub:** the one genuinely live firmware structure
+with a `dsl/` reader is the FDT, so `fdt-live` is where the contract's live handle earns its keep.
+pe/cbfs are static-file (`HOST-ONLY`) grades — their live forms (a running UKI, flash CBFS) are the
+gdbstub-IOD seam (Spike 5), stated not hidden.
+
 ## Status — PR1: the bridge is chosen and the seam is proven (Spikes 0 + 1), verified live
 
 Measured end to end on this host (OpenBIOS x86 under QEMU/KVM, GNU poke 4.0):
@@ -63,13 +89,12 @@ itself — the repo's standing rule). Both scripts SKIP by name without poke / q
 |---|---|---|
 | [`bridge.sh`](bridge.sh) (Spike 0) | the bridge chosen (NBD, live block-only); the writable-export hazard measured (refused) | the node must be real — an empty node-name would refuse for the wrong reason (fixed; the refusal is the true permission conflict) |
 | [`smoke-pacme-seam.sh`](smoke-pacme-seam.sh) (Spike 1) | poke's bytes over the seam == `od` of the live store | poke's read vs a one-byte-flipped span must MISMATCH (and the equality fails on an off-by-one read) |
+| [`smoke-pacme-fdt.sh`](smoke-pacme-fdt.sh) (Spike 2, FDT + NAME-live) | `fdt.pk` == `dsl/fdt.fth` == `fdtdump` on the live DTB; `fdt-live` re-reads a tree change | flipped-magic blob refused by `fdt.pk`; a static `fdt-live` fails the live grade (snap==live) |
+| [`smoke-pacme-pe.sh`](smoke-pacme-pe.sh) (Spike 2, PE) | shipped `pe.pk` == `dsl/pe.fth` == `objdump` on a UKI's COFF header | a flipped `PE\0\0` refused by the signature invariant |
+| [`smoke-pacme-cbfs.sh`](smoke-pacme-cbfs.sh) (Spike 2, CBFS) | `cbfs.pk` == `dsl/cbfs.fth` == `cbfstool` on the ROM's first entry | a non-`LARCHIVE` mapping refused by `cbfs.pk` |
 
 ## Deferred — named as spikes with their crux (see [`PLAN.md`](PLAN.md)), not bare TODOs
 
-- **Spike 2 + the contract's `NAME-live`** — point `pe.pk`/an fdt/cbfs pickle at the live buffer;
-  each field pacme decodes == the Forth toolkit's read; a one-byte-off pickle refused by name. This
-  is where the dsl modules gain **`NAME-live`** (the seam-backed live handle + a `LIVE`/`SNAPSHOT`
-  manifest label), so the contract extension lands exactly when pacme consumes it.
 - **Spike 3** — the acme UI (`poked` + pokelets over tmux): click a struct field → the byte view
   jumps to its span. The pacme source build (`deps.sh` has the recipe) lands here.
 - **Spike 4** — edit live, shaped by Spike 0's measured hazard (pause / through-the-guest; refuse
@@ -87,7 +112,12 @@ pacme-inspects-the-firmware/
 ├── deps.sh                 name + CHECK the external deps (poke required; pacme = Spike 3)
 ├── lib-bridge.sh           the seam: launch OpenBIOS + QMP NBD export + poke read + teardown-by-PID
 ├── bridge.sh               Spike 0 — the bridge DECISION + the writable-export hazard, measured
-└── smoke-pacme-seam.sh     Spike 1 — poke's bytes over the seam == the firmware's own bytes
+├── smoke-pacme-seam.sh     Spike 1 — poke's bytes over the seam == the firmware's own bytes
+├── fdt.pk                  Spike 2 — our DTB pickle (big-endian); cbfs.pk — our CBFS pickle
+├── cbfs.pk                 (pe.pk is poke's shipped pickle — no authoring)
+├── smoke-pacme-fdt.sh      Spike 2 (FDT + NAME-live) — fdt.pk == dsl/fdt.fth == fdtdump; fdt-live LIVE
+├── smoke-pacme-pe.sh       Spike 2 (PE, HOST-ONLY) — pe.pk == dsl/pe.fth == objdump on a UKI
+└── smoke-pacme-cbfs.sh     Spike 2 (CBFS, HOST-ONLY) — cbfs.pk == dsl/cbfs.fth == cbfstool
 ```
 
 ## Running it
@@ -96,6 +126,9 @@ pacme-inspects-the-firmware/
 ./deps.sh                                             # readiness (install poke if MISSING)
 OPENBIOS_WORKDIR=~/openbios-lab ./bridge.sh           # Spike 0: the bridge + the hazard
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-seam.sh # Spike 1: the seam is faithful
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-fdt.sh  # Spike 2 (FDT) + NAME-live
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-pe.sh   # Spike 2 (PE)
+OPENBIOS_WORKDIR=~/openbios-lab ./smoke-pacme-cbfs.sh # Spike 2 (CBFS)
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. Needs GNU poke (`sudo apt-get install -y

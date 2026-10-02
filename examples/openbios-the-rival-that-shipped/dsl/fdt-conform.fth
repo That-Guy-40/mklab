@@ -33,12 +33,28 @@ hex
   s" size_dt_strings"  20  4 .field3
   s" size_dt_struct"   24  4 .field3 ;
 
+\ fdt-live ( -- handle )  the contract's NAME-live: a SEAM-BACKED LIVE handle over
+\ the firmware's OWN device tree. Each call RE-FLATTENS the live tree (dt>fdt from
+\ `/`) into a buffer and returns it, so a property the firmware just set, or a node
+\ it just created, is reflected on the next read — the live-vs-snapshot distinction
+\ the contract grades. Its snapshot cousin is fdt-open on a CAPTURED DTB, whose
+\ bytes do not change. The buffer is alloc-mem'd once, lazily (dt>fdt needs
+\ /fdt-buf of room); re-flattening reuses it. LIVE only makes sense in the firmware
+\ that owns the tree — the pacme host side reads a captured flatten and is SNAPSHOT.
+variable fdt-live-buf   0 fdt-live-buf !
+: fdt-live ( -- handle )
+  fdt-live-buf @ 0= if /fdt-buf alloc-mem fdt-live-buf ! then
+  fdt-live-buf @ dt>fdt drop        \ re-flatten the LIVE tree each call
+  fdt-live-buf @ ;                  ( handle = the freshly-flattened DTB )
+
 \ fdt-manifest ( -- )  ARCH:4/4 — every field is read big-endian (l@-be), so ppc
 \ reads native while the LE arches byte-swap; correct on all four. Refuses BAD-MAGIC
-\ / BAD-TOKEN / running off the end by name (fdt-read.fth). MATERIALIZES into the
-\ LIVE device tree (fdt>dt), which is why fdt.fth must be loaded too.
+\ / BAD-TOKEN / running off the end by name (fdt-read.fth). Offers a LIVE seam-backed
+\ handle (fdt-live, re-flattening the firmware's own tree); fdt-open on a captured DTB
+\ is the SNAPSHOT cousin. MATERIALIZES into the live tree (fdt>dt), which is why
+\ fdt.fth must be loaded too.
 : fdt-manifest ( -- )
-  ." reads a flattened device tree (big-endian) and materializes it into the live tree; refuses bad magic/token/overrun by name "
-  arch-4/4 cr ;
+  ." reads a flattened device tree (big-endian) and materializes it into the live tree; offers a LIVE handle (fdt-live) over the firmware's own tree; refuses bad magic/token/overrun by name "
+  arch-4/4 live-view cr ;
 
 s" fdt" ['] fdt-manifest register-module

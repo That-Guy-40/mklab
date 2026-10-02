@@ -96,7 +96,19 @@ liveness stance — requires it to be one of `HOST-ONLY`/`LIVE`/`SNAPSHOT`.
   like the others — rather than a standalone `NAME-emit`: its author path `cbfs-author` is
   in-place surgery that adds an entry to an existing archive, graded whole by `cbfstool` in the
   cbfs-write smoke track, not a from-nothing author.)
-- `NAME-live` — a seam-backed handle, for the pacme live inspector.
+- `NAME-live ( -- handle )` — a **seam-backed LIVE handle** over the firmware's own running
+  subject, for the pacme live inspector. Unlike `NAME-open` (which binds a *captured* buffer —
+  bytes that do not change, a `SNAPSHOT`), `NAME-live` **re-reads the live subject on each call**,
+  so a value the firmware just changed is reflected on the next read. Its manifest carries the
+  `LIVE` liveness token. Its contract grade is the **live-vs-snapshot distinction**, and it must
+  bite: capture an **independent** snapshot of the handle's bytes, change the subject in the
+  firmware, call `NAME-live` again — the live read reflects the change while the captured snapshot
+  does not. (The snapshot must be a *copy*; aliasing a handle that re-reads the same buffer is not
+  a snapshot, and a `-live` word that hands back a static buffer fails this grade — the checker's
+  negative control.) First consumer: `fdt-live` (`dsl/fdt-conform.fth`) re-flattens OpenBIOS's live
+  `/dt` via `dt>fdt`. The LIVE stance is the *firmware's* — it owns the running tree; the pacme
+  **host** reading a captured flatten over the bridge is honestly `SNAPSHOT` until a live-RAM seam
+  (the gdbstub IOD) exists.
 
 A module implements only what it has; the contract does not require the writer half of a
 reader. The registry names what is absent rather than treating it as an error.

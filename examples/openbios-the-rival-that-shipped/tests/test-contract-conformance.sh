@@ -329,12 +329,21 @@ grep -qa 'elf-open-corrupt=REFUSED: elf: bad ELF magic' <<<"$OUT" \
     || fail "elf: elf-open did not refuse a bad magic BY NAME"
 note "elf: validates its own authored header, refuses a corrupt class/magic by name, ARCH:4/4"
 
-# FDT — valid vs wrong-magic blob.
+# FDT — valid vs wrong-magic blob, PLUS the NAME-live (fdt-live) liveness grade.
 fbody="$(lev FDT.FTH)"$'\n'"$(lev FDTREAD.FTH)"$'\n'"$(lev FDTC.FTH)"
 fbody+=$'\n''load hd:\\VFDT.BIN'$'\n''." fdt-manifest=" fdt-manifest'$'\n'
 fbody+='." fdt-v-valid=" load-base fdt-validate .refusal ." (blank=valid)" cr'$'\n'
 fbody+='." fdt-fields:" cr load-base fdt-fields'$'\n'
-fbody+='load hd:\\CFDT.BIN'$'\n''." fdt-v-corrupt=" load-base fdt-validate .refusal'
+fbody+='load hd:\\CFDT.BIN'$'\n''." fdt-v-corrupt=" load-base fdt-validate .refusal'$'\n'
+# NAME-live: flatten the LIVE tree, capture an INDEPENDENT snapshot, change the tree,
+# re-read live. The live read must reflect the change; the snapshot must NOT.
+fbody+='fdt-live value H1'$'\n'
+fbody+='/fdt-buf alloc-mem value SNAP  H1 SNAP /fdt-buf move'$'\n'
+fbody+='cr ." fdt-snap-len=" SNAP 4 + fr@ .hx8 cr'$'\n'
+fbody+='s" /options" find-package if active-package! then'$'\n'
+fbody+='s" PACME-LIVE-GRADE" encode-string s" pacme-live-grade" property'$'\n'
+fbody+='fdt-live value H2  cr ." fdt-live-len=" H2 4 + fr@ .hx8 cr'$'\n'
+fbody+='cr ." fdt-snap-len2=" SNAP 4 + fr@ .hx8 cr'
 drive "$fbody"
 grep -qa 'undefined word' <<<"$OUT" \
     && fail "fdt: a required contract word is undefined — core not implemented"
@@ -346,7 +355,22 @@ grep -qa 'fld| name=magic' <<<"$OUT" \
     || fail "fdt: fdt-fields did not enumerate the header"
 grep -qa 'fdt-v-corrupt=REFUSED: fdt: bad FDT magic' <<<"$OUT" \
     || fail "fdt: fdt-validate did not refuse a bad magic BY NAME"
-note "fdt: validates a real blob, refuses a bad magic by name, ARCH:4/4"
+# the NAME-live liveness grade: a declared LIVE token, and a live re-read that moves
+# while an independent snapshot does not (the live-vs-snapshot distinction).
+grep -qaE 'fdt-manifest=.*(^| )LIVE( |$)' <<<"$OUT" \
+    || fail "fdt: NAME-manifest does not declare the LIVE liveness token (fdt-live offers a live handle)"
+# Anchor on .hx8's EXACT 8-hex-digit output — never a bare marker grep, which also
+# matches the REPL's ECHO of the command line and lets `tr -dc` scrape hex out of the
+# Forth text (" SNAP 4 + fr@ .hx8 cr" → "4f8c"), a grade that passes on garbage.
+fsnap="$(grep -aoE 'fdt-snap-len=[0-9a-f]{8}'  <<<"$OUT" | head -1 | sed 's/.*=//')"
+flive="$(grep -aoE 'fdt-live-len=[0-9a-f]{8}'  <<<"$OUT" | head -1 | sed 's/.*=//')"
+fsnp2="$(grep -aoE 'fdt-snap-len2=[0-9a-f]{8}' <<<"$OUT" | head -1 | sed 's/.*=//')"
+[[ -n "$fsnap" && -n "$flive" ]] || fail "fdt-live: the liveness grade produced no lengths — see the drive log"
+[[ "$fsnap" != "$flive" ]] \
+    || fail "fdt-live: the LIVE re-read did not reflect a tree change (snapshot-len $fsnap == live-len $flive) — NAME-live is not live (a static buffer), or the modification was a no-op"
+[[ "$fsnap" == "$fsnp2" ]] \
+    || fail "fdt-live: the INDEPENDENT snapshot changed after a live re-read ($fsnap → $fsnp2) — it was not a captured copy, so the distinction is vacuous"
+note "fdt: validates a real blob, refuses a bad magic by name, ARCH:4/4; fdt-live (NAME-live) is LIVE — a tree change grows the live re-read (snap=$fsnap → live=$flive) while the captured snapshot holds ($fsnp2)"
 
 # EVLOG — author its own log, corrupt the SpecID signature. Needs sha256 first.
 vbody="$(lev SHA256.FTH)"$'\n'"$(lev EVLOG.FTH)"$'\n'"$(lev EVLOGC.FTH)"

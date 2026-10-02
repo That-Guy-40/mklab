@@ -1,0 +1,14 @@
+/* cbfs.pk — a coreboot CBFS pickle for the pacme lab. CBFS metadata is BIG-endian
+   ('ORBC'/'LARCHIVE'), which is poke's default endian — no set_endian needed.
+   One file header (LARCHIVE); mirrors dsl/cbfs.fth's entry reads (len/type/offset
+   via u32be, then the NUL-terminated name). */
+type CBFS_File =
+  struct
+  {
+    uint<8>[8] magic : magic == ['L','A','R','C','H','I','V','E'];  /* refuse non-CBFS by name */
+    uint<32> len;            /* data length */
+    uint<32> ftype;          /* file type */
+    uint<32> attrs_offset;   /* offset to attributes, or 0 */
+    uint<32> data_offset;    /* offset from this header to the data */
+    string   name;           /* NUL-terminated file name */
+  };

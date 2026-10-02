@@ -1,0 +1,18 @@
+/* fdt.pk — a Devicetree Blob (DTB) pickle for the pacme lab. The flattened-
+   devicetree header is big-endian u32s (spec magic 0xd00dfeed). Mirrors the
+   header reads in dsl/fdt-read.fth (fr@ = l@-be). */
+set_endian (ENDIAN_BIG);
+type FDT_Header =
+  struct
+  {
+    uint<32> magic = 0xd00dfeedUL : magic == 0xd00dfeedUL;  /* refuse a non-DTB by name */
+    uint<32> totalsize;
+    uint<32> off_dt_struct;
+    uint<32> off_dt_strings;
+    uint<32> off_mem_rsvmap;
+    uint<32> version;
+    uint<32> last_comp_version;
+    uint<32> boot_cpuid_phys;
+    uint<32> size_dt_strings;
+    uint<32> size_dt_struct;
+  };
