@@ -47,10 +47,22 @@ Three pickle-vs-Forth-vs-foreign subjects, each a one-verdict track, all verifie
   field span and FDT_Header extent match `dsl/fdt.fth`'s `fdt-fields` offset table, the span lands on
   the real magic, and the span one field over does not (control). So poke + the toolkit agree on
   *where* fields live — the headless core of the acme UI's field-to-byte navigation.
-- **Spike 3-full — the interactive acme UI — deferred.** The tmux pokelets over `poked`'s socket;
-  the **pacme source build** (deps.sh has the recipe: `git clone https://sourceware.org/git/pacme.git`,
-  autotools into a lab-local prefix) lands here. **Crux:** driving + grading a live TUI headlessly;
-  all spikes so far use the `poke` CLI alone (no pacme UI, no sudo).
+- **Spike 3-full — the interactive acme UI — DONE, verified** ([`build-pacme.sh`](build-pacme.sh)
+  + [`smoke-pacme-ui.sh`](smoke-pacme-ui.sh)). pacme is built from source into a lab-local prefix
+  (no sudo): clone pacme + gnulib, `./bootstrap` (with a `makeinfo` stub — pacme has no `.texi`
+  targets, so the inherited gnulib buildreq gate is satisfied without texinfo), configure, make,
+  install. **Crux resolved — driving + grading a live TUI headlessly:** [`tools/ttydrive`](../../tools/ttydrive)
+  launches pacme, triggers Layout 2 (`plet-repl` + `plet-out` panes), types a poke read into the
+  REPL, and reads the value off the **plet-out pane** (REPL *results* render there, not in the REPL
+  pane — measured). The grade is three readers of one live-flattened device tree: Forth `dsl/fdt.fth`
+  produced the DTB, `fdt.pk` reads its header headless, and the pacme UI's magic (`d00dfeed`) +
+  totalsize match both. Control: the UI read one field over is not the magic. Measured gotchas,
+  banked: a positional `poke … FILE` opens the IOS only *after* `-c` runs (use `open()` inside `-c`);
+  the pokelets need `$PREFIX/bin` on the inner tmux's PATH (pass via ttydrive `-e`); plet-repl is
+  readline-based so several rapid `type`+Enter race it — send one compound line; pacme runs its OWN
+  tmux server (separate socket) that outlives `ttydrive stop`, so teardown kills it by socket.
+  **Honest boundary (UNKNOWN≠PASS):** the smoke grades the UI's data path (REPL → poked → plet-out);
+  visual layout/ergonomics stay a by-hand judgement (MANUAL_TESTING). No spikes remain deferred.
 - **Spike 4 — edit live — DONE, verified live** ([`smoke-pacme-edit.sh`](smoke-pacme-edit.sh)).
   Resolved Spike 0's write-path question: attaching the IDE NVRAM node with **`share-rw=on`** makes
   the writable NBD export accepted, so poke edits `boot-file=A`→`B` in the LIVE store and a fresh

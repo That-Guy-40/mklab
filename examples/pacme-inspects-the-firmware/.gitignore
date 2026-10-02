@@ -4,3 +4,4 @@
 # a lab-local pacme source build (Spike 3-full), if one is ever made here
 /.pacme/
 /pacme-src/
+/.pacme-build/

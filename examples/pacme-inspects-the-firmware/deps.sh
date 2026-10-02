@@ -58,15 +58,16 @@ else note "libpoke runtime absent — it ships with the poke package above"; fi
 note "(the gdbstub is QEMU's own -gdb transport; smoke-pacme-live-ram.sh adds it to the launch — nothing to install)"
 
 echo
-echo "== NEEDED FROM SPIKE 3 — the acme UI (NOT built or required in PR1/PR2) =="
-command -v tmux >/dev/null && ok "tmux (pacme's screen manager)" || note "tmux absent — needed for the Spike-3 UI"
-if command -v pacme >/dev/null || [[ -x "$(dirname "$0")/.pacme/bin/plet-repl" ]]; then
-    ok "pacme present"
+echo "== SPIKE 3-full — the acme UI (pacme, built from source by build-pacme.sh) =="
+command -v tmux >/dev/null && ok "tmux (pacme's screen manager + what ttydrive drives)" || no "tmux absent — needed for the Spike-3 UI"
+command -v poked >/dev/null && ok "poked (the daemon the pokelets talk to)" || note "poked absent (part of the poke package)"
+[[ -x "$(dirname "$0")/../../tools/ttydrive" ]] && ok "tools/ttydrive (the headless TUI driver smoke-pacme-ui.sh uses)" || note "tools/ttydrive missing"
+if [[ -x "$(dirname "$0")/.pacme/bin/pacme" ]]; then
+    ok "pacme built (.pacme/bin — run ./build-pacme.sh to rebuild)"
 else
-    note "pacme not built — it is unpackaged; when Spike 3 lands, build it from source (no sudo, into a lab-local prefix):"
-    note "    git clone https://sourceware.org/git/pacme.git"
-    note "    cd pacme && ./bootstrap && ./configure --prefix=\"\$PWD/../.pacme\" && make && make install"
-    note "  (the pokelets talk to poked over a Unix socket; Spike 1's bridge is what they will inspect)"
+    note "pacme not built yet — build it from source (no sudo, lab-local prefix):  ./build-pacme.sh"
+    note "  (clones pacme + gnulib, bootstraps, configure/make/install into .pacme/; then ./smoke-pacme-ui.sh)"
+    for t in git autoconf automake make; do command -v "$t" >/dev/null || note "  build needs $t (currently MISSING)"; done
 fi
 if ldconfig -p 2>/dev/null | grep -qi capstone; then ok "Capstone (optional — plet-cpu-disasm only)"
 else note "Capstone absent — OPTIONAL, only plet-cpu-disasm needs it (sudo apt-get install -y libcapstone-dev); every other pokelet runs without it"; fi
