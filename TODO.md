@@ -919,14 +919,20 @@ requires of any other cached fact.
         real-`free()` arch (ppc/sparc → `ofmem_free`), which this lab does not exercise for grubfs. A fix
         here would be **theater** on every door we run, so it is NOT shipped — recorded for a future
         ppc-verified pass.
-      **STILL OPEN, precisely scoped.** The real x86-observable leak is ~352 B/load of NON-instance
-      `alloc-mem` in `open-dev`/`close-dev` (decomposition: 949 B alloc / 597 B free per cycle). Crux:
-      *which* non-instance `alloc-mem` site — a string copy (`>in.arguments` / `interpose-args` / the
-      alias copy) set twice or not freed. Next experiment: per-call-site attribution (tag `alloc-mem`
-      by caller) across one `open-dev`+`close-dev`. Deliberately deferred: a wrong `free-mem` in the
-      intricate path-resolution code risks a use-after-free/double-free (heap corruption → crash), which
-      is a far worse regression than a leak that needs ~1600 loads to bite. (b) **✅ DONE 2026-10-03
-      (`patches/70-unix-hosted-load-base-mapped.patch`).** The
+      **✅ DONE 2026-10-03 (`patches/71-create-instance-records-alloc-size-after-clear.patch`) — PINPOINTED
+      and FIXED.** A per-size histogram of every `alloc-mem`/`free-mem` in one `open-dev`+`close-dev`
+      decomposed the ~352 B EXACTLY: the **six instance blocks** (0x2c/0x30/0x30/0x34/0x48/0x58 = 352 B)
+      were allocated and never freed, while every strdup'd string was. Root cause in
+      `create-instance` (`forth/device/device.fs`): it saved the block size in `>in.alloced-size`
+      **before** `inst-node.size 0 fill` and the `itemplate` `move` — and `>in.alloced-size` is a field
+      **inside** that head (offset 1 cell, `structures.fs`), so both wiped it back to 0. `destroy-instance`
+      then `free-mem`'d **0 bytes** → every instance block leaked, on every arch, since forever (a real
+      upstream bug, not grubfs, not the interpose). Fix: move the `>in.alloced-size` store to **after** the
+      move, beside the `>in.instance-data`/`>in.my-parent` stores upstream already does post-move — one
+      statement reordered. Verified: the histogram now frees all six sizes and `free-total` is **FLAT**
+      across repeated loads (`0x8d7c7`→`0x8d7c7`); `elf-ladder` (open/close/state-valid/go on all four
+      doors), `multiboot`, `nvram`, `unix` all green. The misdiagnosis in #489 stands corrected twice over.
+      (b) **✅ DONE 2026-10-03 (`patches/70-unix-hosted-load-base-mapped.patch`).** The
       hosted door's default `load-base` (`0x4000000`) was unmapped in the host process, so every `load`
       on unix segfaulted ("panic: segmentation violation at 4000000") unless a track `$setenv`'d it
       first — the workaround every unix load track carried. `arch/unix/unix.c`'s `arch_init()` now mmaps

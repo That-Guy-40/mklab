@@ -5980,6 +5980,41 @@ index 5ee6003..7867a98 100644
  
  : load-size file-size @ ;
  
+diff --git a/forth/device/device.fs b/forth/device/device.fs
+index 562c919..1056cd0 100644
+--- a/forth/device/device.fs
++++ b/forth/device/device.fs
+@@ -158,20 +158,26 @@ variable device-tree
+ : create-instance ( phandle -- ihandle|0 )
+   dup >dn.isize @ ['] alloc-mem catch if 2drop 0 exit then
+   >r
+-  \ we need to save the size in order to be able to release it properly
+-  dup >dn.isize @ r@ >in.alloced-size !
+ 
+   \ clear memory (we only need to clear the head; all other data is copied)
+   r@ inst-node.size 0 fill
+-  
++
+   ( phandle R: ihandle )
+ 
+   \ instantiate data
+   dup >dn.methods @ r@ instance-init
+   dup >dn.priv-methods @ r@ instance-init
+ 
+-  \ instantiate 
++  \ instantiate
+   dup >dn.itemplate r@ inst-node.size move
++
++  \ Save the alloc size so destroy-instance can release the block. This MUST
++  \ come AFTER the `0 fill` and the itemplate `move` above: >in.alloced-size
++  \ lies within the inst-node head (offset 1 cell), so the upstream store done
++  \ before them was overwritten -- left at 0 -- and destroy-instance then
++  \ free-mem'd 0 bytes, leaking EVERY instance block (~44-88 B each). Set here
++  \ with >in.instance-data / >in.my-parent, the other head fields written post-move.
++  dup >dn.isize @ r@ >in.alloced-size !
+   r@ r@ >in.instance-data !
+   my-self r@ >in.my-parent !
+   drop
 diff --git a/forth/device/extra.fs b/forth/device/extra.fs
 index 9ca6b78..99a4af8 100644
 --- a/forth/device/extra.fs
