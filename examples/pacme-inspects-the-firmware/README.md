@@ -6,6 +6,10 @@ and grades every structured view against the toolkit's Forth reader of the *same
 the interactive, live sibling of the [`pe.pk` host oracle](../../UKI_WORKBENCH_LAB_PLAN.md#4a-the-pe-oracle-gnu-pokes-pepk)
 the UKI workbench adopted: two independent readers on one live buffer, now with a UI.
 
+**New here? Start with the guided tour:** [`TOUR.md`](TOUR.md) — a top-down walk through the
+whole lab (the pacme TUI and its pokelets, the firmware tools they grade, pickle-vs-fdt/pe/cbfs,
+editing live RAM, the spike ladder, and how it all stays honest), with a run-it-yourself section.
+
 **The full design and rationale live in the plan:**
 [`DESIGN-NOTES-pacme-a-live-firmware-inspector.md`](../../DESIGN-NOTES-pacme-a-live-firmware-inspector.md)
 (TODO §32). This lab operationalizes it. It is a host-side sibling of, and consumes, the OpenBIOS
