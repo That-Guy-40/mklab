@@ -894,8 +894,19 @@ requires of any other cached fact.
       built 2026-09-05** (patch 68, track `elf-ladder`): the gate is **C**, in front of the segment
       copy `load` performs (the irreversible step was never `go`); fixtures per door in the class it
       loads; amd64 now loads ELF64; a stale `state-valid` and ppc's wrapped `_end` fixed on the way;
-      four of seven clauses checked by neither readelf nor elflint. Next: Spike 1 (measure at the
-      gate), then 5. **Two loader findings were parked here for patches of their own** (both measured
+      four of seven clauses checked by neither readelf nor elflint.
+      **✅ Spike 2 DONE 2026-10-03 (track `elf-sweep`): the real-ELF sweep.** Every ELF the lab ships
+      through the C gate beside `readelf` and `eu-elflint`, one row each — the three firmware ELFs
+      (x86/amd64/ppc, refused as the OVERLAP no static checker can know), the cross-door ones (refused
+      by class), `/bin/true` (a distro ELF64 **PIE**, refused by `e_type=3 → want ET_EXEC`, a
+      distinction the tools never draw), and the sibling `hello` clients (LOADED clean — the agreement
+      row). No UNEXPLAINED disagreement survived (a firmware refusal `readelf` passes that is not
+      overlap/not-ours/a named clause, or a load `readelf` calls broken, FAILS by name; a self-control
+      proves that finding gate bites). `eu-elflint` being stricter than the gate (W^X flags, the
+      `ELFBoot` vendor note) is reported as the tool-coverage divergence Spike 3 maps, not a firmware
+      bug. Loads ran in natural order — the loader leaks (patches 71/72) being fixed. **Remaining:**
+      Spike 1 (measure-at-gate PCR), 5 (identity), 3 (per-clause conformance map), 6 (big-endian axis),
+      4 (symbol poke). **Two loader findings were parked here for patches of their own** (both measured
       while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
       MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the
       interposed partition package, a buffer SIZED TO THE FILE, ~1.3 MiB of distinct loads exhausts the
