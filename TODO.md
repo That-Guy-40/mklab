@@ -6388,11 +6388,21 @@ small, both are named, neither is blocked on a question nobody has answered.*
         path that cannot complete in QEMU.
       **So step 3 (DMA, 8237 channel 2) is the fix, and it is now known-correct against QEMU** —
       a real ISA-DMA subsystem in the x86 floppy driver (program channel 2 addr/count/page/mode,
-      set `DOR` DMA-enable, SPECIFY with ND=0, issue the write, poll for the result phase). Its own
-      effort; **not yet built** — the firmware cannot make QEMU's non-DMA write complete, so the
-      honest state is: write stays read-only-by-name on the PIO path (step 4), with the DMA path as
-      the scoped next build. The driver's KNOWN-BLOCKED note + the `floppy` track comment now carry
-      this diagnosis instead of "undiagnosed turnaround".
+      set `DOR` DMA-enable, issue the write, let `write_ok()` read the result phase).
+
+      **DMA prototype 2026-10-03 — got COMPLETION working; blocked on a THIRD obstacle, not yet
+      shipped.** A working-tree prototype programmed 8237 channel 2 + set `DOR_DMA_EN`: `update-nvram`
+      returned `-1` (success) with NO hang and NO `WRITE FAILED` — so the DMA path **does** bypass the
+      QEMU non-DMA completion bug. But the data did not land (host image stayed zero). Measured cause:
+      **ISA DMA addresses only the low 16 MiB (24-bit), while OpenBIOS x86 relocates itself to the TOP
+      of RAM** — `virt_to_phys(buf)` was `0x1ffcf910` (~512 MiB, `-m 512`), far above the 8237's reach.
+      A bounce through a fixed low page (`phys_to_virt(0x100000)`) still wrote zeros: the firmware's
+      virt↔phys for *arbitrary low memory* is **not** the simple linear alias `phys_to_virt` assumes
+      (its MMU/segment map is the open question). So the remaining work is a correctly-mapped,
+      DMA-safe low-memory bounce buffer (or an `ofmem` low claim) — then the completion path already
+      proven finishes it. **Not shipped:** a write that returns success but lands zeros is a liar, so
+      the PIO path stays (fails honestly, step 4). The prototype was reverted; this is the crux for
+      the next attempt.
       **Done means (unchanged):** `boot-file` survives a power cycle on `floppy0`, the host image
       changed, and the no-drive control did not see it — the `persist` shape, third backing.
 - [x] **24.2 — sun4m NVRAM from inside — ✅ DONE 2026-10-02 (`patches/02-sun4m-nvram-binding.patch`).**
