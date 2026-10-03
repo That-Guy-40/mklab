@@ -217,6 +217,10 @@ TRACK (default multiboot):
                               load-base), author an EV_IPL event2 for it, replay PCR0;
                               ground-truthed vs the host sha256sum + tpm2_eventlog + python;
                               one flipped image byte moves digest and PCR (quote UNKNOWN)
+  elf-conform                 B.4 Spike 3: one fixture per gABI clause through the gate
+                              beside readelf + eu-elflint — the conformance map; the gate's
+                              gate-only clauses, eu-elflint's conformance clauses, and the
+                              universal blind spot (a non-NUL PT_INTERP nothing catches)
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -7709,6 +7713,131 @@ FTH
     [[ -n "$SWP_HX" || -n "$SWP_HP" ]] && SWP_HELLOSAYS="the sibling hello client(s) LOADED cleanly (state-valid -1), readelf clean — the agreement row, proving the gate is not refusing everything"
     pass "B.4 Spike 2 — the real-ELF sweep: every ELF the lab ships, through the C gate beside readelf and eu-elflint, one row each, and the observers AGREE once the firmware's two legitimate extra refusals are accounted for. Each door's OWN firmware ELF (x86/amd64/ppc) is refused as the OVERLAP it is — the load that hung x86 and ppc before patch 68 — which no static ELF checker can know because it is about the firmware's LIVE address map; the OTHER door's firmware ELF is refused by the field that differs (class/data/machine), which the class-agnostic tools never flag. $SWP_REALSAYS. $SWP_HELLOSAYS. No UNEXPLAINED disagreement survived — no file the firmware refuses that readelf passes for a reason that is neither overlap nor not-ours nor a named gABI clause, and no file the firmware loads that readelf reports broken — which is the finding this sweep exists to surface. $SWP_DIVSAYS. Loads ran in natural order, the loader leaks (patches 71/72) being fixed; the prompt survived every door (SWEEP-ALIVE)"
     ;;
+  elf-conform)
+    # B.4 Spike 3: THE CONFORMANCE MAP. One malformed fixture per gABI clause, each
+    # measured against THREE observers — the firmware's C gate, readelf, eu-elflint —
+    # and labelled by which of them catch it. The map's point is the GAPS: clauses the
+    # gate catches that BOTH hosted tools miss (the gate earning its keep), and a
+    # clause NOTHING catches (an upstream report against readelf AND eu-elflint).
+    #
+    # THE GATE IS A COPY-SAFETY GATE, NOT A FULL CONFORMANCE CHECKER, and the map
+    # states that boundary rather than treating it as a bug: the gate refuses the
+    # clauses that make the segment copy unsafe (order, bounds, overlap, entry,
+    # class/type, phentsize, phoff) and is SILENT on the pure-conformance clauses
+    # (p_align a power of two, p_offset≡p_vaddr mod p_align, a NUL-terminated
+    # PT_INTERP) — which is exactly where eu-elflint, or nothing at all, stands in.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed — a foreign oracle in the map"
+    command -v eu-elflint         >/dev/null || skip "eu-elflint (elfutils) not installed — the second foreign oracle in the map"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    CFMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"; CFDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$CFMB" "$CFDI"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh x86 first"; done
+    CFBLD="$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py"
+    [[ -f "$CFBLD" ]] || fail "elf-conform: missing the fixture builder $CFBLD"
+    grep -q 'badinterpnul' "$CFBLD" || fail "elf-conform: the fixture builder has no badinterpnul variant — Spike 3's remaining-clause fixtures are not present"
+
+    CFWD="$WORKDIR/elf-conform"; rm -rf "$CFWD"; mkdir -p "$CFWD"
+    # entry point is derived (same as elf-ladder) so the one-clause guard holds
+    CFENT="$(readelf -h "$CFMB" | awk '/Entry point address/{print $4; exit}')"
+    [[ -n "$CFENT" ]] || fail "elf-conform: readelf -h gave no entry point for $CFMB"
+    python3 "$CFBLD" "$CFWD/fx" --ladder x86 0x20000 "$CFENT" > "$CFWD/build.txt" \
+      || fail "elf-conform: the fixture builder failed: $(tail -1 "$CFWD/build.txt")"
+    # every bad fixture must differ from good.elf INSIDE its one clause's bytes
+    CF_BAD=(badord baddup badint badtrunc badmem badovl badentry badphent badphoff badalign badcong badinterpnul)
+    for v in "${CF_BAD[@]}"; do
+      [[ -f "$CFWD/fx/ladder-x86/$v.elf" ]] || fail "elf-conform: the builder wrote no $v.elf"
+      read -r lo hi < <(awk -v v="$v" '$1=="LADDER" && $3==v {print $4,$5}' "$CFWD/build.txt")
+      [[ -n "$lo" && -n "$hi" ]] || fail "elf-conform: no LADDER range printed for $v"
+      out="$(cmp -l "$CFWD/fx/ladder-x86/good.elf" "$CFWD/fx/ladder-x86/$v.elf" | awk -v lo="$lo" -v hi="$hi" '($1-1)<lo||($1-1)>=hi{n++} END{print n+0, NR}')"
+      [[ "${out% *}" -eq 0 && "${out#* }" -ge 1 ]] \
+        || fail "elf-conform: $v.elf differs from good.elf OUTSIDE its clause's bytes [$lo..$hi) (${out% *} of ${out#* }) — a fixture that breaks two rules cannot map one clause"
+    done
+    note "fixtures: good + ${#CF_BAD[@]} one-clause bad files, each differing from good.elf inside its clause's bytes alone"
+
+    # ── stage all fixtures on a CD, boot x86 once, capture the GATE's verdict per file ──
+    CFD="$CFWD/stage"; rm -rf "$CFD"; mkdir -p "$CFD"
+    cp "$CFWD/fx/ladder-x86/good.elf" "$CFD/GOOD.ELF"
+    for v in "${CF_BAD[@]}"; do cp "$CFWD/fx/ladder-x86/$v.elf" "$CFD/$(tr a-z A-Z <<<"$v").ELF"; done
+    genisoimage -quiet -o "$CFWD/cf.iso" -V CONFORM -r -J "$CFD" 2>/dev/null || fail "elf-conform: genisoimage failed"
+    CFSOCK="$WORKDIR/cf.sock"; CFLOG="$CFWD/x86.log"; rm -f "$CFSOCK" "$CFLOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$CFMB" -initrd "$CFDI" -nic none -cdrom "$CFWD/cf.iso" \
+      -display none -serial "unix:$CFSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    CFQ=$!
+    cf_steps=( --expect "0 > " )
+    for v in GOOD "${CF_BAD[@]^^}"; do
+      cf_steps+=( --send ".\" <<$v>>\" cr"$'\r' --expect "> "
+                  --send "load /ide@1/cdrom@0:\\$v.ELF"$'\r' --expect "> "
+                  --send ".\" [$v]sv=\" state-valid @ . cr"$'\r' --expect "> " )
+    done
+    cf_steps+=( --send '." CONFORM-ALIVE" cr'$'\r' --expect "CONFORM-ALIVE" )
+    python3 "$REPO/tools/drive-serial-repl.py" "$CFSOCK" "$CFLOG" --timeout 300 "${cf_steps[@]}"
+    CFRC=$?
+    kill "$CFQ" 2>/dev/null   # by PID, never by pattern
+    [[ $CFRC -eq 0 ]] || fail "elf-conform: the prompt driver did not complete (rc=$CFRC) — a load that hung, or the prompt never came back — see $CFLOG"
+    grep -qF 'CONFORM-ALIVE' "$CFLOG" || fail "elf-conform: the prompt did not survive the sweep — see $CFLOG"
+
+    # the gate's verdict for fixture NAME (uppercased on the CD)
+    cf_fw() {
+      local name="${1^^}" blk sv
+      blk="$(awk -v s="<<$name>>" -v e="[$name]sv=" 'index($0,s){f=1} f{print} index($0,e){exit}' "$CFLOG" | tr -d '\r')"
+      sv="$(grep -aoE "\[$name\]sv= *-?[0-9a-f]+" "$CFLOG" | head -1 | grep -oE -- '-?[0-9a-f]+$')"
+      if   grep -qF 'overlaps the firmware image'     <<<"$blk"; then echo REFUSED
+      elif grep -qF "an ELF, but not this firmware's" <<<"$blk"; then echo REFUSED
+      elif grep -qE 'elf-gate: REFUSED --'            <<<"$blk"; then echo REFUSED
+      elif [[ "$sv" == -1 ]]; then echo LOADED
+      else echo "UNKNOWN(sv=${sv:-?})"; fi
+    }
+
+    # ── the three observers, per clause; build the labelled map ─────────────────
+    # The gate MUST refuse the copy-safety clauses (a regression guard: these are
+    # Spike 0's, and the day one LOADs instead the gate has regressed). It is
+    # EXPECTED to LOAD the pure-conformance clauses — that silence is its boundary.
+    CF_GATE_REFUSE=(badord baddup badint badtrunc badmem badovl badentry badphent badphoff)
+    CF_GATE_SILENT=(badalign badcong badinterpnul)
+    cf_gateonly=""; cf_toolonly=""; cf_none=""; cf_map=""
+    for v in "${CF_BAD[@]}"; do
+      g="$(cf_fw "$v")"
+      r="$(readelf -lW "$CFWD/fx/ladder-x86/$v.elf" 2>&1 >/dev/null | grep -E '^readelf: (Error|Warning)' | head -1)"; [[ -z "$r" ]] && rC=0 || rC=1
+      e="$(eu-elflint "$CFWD/fx/ladder-x86/$v.elf" 2>&1 | grep -vE '^No errors$' | head -1)"; [[ -z "$e" ]] && eC=0 || eC=1
+      [[ "$g" == REFUSED ]] && gC=1 || gC=0
+      cf_map+=$'\n'"      $v: gate=$([[ $gC == 1 ]] && echo catches || echo silent)  readelf=$([[ $rC == 1 ]] && echo catches || echo ·)  eu-elflint=$([[ $eC == 1 ]] && echo catches || echo ·)"
+      # regression + boundary: the gate's verdict must match its documented role
+      if [[ " ${CF_GATE_REFUSE[*]} " == *" $v "* ]]; then
+        [[ $gC == 1 ]] || fail "elf-conform: the gate did NOT refuse $v (verdict [$g]) — a copy-safety clause Spike 0 refuses has regressed to LOADED — see $CFLOG"
+      else
+        [[ $gC == 0 ]] || fail "elf-conform: the gate refused $v (verdict [$g]) but it is a pure-conformance clause the gate is documented NOT to check — the map's boundary claim is wrong, reconcile it"
+      fi
+      # classify the row for the self-control
+      (( gC==1 && rC==0 && eC==0 )) && cf_gateonly+="$v "
+      (( gC==0 && (rC==1 || eC==1) )) && cf_toolonly+="$v "
+      (( gC==0 && rC==0 && eC==0 )) && cf_none+="$v "
+    done
+    note "CONFORMANCE MAP (clause: who catches it):$cf_map"
+
+    # specific tool messages for the catchable new clauses — so a tool-version change is noticed
+    eu-elflint "$CFWD/fx/ladder-x86/badalign.elf" 2>&1 | grep -qiF 'alignment not a power of 2' \
+      || fail "elf-conform: eu-elflint no longer names the power-of-two clause on badalign — the tool column moved; re-measure the map"
+    eu-elflint "$CFWD/fx/ladder-x86/badcong.elf" 2>&1 | grep -qiF 'not module of alignment' \
+      || fail "elf-conform: eu-elflint no longer names the offset≡vaddr congruence on badcong — the tool column moved"
+    readelf -lW "$CFWD/fx/ladder-x86/badphoff.elf" 2>&1 | grep -qiF 'past end of file' \
+      || fail "elf-conform: readelf no longer flags e_phoff past EOF on badphoff — the tool column moved"
+
+    # ── the self-control: the map must be NON-TRIVIAL, or it proves nothing ─────
+    # (an all-catch or all-miss map is indistinguishable from a broken measurement)
+    [[ -n "$cf_gateonly" ]] \
+      || fail "elf-conform SELF-CONTROL: no gate-only row — the map shows nothing the gate catches that both tools miss, which is the whole point of a copy-safety gate; suspect the gate verdicts or the oracles"
+    [[ -n "$cf_toolonly" ]] \
+      || fail "elf-conform SELF-CONTROL: no tool-only row — the map shows no clause a hosted tool catches that the gate is silent on; the conformance-boundary claim is unmeasured"
+    [[ -n "$cf_none" ]] \
+      || fail "elf-conform SELF-CONTROL: no neither-anything row — the map found no universal blind spot, which is the row most worth having; suspect the measurement"
+    [[ " $cf_none " == *" badinterpnul "* ]] \
+      || fail "elf-conform: badinterpnul is expected to be the universal blind spot (gate silent, both tools clean) but the 'neither' set is [${cf_none% }] — re-measure"
+    note "gate earns its keep — clauses ONLY the gate catches (both hosted tools miss): ${cf_gateonly% }"
+    note "the gate's conformance boundary — clauses eu-elflint catches and the gate is silent on: ${cf_toolonly% }"
+    note "UNIVERSAL BLIND SPOT — caught by NEITHER the gate NOR readelf NOR eu-elflint: ${cf_none% } (an upstream report against both tools; see fixtures/elf-gate/UPSTREAM-elflint-no-phdr-order-check.md for the shape)"
+
+    pass "B.4 Spike 3 — the conformance map: ${#CF_BAD[@]} one-clause gABI fixtures, each through the firmware's C gate beside readelf and eu-elflint, labelled by who catches it. The gate EARNS ITS KEEP on [${cf_gateonly% }] — clauses BOTH hosted tools miss (INTERP-order, a truncated/overlapping/entry-less image: the tools are class- and address-map-blind). It draws an honest BOUNDARY — a copy-safety gate, not a conformance checker — and is silent on the pure-conformance clauses [${CF_GATE_SILENT[*]}], where eu-elflint catches [${cf_toolonly% }] (power-of-two alignment, the offset≡vaddr congruence) and readelf stays quiet. And it found a UNIVERSAL BLIND SPOT: [${cf_none% }] — a non-NUL-terminated PT_INTERP — which NEITHER the gate NOR readelf NOR eu-elflint flags, an upstream report ready against both tools. The map is proven non-trivial by a self-control (a gate-only, a tool-only and a neither row must all exist); the copy-safety clauses are a regression guard (each must still be REFUSED); and the catchable tool columns assert their exact messages so a tool-version drift is noticed. Spike 3 DONE (0 gate · 1 measure · 2 sweep · 3 map); the fixtures are authored ELF32 LE here and Spike 6 re-authors them BE"
+    ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
     # unmeasured — and no claim is made about it. If a future spike wants the dsl
@@ -9618,5 +9747,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|unix|launcher]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|unix|launcher]" >&2; exit 1 ;;
 esac

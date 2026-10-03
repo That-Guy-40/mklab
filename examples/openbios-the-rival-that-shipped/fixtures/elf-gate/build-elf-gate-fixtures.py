@@ -165,6 +165,7 @@ def ladder_image(arch, vaddr, ovl, variant):
     assert len(e) == ehsz
     nload = 0
     for t in types:
+        align = 0x1000
         if t == 1:
             nload += 1
             off, fsz, msz, va = 0, filesz, filesz, vaddr
@@ -181,28 +182,57 @@ def ladder_image(arch, vaddr, ovl, variant):
                     # file, still lands inside the firmware for any OVL past its first
                     # page -- and the caller hands us its ENTRY POINT.
                     off, fsz, msz, va = body, 8, 8, (ovl & ~0xfff) + (body & 0xfff)
+                elif variant == 'badcong':
+                    # Spike 3: p_offset NOT congruent to p_vaddr (mod p_align). Keep
+                    # p_align a valid power of two (0x1000) so ONLY the congruence clause
+                    # breaks: off=body, va=vaddr+body+0x10 -> (va-off) = vaddr+0x10, and
+                    # vaddr is page-aligned, so (va-off) mod 0x1000 = 0x10 != 0.
+                    off, fsz, msz, va = body, 8, 8, vaddr + body + 0x10
+                elif variant == 'badalign':
+                    # Spike 3: p_align not a power of two. Keep congruence intact so ONLY
+                    # the power-of-two clause breaks: off=0, va=0x60000, align=0x60000
+                    # (=2^17*3, not a power of 2); 0 mod 0x60000 == 0x60000 mod 0x60000 == 0.
+                    # va=0x60000 is benign (above the fixture's vaddr, below the relocated
+                    # firmware, 8 bytes), so the gate -- which does not check p_align --
+                    # LOADS it, which is the point: the map shows the gate is silent here.
+                    off, fsz, msz, va, align = 0, 8, 8, 0x60000, 0x60000
         elif t == 6:
             off, fsz, msz, va = phoff, phsz * len(types), phsz * len(types), vaddr + phoff
         else:
             off, fsz, msz, va = body, 8, 8, vaddr + body
         if cls == 1:
-            e += struct.pack(en + 'IIIIIIII', t, off, va, va, fsz, msz, 7, 0x1000)
+            e += struct.pack(en + 'IIIIIIII', t, off, va, va, fsz, msz, 7, align)
         else:
-            e += struct.pack(en + 'IIQQQQQQ', t, 7, off, va, va, fsz, msz, 0x1000)
+            e += struct.pack(en + 'IIQQQQQQ', t, 7, off, va, va, fsz, msz, align)
     b = bytearray(b'/bin/sh\0' + b'\0' * (0x100 - 8))
     b[CODE_OFF:CODE_OFF + len(code)] = code
     e += b
     assert len(e) == filesz
+    # Spike 3: single-field corruptions in the ehdr or the INTERP body. Each flips
+    # exactly the bytes of ONE gABI clause; the cmp -l guard in the track checks that.
+    if variant == 'badphent':             # e_phentsize wrong (is_elf's precondition)
+        struct.pack_into(en + 'H', e, 42 if cls == 1 else 54, phsz + 8)
+    elif variant == 'badphoff':           # e_phoff past the end of the file
+        struct.pack_into(en + ('I' if cls == 1 else 'Q'), e, 28 if cls == 1 else 32, filesz + 0x1000)
+    elif variant == 'badinterpnul':       # the 8-byte INTERP path no longer NUL-terminated
+        e[body + 7] = ord('X')
     # the byte range the variant is allowed to differ from good.elf in
     if variant == 'badentry':
         lo, hi = 24, 24 + (4 if cls == 1 else 8)
-    elif variant in ('badtrunc', 'badmem', 'badovl'):
+    elif variant in ('badtrunc', 'badmem', 'badovl', 'badcong', 'badalign'):
         lo, hi = phoff + 3 * phsz, phoff + 4 * phsz
+    elif variant == 'badphent':
+        lo, hi = (42, 44) if cls == 1 else (54, 56)
+    elif variant == 'badphoff':
+        lo, hi = (28, 32) if cls == 1 else (32, 40)
+    elif variant == 'badinterpnul':
+        lo, hi = body + 7, body + 8
     else:
         lo, hi = phoff, body
     return bytes(e), lo, hi
 
-LADDER_VARIANTS = ('good', 'badord', 'baddup', 'badint', 'badtrunc', 'badmem', 'badovl', 'badentry')
+LADDER_VARIANTS = ('good', 'badord', 'baddup', 'badint', 'badtrunc', 'badmem', 'badovl', 'badentry',
+                   'badphent', 'badphoff', 'badalign', 'badcong', 'badinterpnul')
 
 def write_ladder(out, arch, vaddr, ovl):
     d = os.path.join(out, 'ladder-' + arch)
