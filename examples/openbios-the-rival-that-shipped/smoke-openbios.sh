@@ -666,12 +666,17 @@ case "$FLAVOR" in
     # CONFIG_DRIVER_FLOPPY=false for x86. If the store comes back reporting
     # floppy0 as its backing, the read worked.
     #
-    # WHAT IT DOES NOT PROVE: writing. See the KNOWN-BLOCKED note in
-    # drivers/floppy.c -- 512 bytes transfer and the controller never turns the
-    # bus around. That gap is deliberately NOT a permanently-red test here; it is
-    # recorded in the doc and in the driver. This track would go green either way
-    # on the read, so it also asserts the write gap is still the gap it was,
-    # which is what makes it notice if someone fixes it.
+    # WHAT IT DOES NOT PROVE: writing. All 512 bytes transfer and then QEMU's FDC
+    # stays at MSR 0x30 (BUSY|NON_DMA, RQM clear). DIAGNOSED 2026-10-03 (TODO 24.1):
+    # it is a QEMU-model bug, not a driver one -- for a clean single-sector non-DMA
+    # write, hw/block/fdc.c's fdctrl_write_data() does `if (!seek_to_next_sect) break`
+    # BEFORE calling fdctrl_stop_transfer(), and seek_to_next_sect returns 0 at EOT
+    # for a non-multi-track command, so stop_transfer is skipped and NON_DMA never
+    # clears. The firmware cannot make QEMU finish it; the fix is the DMA path (which
+    # QEMU completes via fdctrl_transfer_handler's end_transfer). That gap is
+    # deliberately NOT a permanently-red test here; it is recorded in the doc and the
+    # driver. This track goes green on the read either way, and also asserts the write
+    # gap is still the gap it was -- which is what makes it notice if someone fixes it.
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
     MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
     [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
