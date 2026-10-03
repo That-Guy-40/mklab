@@ -142,10 +142,12 @@ the day a tool does.
 >   client and faulted at `go`. The fixtures are now authored per door in the class it loads
 >   (`fixtures/elf-gate/` ladder sets), which pulls Spike 6's big-endian axis into Spike 0 for the
 >   ppc row; amd64 loads ELF64/EM_X86_64.
-> - **(B) cannot gate ppc.** `dsl/elf.fth` declares byte order per field and refuses a big-endian
->   ELF by name (REVIEW E2) — so on the door whose real boot path is the C loader the Forth reader
->   is not a candidate for the gate, only for Spike 6. The track asserts that refusal as the named
->   limit it is. And the success signature's "u-root's prompt (amd64)" was wrong: Linux on amd64
+> - **(B) cannot gate ppc.** `dsl/elf.fth` declared byte order per field and, at the time of this
+>   decision, refused a big-endian ELF by name (REVIEW E2) — so on the door whose real boot path is
+>   the C loader the Forth reader was not a candidate for the gate. (B.4 Spike 6 has since lifted
+>   that limit — `sub-field:` reads the subject's declared order and the `elf-be` track reads a BE
+>   ELF32 on all four doors — but the gate decision stands: (A) in C, in front of the copy.) And the
+>   success signature's "u-root's prompt (amd64)" was wrong: Linux on amd64
 >   is a bzImage through `linux_load.c`, not an ELF, so **BOOTED is not reached through this
 >   gate** by anything on disk, and the verdict says so rather than passing it.
 >

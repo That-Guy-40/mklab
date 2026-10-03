@@ -18,10 +18,18 @@
 \        architectures and this lab has one. The small enum tables below print
 \        names for the handful of values a human actually reads.
 \   NOT §E7 (unit-typed offsets): deliberately skipped, see REVIEW §G4.
-\   NOT §E2 (byte order taken from ei_data at map time): declared per field
-\        here, so a BIG-ENDIAN ELF64 would be misread. ?elf64 REFUSES one by
-\        name rather than letting it through -- an honest halt for a limit this
-\        layer really has.
+\   §E2 (byte order taken from ei_data at map time): BUILT in B.4 Spike 6. Every
+\        scalar field above is sub-field: (struct.fth order 2), so it reads in
+\        the order the SUBJECT declares; elf-at sets sub-order from e_data the
+\        moment the base is bound, before any field is read. Until Spike 6 this
+\        was the layer's one honest LIMIT -- a big-endian ELF was REFUSED by name
+\        because every field was baked little-endian -- and the comment here said
+\        so. The limit is now lifted: ppc's own openbios-qemu.elf (a BE ELF32) is
+\        read correctly, on a little-endian CPU as on ppc. The one caveat: an
+\        8-byte field on a BE subject (x-entry, the ELF64 lo/hi split) would need
+\        a BE 64-bit path struct.fth refuses (t-be64-err); ELF64-BE is not among
+\        OpenBIOS's real subjects, so it stays out of scope and aborts by name
+\        rather than misreading -- the honest-halt discipline, one level down.
 \
 \ ELF64 HERE; ELF32 IS dsl/elf32.fth, WHICH IS OPTIONAL. Without it the generic
 \ words below still work on an ELF64 and REFUSE an ELF32 by name rather than
@@ -52,30 +60,36 @@ hex
 \ 8-byte field would refuse on x86's 32-bit cell and the whole parse would halt
 \ on a field nobody was asking about. The 8-byte path is exercised separately.
 
+\ sub-field: — read in the SUBJECT's byte order (B.4 Spike 6). e_magic stays an
+\ LE quad: the magic is a fixed BYTE SEQUENCE (7f 'E' 'L' 'F'), which read
+\ little-endian is 0x464c457f for a big- AND a little-endian ELF alike, so it is
+\ the one multi-byte field that is NOT in the file's declared order. The 1-byte
+\ fields have no byte order; everything else is a scalar the file stores in the
+\ order e_data names, so it is sub-field:.
 struct
-  4 le-field: e_magic          \ 7f 'E' 'L' 'F', read as an LE quad
-  1    field: e_class          \ 1 = ELF32, 2 = ELF64
-  1    field: e_data
-  1    field: e_version1
-  1    field: e_osabi
-  1    field: e_abiversion     \ split out of the pad, for poke's implication
-  7    field: e_pad            \ blob: addressable, not scalar-readable
-  2 le-field: e_type
-  2 le-field: e_machine
-  4 le-field: e_version
-  4 le-field: e_entry-lo
-  4 le-field: e_entry-hi
-  4 le-field: e_phoff-lo       \ the program-header table's file offset
-  4 le-field: e_phoff-hi
-  4 le-field: e_shoff-lo
-  4 le-field: e_shoff-hi
-  4 le-field: e_flags
-  2 le-field: e_ehsize         \ the header's OWN size -- see below
-  2 le-field: e_phentsize      \ the stride of the phdr array
-  2 le-field: e_phnum          \ ...and its length
-  2 le-field: e_shentsize
-  2 le-field: e_shnum
-  2 le-field: e_shstrndx
+  4 le-field:  e_magic          \ 7f 'E' 'L' 'F', read as an LE quad (order-invariant)
+  1    field:  e_class          \ 1 = ELF32, 2 = ELF64
+  1    field:  e_data
+  1    field:  e_version1
+  1    field:  e_osabi
+  1    field:  e_abiversion     \ split out of the pad, for poke's implication
+  7    field:  e_pad            \ blob: addressable, not scalar-readable
+  2 sub-field: e_type
+  2 sub-field: e_machine
+  4 sub-field: e_version
+  4 sub-field: e_entry-lo
+  4 sub-field: e_entry-hi
+  4 sub-field: e_phoff-lo       \ the program-header table's file offset
+  4 sub-field: e_phoff-hi
+  4 sub-field: e_shoff-lo
+  4 sub-field: e_shoff-hi
+  4 sub-field: e_flags
+  2 sub-field: e_ehsize         \ the header's OWN size -- see below
+  2 sub-field: e_phentsize      \ the stride of the phdr array
+  2 sub-field: e_phnum          \ ...and its length
+  2 sub-field: e_shentsize
+  2 sub-field: e_shnum
+  2 sub-field: e_shstrndx
 constant /elf64-ehdr
 
 \ /elf64-ehdr is 0x40, and so is `e_ehsize` READ OUT OF THE FILE. That equality
@@ -91,8 +105,8 @@ constant /elf64-ehdr
 \ offsets are arithmetic nobody checked.
 
 struct
-  18   field: x-ident-and-more   \ blob up to e_entry
-  8 le-field: x-entry
+  18    field: x-ident-and-more   \ blob up to e_entry
+  8 sub-field: x-entry             \ the subject's order (ELF64-BE out of scope — see below)
 constant /elf64-entry
 
 \ ── the ELF64 program header ───────────────────────────────────────
@@ -100,14 +114,14 @@ constant /elf64-entry
 \ reason the ehdr's are: one layout has to serve a 32-bit cell too.
 
 struct
-  4 le-field: p_type
-  4 le-field: p_flags
-  4 le-field: p_offset-lo   4 le-field: p_offset-hi
-  4 le-field: p_vaddr-lo    4 le-field: p_vaddr-hi
-  4 le-field: p_paddr-lo    4 le-field: p_paddr-hi
-  4 le-field: p_filesz-lo   4 le-field: p_filesz-hi
-  4 le-field: p_memsz-lo    4 le-field: p_memsz-hi
-  4 le-field: p_align-lo    4 le-field: p_align-hi
+  4 sub-field: p_type
+  4 sub-field: p_flags
+  4 sub-field: p_offset-lo   4 sub-field: p_offset-hi
+  4 sub-field: p_vaddr-lo    4 sub-field: p_vaddr-hi
+  4 sub-field: p_paddr-lo    4 sub-field: p_paddr-hi
+  4 sub-field: p_filesz-lo   4 sub-field: p_filesz-hi
+  4 sub-field: p_memsz-lo    4 sub-field: p_memsz-hi
+  4 sub-field: p_align-lo    4 sub-field: p_align-hi
 constant /elf64-phdr
 
 /elf64-phdr array: phdr[]          \ stride only -- struct-array's stride control uses it
@@ -119,16 +133,16 @@ constant /elf64-phdr
 \ three; see phdr-table/shdr-table below.
 
 struct
-  4 le-field: sh_name          \ an offset into the section-name string table
-  4 le-field: sh_type
-  4 le-field: sh_flags-lo   4 le-field: sh_flags-hi
-  4 le-field: sh_addr-lo    4 le-field: sh_addr-hi
-  4 le-field: sh_offset-lo  4 le-field: sh_offset-hi
-  4 le-field: sh_size-lo    4 le-field: sh_size-hi
-  4 le-field: sh_link
-  4 le-field: sh_info
-  4 le-field: sh_addralign-lo  4 le-field: sh_addralign-hi
-  4 le-field: sh_entsize-lo    4 le-field: sh_entsize-hi
+  4 sub-field: sh_name          \ an offset into the section-name string table
+  4 sub-field: sh_type
+  4 sub-field: sh_flags-lo   4 sub-field: sh_flags-hi
+  4 sub-field: sh_addr-lo    4 sub-field: sh_addr-hi
+  4 sub-field: sh_offset-lo  4 sub-field: sh_offset-hi
+  4 sub-field: sh_size-lo    4 sub-field: sh_size-hi
+  4 sub-field: sh_link
+  4 sub-field: sh_info
+  4 sub-field: sh_addralign-lo  4 sub-field: sh_addralign-hi
+  4 sub-field: sh_entsize-lo    4 sub-field: sh_entsize-hi
 constant /elf64-shdr
 
 /elf64-shdr array: shdr[]
@@ -139,7 +153,17 @@ constant /elf64-shdr
 \ no arguments. It is also the honest shape -- there is no copy, only a base.
 
 0 value @elf
-: elf-at ( adr -- )  to @elf ;
+\ elf-at binds the base AND reads the subject's byte order into sub-order, so
+\ every sub-field: below reads in the order e_data declares (B.4 Spike 6). This
+\ happens BEFORE any other field is read -- e_data itself is a 1-byte field, so
+\ it has no byte order of its own and is safe to read first. e_data=2 is MSB
+\ (sub-order 0 = BE); anything else, including the 0 of an erased buffer being
+\ authored, is LSB (sub-order 1 = LE) -- the authoring path writes a fresh LE
+\ header, and a non-ELF is caught by the magic check in ?elf, not by a wrong
+\ byte order here.
+: elf-at ( adr -- )
+  to @elf
+  @elf e_data t@ 2 = if 0 else 1 then sub-order ! ;
 \ NO `: elf @elf ;` CONVENIENCE ALIAS. It was here for one commit and the
 \ firmware answered `elf isn't unique.` -- forth/debugging/client.fs:79 already
 \ defines `1 constant elf`, and shadowing it would have broken the
@@ -167,7 +191,8 @@ constant /elf64-shdr
 : ?elf64 ( -- )
   @elf e_magic  t@ 464c457f     s" bad ELF magic (want 7f 'E' 'L' 'F')"      chk
   @elf e_class  t@ 2            s" not ELF64 (e_class)"                     chk
-  @elf e_data   t@ 1            s" big-endian ELF: this layer declares byte order per field, so it would MISREAD one (REVIEW E2)" chk
+  @elf e_data   t@ dup 1 = swap 2 =  or
+    s" e_data is neither LSB(1) nor MSB(2)"  chk?          \ §E2 built (Spike 6): both orders read; only a bogus one refused
   @elf e_ehsize t@ /elf64-ehdr  s" e_ehsize disagrees with the layout"      chk
   elf64-phnum 0<> if
     @elf e_phentsize t@ /elf64-phdr s" e_phentsize disagrees with the layout" chk
