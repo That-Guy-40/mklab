@@ -22,7 +22,14 @@
 # fdctrl_stop_transfer()`, and seek_to_next_sect() returns 0 at EOT for a
 # non-multi-track command -- so stop_transfer is skipped and NON_DMA never clears.
 # The firmware cannot make QEMU complete it. The fix is the DMA path (8237 ch 2),
-# which QEMU finishes via fdctrl_transfer_handler()'s end_transfer; not yet built.
+# which QEMU finishes via fdctrl_transfer_handler()'s end_transfer.
+#
+# COMPLETED 2026-10-03 in patch 69: the write now goes over ISA DMA (8237
+# channel 2, a <16 MiB bounce page because the firmware relocates above the
+# 8237's 24-bit reach), lands in the host image, and survives a power cycle --
+# the "persist" shape. The drivers/floppy.c hunk BELOW is the ORIGINAL blocked
+# PIO write, kept as the record of THIS step; patch 69 carries the PIO->DMA
+# change and the ground-truth that phys_to_virt() reaches low memory exactly.
 #
 # Also: this is 1.44 MB, not 2.88 -- the driver hard-codes one geometry (H1440).
 #

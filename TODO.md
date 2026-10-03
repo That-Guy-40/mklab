@@ -6361,50 +6361,40 @@ size number.
 two rows read and do not write, each asserted as exactly the half that works. Both are
 small, both are named, neither is blocked on a question nobody has answered.*
 
-- [ ] **24.1 — the x86 floppy write** ([patch 07](examples/openbios-the-rival-that-shipped/patches/07-x86-floppy-backing.patch),
-      track `floppy`). **State:** the read path works (and fixed an upstream bug — `read_ok()`
-      compared ST0's head to the *requested* head, wrong for multi-track reads). The write
-      transfers all 512 bytes, then QEMU's S82078B sits at MSR `0x30` (BUSY|NON_DMA) through
-      200,000 polls and never enters the result phase; it fails by name (`WRITE FAILED`), and
-      the track asserts the gap is *still this gap*.
+- [x] **24.1 — the x86 floppy write — ✅ DONE 2026-10-03 (`patches/69-x86-floppy-write-via-dma.patch`).**
+      `setenv boot-file X; update-nvram` on `floppy0` now writes, the bytes land in the host image,
+      and a fresh boot reads `X` back — the `persist` shape, third backing. `smoke-openbios.sh floppy`
+      is now three boots: write → the nonce appears in the host image; a no-write CONTROL leaves the
+      image blank; a fresh boot `printenv`s the nonce back (survives the power cycle).
 
-      **✅ DIAGNOSED 2026-10-03 — it is a QEMU model bug in the non-DMA write path, not a driver
-      bug.** Re-measured on QEMU 8.2.2 (the 2026-08-23 symptom was a cached fact; it still
-      reproduces) with printk instrumentation + a read of `hw/block/fdc.c`. The trail:
-      `FDBG exec-entered status=a0 → after-loop i=512 → turnaround spin=200000 status=30`. All 512
-      bytes transfer and RQM clears (so `data_pos == data_len`, i.e. QEMU reached the end), but
-      `NONDMA` never clears. Root cause, pinpointed in `fdc.c`:
-      - `fdctrl_write_data()` FD_PHASE_EXECUTION does `if (!fdctrl_seek_to_next_sect(...)) break;`
-        **before** the `if (data_pos==data_len) fdctrl_stop_transfer(...)`.
-      - For a clean single-sector write (the driver already sets `EOT == start sector` and clears
-        MT — steps 1–2 were a dead end, that was already done), `fdctrl_seek_to_next_sect()` hits
-        `new_sect == eot`, and because the command is **not multi-track** it takes the else branch
-        and returns `ret = 0`. So the `break` fires and `fdctrl_stop_transfer()` is **skipped** →
-        `NONDMA` stays set → MSR stuck at `0x30`. No driver poll can un-stick it.
-      - The **read** path works because it sets MT on a double-sided disk: the end-of-track seek
-        there returns 1, so `stop_transfer` runs. And the **DMA** path works because
-        `fdctrl_transfer_handler()`'s identical seek-`break` falls through to `end_transfer:`,
-        which ALWAYS calls `fdctrl_stop_transfer()`. So non-DMA single-sector write is the one
-        path that cannot complete in QEMU.
-      **So step 3 (DMA, 8237 channel 2) is the fix, and it is now known-correct against QEMU** —
-      a real ISA-DMA subsystem in the x86 floppy driver (program channel 2 addr/count/page/mode,
-      set `DOR` DMA-enable, issue the write, let `write_ok()` read the result phase).
+      **The diagnosis (kept):** the non-DMA write is a QEMU model bug, not a driver one. Measured on
+      QEMU 8.2.2 + a read of `hw/block/fdc.c`: `fdctrl_write_data()` runs
+      `if (!fdctrl_seek_to_next_sect()) break;` **before** `if (data_pos==data_len)
+      fdctrl_stop_transfer()`. For a single-sector write (`EOT == start`, MT cleared)
+      `seek_to_next_sect()` returns 0 at EOT on a non-multi-track command → `stop_transfer` skipped →
+      `NONDMA` never clears → MSR stuck `0x30`. The non-DMA READ escapes only because it sets MT (seek
+      returns 1); the DMA path escapes because `fdctrl_transfer_handler()` always falls through to
+      `end_transfer:` → `stop_transfer`. So DMA is not an optimisation, it is the only path QEMU
+      completes.
 
-      **DMA prototype 2026-10-03 — got COMPLETION working; blocked on a THIRD obstacle, not yet
-      shipped.** A working-tree prototype programmed 8237 channel 2 + set `DOR_DMA_EN`: `update-nvram`
-      returned `-1` (success) with NO hang and NO `WRITE FAILED` — so the DMA path **does** bypass the
-      QEMU non-DMA completion bug. But the data did not land (host image stayed zero). Measured cause:
-      **ISA DMA addresses only the low 16 MiB (24-bit), while OpenBIOS x86 relocates itself to the TOP
-      of RAM** — `virt_to_phys(buf)` was `0x1ffcf910` (~512 MiB, `-m 512`), far above the 8237's reach.
-      A bounce through a fixed low page (`phys_to_virt(0x100000)`) still wrote zeros: the firmware's
-      virt↔phys for *arbitrary low memory* is **not** the simple linear alias `phys_to_virt` assumes
-      (its MMU/segment map is the open question). So the remaining work is a correctly-mapped,
-      DMA-safe low-memory bounce buffer (or an `ofmem` low claim) — then the completion path already
-      proven finishes it. **Not shipped:** a write that returns success but lands zeros is a liar, so
-      the PIO path stays (fails honestly, step 4). The prototype was reverted; this is the crux for
-      the next attempt.
-      **Done means (unchanged):** `boot-file` survives a power cycle on `floppy0`, the host image
-      changed, and the no-drive control did not see it — the `persist` shape, third backing.
+      **The fix, and the misdiagnosis it corrects.** The write goes over ISA DMA (8237 channel 2).
+      ISA DMA reaches only the low 16 MiB, but OpenBIOS x86 relocates to the TOP of RAM
+      (`virt_to_phys(buf)` ≈ `0x1ffcf910` under `-m 512`), so each sector is staged in a fixed low
+      bounce page at phys `0x100000`. The 2026-10-03 prototype got DMA *completing* but wrote zeros,
+      and the finding then blamed "`phys_to_virt` is not a linear alias for arbitrary low memory (its
+      MMU/segment map is the open question)." **That was WRONG — and correcting it was the whole
+      job.** x86 here has NO paging; translation is a flat segment whose base is `virt_offset`
+      (`arch/x86/segment.c`), and a segment base wraps mod 2³², so a physical address round-trips
+      through `phys_to_virt()` **exactly**. Measured, not reasoned (CLAUDE.md "run it; do not reason
+      it"): a sector staged at `phys_to_virt(0x100000)` read back byte-for-byte from QEMU's monitor
+      (`xp /8xb 0x100000`) — an observer outside the guest — equal to the source, and `vtp(virt)`
+      round-tripped to `0x100000`. The prototype's zeros were a bug in **its 8237 programming** (the
+      page register for a 1 MiB address), not the memory map. (`0x100000` is below 16 MiB, inside one
+      64 KiB DMA page, and free in a floppy boot — the firmware runs from the top.)
+
+      **x86-only by construction:** `drivers/floppy.c` is `CONFIG_DRIVER_FLOPPY`, enabled only on x86
+      among this lab's arches; `check-patch-scope.sh` carries the matching exemption. Patch 07 keeps
+      the original blocked-PIO hunk as the record of that step; patch 69 carries the PIO→DMA change.
 - [x] **24.2 — sun4m NVRAM from inside — ✅ DONE 2026-10-02 (`patches/02-sun4m-nvram-binding.patch`).**
       sun4m now persists a `setenv` across `reset-all`, like ppc. The fix ports Apple's
       `nvram_init()`/`nvconf_init()` binding to `drivers/obio.c`'s `ob_nvram_init()` (binds the nvram
