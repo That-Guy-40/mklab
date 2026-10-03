@@ -15,6 +15,15 @@
 # HONESTLY -- bounded waits, a named message, WRITE FAILED from arch_nvram_put.
 # An earlier draft hung there forever with no output at all.
 #
+# DIAGNOSED 2026-10-03 (TODO 24.1): it is a QEMU-model bug, not ours. For a clean
+# single-sector non-DMA write (EOT == start sector, MT cleared -- which this code
+# already does), hw/block/fdc.c's fdctrl_write_data() runs
+# `if (!fdctrl_seek_to_next_sect()) break;` BEFORE the `if (data_pos==data_len)
+# fdctrl_stop_transfer()`, and seek_to_next_sect() returns 0 at EOT for a
+# non-multi-track command -- so stop_transfer is skipped and NON_DMA never clears.
+# The firmware cannot make QEMU complete it. The fix is the DMA path (8237 ch 2),
+# which QEMU finishes via fdctrl_transfer_handler()'s end_transfer; not yet built.
+#
 # Also: this is 1.44 MB, not 2.88 -- the driver hard-codes one geometry (H1440).
 #
 # Verified by: ./smoke-openbios.sh floppy   (its control re-injects the MT bug)
