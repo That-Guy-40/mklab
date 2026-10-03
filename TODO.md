@@ -929,8 +929,26 @@ requires of any other cached fact.
       caught by NEITHER the gate NOR either tool — an upstream report against both. Self-control: a
       gate-only, a tool-only and a neither row must all exist (an all-same map proves nothing); the
       copy-safety clauses are a regression guard; the catchable tool columns assert their exact messages.
-      Fixtures authored ELF32 LE here; **Spike 6 re-authors them BE** (next, per the build-order recco).
-      **Remaining:** Spike 5 (identity), 6 (big-endian axis), 4 (symbol poke).
+      Fixtures authored ELF32 LE here; Spike 6 re-authors them BE.
+      **✅ Spike 6 DONE 2026-10-03 (track `elf-be`): the big-endian axis — REVIEW §E2 BUILT.** The
+      Forth reader that until now REFUSED a big-endian ELF by name now READS one: `dsl/struct.fth`
+      gained order 2 ("the subject's declared byte order", read from a `sub-order` variable; a no-op
+      for the existing orders 0/1 via `eff-order`, so every `field:`/`le-field:`/`dev-field:` is
+      byte-for-byte unchanged — cbfs/fdt/eventlog/the LE ELF paths untouched), every ELF scalar field
+      became `sub-field:`, and `elf-at` sets `sub-order` from `e_data` at bind. Proven on ALL FOUR doors
+      (the 3 little-endian CPUs AND ppc's native BE) against the REAL subject — ppc's own
+      `openbios-qemu.elf`, a BE ELF32 — entry `0xfff08000` and 3 phdrs equal to host `readelf`, the same
+      bytes giving the same answer on every arch. The authored BE good.elf (the ppc ladder, ELF32 MSB)
+      passes and the BE `badint` is refused `PT_INTERP after a PT_LOAD` (the gABI check survives a
+      byte-swapped phdr). TWO controls: a LE ELF64 gated in the SAME boot still passes (so `sub-order`
+      follows the SUBJECT, not a global flip or the CPU); and a BE ELF32 whose `e_data` is forged to
+      LSB is refused on the misread ehsize (0x34 read LE = 0x3400 — proving the reader USES `e_data`,
+      the negative control for the whole mechanism — breaking `eff-order` hits `be-real` the same way).
+      Blast radius handled: `elf-methods`' `c-endian` control was repurposed (e_data=2 is now LEGAL, so
+      it flips+re-binds and is refused on the BE-misread ehsize, `got=4000`) and its §E2 assertion +
+      verdict rewritten; `elf-gate` (LE ELF64) + `dict-budget` re-run green. ELF64-BE stays out of scope
+      (the 8-byte lo/hi split needs a BE 64-bit path struct.fth refuses by name — no such subject exists).
+      **Remaining:** Spike 5 (identity), 4 (symbol poke).
       **Two loader findings were parked here for patches of their own** (both measured
       while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
       MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the

@@ -221,6 +221,10 @@ TRACK (default multiboot):
                               beside readelf + eu-elflint — the conformance map; the gate's
                               gate-only clauses, eu-elflint's conformance clauses, and the
                               universal blind spot (a non-NUL PT_INTERP nothing catches)
+  elf-be                      B.4 Spike 6: the BIG-ENDIAN axis — the Forth reader reads a
+                              real BE ELF32 (ppc's own openbios-qemu.elf) on all four doors,
+                              a LE ELF64 in the same boot (byte order per SUBJECT, not CPU),
+                              a BE badint refused by name, and a BE-claiming-LE header caught
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -7243,14 +7247,16 @@ FTH
     #       one class long mode cannot run. The fixtures here are authored IN THE CLASS
     #       EACH DOOR LOADS (x86: ELF32 LSB EM_386; amd64: ELF64 LSB EM_X86_64 — its
     #       elf.h now says so; ppc: ELF32 MSB EM_PPC), so the ppc row already reads a
-    #       big-endian ELF at the gate — the axis Spike 6 will widen to the fixtures.
+    #       big-endian ELF at the C gate — and the Forth reader reads one too since
+    #       Spike 6 (track elf-be) widened §E2 to it.
     #   (3) THE DECISION IS (A): THE GATE IS C, in front of the copy. (B) —
     #       dsl/elf.fth compiled into the dictionary and called from init-program —
-    #       cannot gate ppc at all: the reader declares its byte order per field and
-    #       REFUSES a big-endian ELF by name (REVIEW E2), the honest limit Spike 6
-    #       exists to lift. So the reader is the gate's AGREEMENT ORACLE on the
-    #       little-endian doors only, and that agreement is the `elf-gate` track's job
-    #       (the Forth reader at the prompt, same clause names, all four arches); THIS
+    #       USED to be unable to gate ppc because the reader baked byte order at
+    #       declaration and refused a big-endian ELF by name (REVIEW E2); B.4 Spike 6
+    #       lifted that (every scalar field is now sub-field:, read in the subject's
+    #       declared order), so the reader is the gate's AGREEMENT ORACLE on ALL four
+    #       doors now — the little-endian agreement is the `elf-gate` track's job and
+    #       the big-endian read is `elf-be`'s (same clause names, all four arches); THIS
     #       track exercises the C gate alone, and is kept lean because loading the
     #       reader source in the same boot trips the loader leak noted above ldr_sends.
     #
@@ -7837,6 +7843,167 @@ FTH
     note "UNIVERSAL BLIND SPOT — caught by NEITHER the gate NOR readelf NOR eu-elflint: ${cf_none% } (an upstream report against both tools; see fixtures/elf-gate/UPSTREAM-elflint-no-phdr-order-check.md for the shape)"
 
     pass "B.4 Spike 3 — the conformance map: ${#CF_BAD[@]} one-clause gABI fixtures, each through the firmware's C gate beside readelf and eu-elflint, labelled by who catches it. The gate EARNS ITS KEEP on [${cf_gateonly% }] — clauses BOTH hosted tools miss (INTERP-order, a truncated/overlapping/entry-less image: the tools are class- and address-map-blind). It draws an honest BOUNDARY — a copy-safety gate, not a conformance checker — and is silent on the pure-conformance clauses [${CF_GATE_SILENT[*]}], where eu-elflint catches [${cf_toolonly% }] (power-of-two alignment, the offset≡vaddr congruence) and readelf stays quiet. And it found a UNIVERSAL BLIND SPOT: [${cf_none% }] — a non-NUL-terminated PT_INTERP — which NEITHER the gate NOR readelf NOR eu-elflint flags, an upstream report ready against both tools. The map is proven non-trivial by a self-control (a gate-only, a tool-only and a neither row must all exist); the copy-safety clauses are a regression guard (each must still be REFUSED); and the catchable tool columns assert their exact messages so a tool-version drift is noticed. Spike 3 DONE (0 gate · 1 measure · 2 sweep · 3 map); the fixtures are authored ELF32 LE here and Spike 6 re-authors them BE"
+    ;;
+  elf-be)
+    # B.4 Spike 6: THE BIG-ENDIAN AXIS. Every spike before this read a LITTLE-endian
+    # ELF (ELF64 on x86/amd64/unix, and even the elf-ladder "ppc" C-gate fixtures are
+    # the C loader's own native reads). The Forth reader dsl/elf.fth declared byte
+    # order PER FIELD and, until now, baked every field little-endian — so a
+    # big-endian ELF was REFUSED by name (REVIEW §E2, the honest limit). This spike
+    # LIFTS that: struct.fth gains order 2 ("the subject's declared order", read from
+    # a sub-order variable), every ELF scalar field becomes sub-field:, and elf-at
+    # sets sub-order from e_data the instant the base is bound. "Byte order is a
+    # property of the field, not the CPU" now has its second subject.
+    #
+    # THE SUBJECT IS REAL: ppc's own openbios-qemu.elf is a big-endian ELF32, read
+    # here on a LITTLE-endian CPU (x86/amd64/unix) AND on ppc's native big-endian one
+    # — the same source, the same bytes, the same answer, which is the whole claim.
+    # The authored one-clause BE fixture (the ppc ladder's badint, ELF32 MSB) is
+    # refused by name on all four. And TWO controls that make it mean something:
+    #  (1) a LE ELF64 gated in the SAME boot still passes — so sub-order follows the
+    #      SUBJECT, not a global flip or the CPU (if it were global, reading the BE
+    #      file would have left the reader stuck in BE and the ELF64 would misread);
+    #  (2) a BE ELF32 whose e_data byte is forged to LSB(1) is REFUSED — elf-at
+    #      believes e_data, reads the big-endian ehsize bytes little-endian
+    #      (0x34 -> 0x3400) and the layout-size check catches it. That proves the
+    #      reader USES e_data rather than guessing, the negative control for the
+    #      whole mechanism (break eff-order and this same refusal hits be-real).
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the native big-endian door is the point of this spike"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed — the foreign oracle for the real subject's entry/phnum"
+    BEUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; BEUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    BEXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   BEXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    BEAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; BEADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    BEPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$BEUBIN" "$BEUDICT" "$BEXMB" "$BEXDI" "$BEAMB" "$BEADI" "$BEPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    for f in "$HERE/dsl/struct.fth" "$HERE/dsl/elf.fth" "$HERE/dsl/elf32.fth" "$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py"; do
+      [[ -f "$f" ]] || fail "elf-be: missing $f — this track stages the SHIPPED files"
+    done
+    # the readers MUST carry the Spike-6 mechanism, or this track would silently test the old behaviour
+    grep -q 'sub-field:' "$HERE/dsl/struct.fth" || fail "elf-be: dsl/struct.fth has no sub-field: — the Spike-6 order-2 mechanism is absent"
+    grep -q 'sub-field:' "$HERE/dsl/elf32.fth" || fail "elf-be: dsl/elf32.fth still bakes byte order (no sub-field:) — a BE ELF32 would be refused, not read"
+    BEWD="$WORKDIR/elf-be"; rm -rf "$BEWD"; mkdir -p "$BEWD/stage"
+    cp "$HERE/dsl/struct.fth" "$BEWD/stage/STRUCT.FTH"; cp "$HERE/dsl/elf.fth" "$BEWD/stage/ELF.FTH"; cp "$HERE/dsl/elf32.fth" "$BEWD/stage/ELF32.FTH"
+    # ── derive, don't cache: the real subject's entry/phnum come from its bytes ──
+    BEENT="$(readelf -h "$BEPELF" | awk '/Entry point address/{print $4; exit}')"; BEENT="${BEENT#0x}"
+    BEPHNUM="$(readelf -h "$BEPELF" | awk '/Number of program headers/{print $NF; exit}')"
+    [[ -n "$BEENT" && -n "$BEPHNUM" ]] || fail "elf-be: readelf -h gave no entry/phnum for the BE ELF32 subject $BEPELF"
+    file -b "$BEPELF" | grep -q '^ELF 32-bit MSB' || fail "elf-be: $BEPELF is not an ELF32 MSB — the real big-endian subject this spike needs ($(file -b "$BEPELF"))"
+    # the authored BE fixtures (the ppc ladder = ELF32 MSB) + a clean LE ELF64 (the builder's good.elf)
+    python3 "$HERE/fixtures/elf-gate/build-elf-gate-fixtures.py" "$BEWD/fx" --ladder ppc 0x1000000 "0x$BEENT" > "$BEWD/build.txt" \
+      || fail "elf-be: the fixture builder failed: $(tail -1 "$BEWD/build.txt")"
+    file -b "$BEWD/fx/ladder-ppc/good.elf" | grep -q '^ELF 32-bit MSB' || fail "elf-be: the ladder good.elf is not ELF32 MSB — the builder did not author a big-endian fixture"
+    file -b "$BEWD/fx/good.elf"            | grep -q '^ELF 64-bit LSB' || fail "elf-be: the builder's good.elf is not ELF64 LSB — the per-subject LE control needs one"
+    # stage each subject padded +0x200 (a bare ELF can't be `load`ed — the firmware's own loader grabs it)
+    be_pad() { python3 -c "import sys; open(sys.argv[2],'wb').write(b'\0'*512+open(sys.argv[1],'rb').read())" "$1" "$2"; }
+    be_pad "$BEWD/fx/ladder-ppc/good.elf"   "$BEWD/stage/BEGOOD.BIN"
+    be_pad "$BEWD/fx/ladder-ppc/badint.elf" "$BEWD/stage/BEINT.BIN"
+    be_pad "$BEPELF"                        "$BEWD/stage/BEREAL.BIN"
+    be_pad "$BEWD/fx/good.elf"              "$BEWD/stage/LE64.BIN"
+    # BADDATA: the BE good fixture with its e_data byte (offset 5) forged to LSB(1) — the "uses e_data" control
+    python3 -c "b=bytearray(open('$BEWD/fx/ladder-ppc/good.elf','rb').read()); b[5]=1; open('$BEWD/stage/BADDATA.BIN','wb').write(b'\0'*512+bytes(b))"
+    python3 -c "b=open('$BEWD/stage/BADDATA.BIN','rb').read(); import sys; sys.exit(0 if b[0x204]==1 and b[0x205]==1 else 1)" \
+      || fail "elf-be: BADDATA.BIN is not an ELF32 claiming LSB (class/data at +0x204 wrong) — the forged-endian control is miswired"
+    cat > "$BEWD/stage/BE.FTH" <<'FTH'
+hex
+\ ?elf dispatches on e_class: the ELF32 subjects go to ?elf32, the ELF64 to ?elf64;
+\ elf-at (in the gate) sets sub-order from e_data, so the reader follows the subject.
+: begate ( -- )  load-base 200 + elf-at ?elf load-size 200 - ?phdrs ;
+: be-good ." be-good:" begate ." BE-GOOD-END" cr ;
+: be-int  ." be-int:"  begate ." BE-INT-END"  cr ;
+: be-real ." be-real:" begate ." be-r-entry=" @elf e32-entry t@ u. ." be-r-phnum=" elf32-phnum u. cr ." BE-REAL-END" cr ;
+: be-le   ." be-le:"   begate ." BE-LE-END" cr ;
+: be-bad  ." be-bad:"  begate ." BE-BAD-END" cr ;
+." BE-READY" cr
+FTH
+    genisoimage -quiet -o "$BEWD/be.iso" -V ELFBE -r -J "$BEWD/stage" 2>/dev/null || fail "elf-be: genisoimage failed"
+
+    # ── the same grading for every door ─────────────────────────────────────
+    be_grade() {  # be_grade <arch> <log>
+      local a="$1" g; g="$(tr -d '\r' < "$2")"
+      grep -qF 'BE-READY' <<<"$g" || fail "elf-be ($a): BE.FTH never finished loading — see $2"
+      # the real big-endian ELF32, read correctly: entry and phnum equal the host's readelf
+      grep -qF 'BE-REAL-END' <<<"$g" || fail "elf-be ($a): the gate REJECTED ppc's own openbios-qemu.elf — a real big-endian ELF32 — $(grep -aoE 'CONSTRAINT:[^|]*' <<<"$g" | tail -1) — see $2"
+      local ent phn
+      ent="$(grep -aoE 'be-r-entry=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      phn="$(grep -aoE 'be-r-phnum=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$ent" == "$BEENT" ]] || fail "elf-be ($a): the BE ELF32 entry read $ent where the host's readelf says $BEENT — the big-endian scalar read is wrong — see $2"
+      [[ "$phn" == "$BEPHNUM" ]] || fail "elf-be ($a): the BE ELF32 phnum read $phn where the host reads $BEPHNUM — see $2"
+      # the authored BE good fixture passes the gate
+      grep -qF 'BE-GOOD-END' <<<"$g" || fail "elf-be ($a): the authored big-endian good.elf (ELF32 MSB) was REJECTED — $(grep -aoE 'CONSTRAINT:[^|]*' <<<"$g" | tail -1) — see $2"
+      # CONTROL 1 — per-subject: a LE ELF64 in the SAME boot still passes (sub-order followed the subject, not a global/CPU flip)
+      grep -qF 'BE-LE-END' <<<"$g" || fail "elf-be ($a): a little-endian ELF64 gated AFTER the big-endian one was rejected — sub-order did not flip back, so byte order is behaving as a global/CPU property, not a per-subject one — see $2"
+      # the authored BE badint is refused BY NAME, and the word after the gate must NOT run
+      grep -qF 'PT_INTERP after a PT_LOAD' <<<"$g" || fail "elf-be ($a): the big-endian badint (ELF32 MSB, PHDR LOAD INTERP LOAD) was not refused by name — the ordering check does not survive a byte-swapped phdr — see $2"
+      grep -qF 'BE-INT-END' <<<"$g" && fail "elf-be ($a): the word after the gate RAN on the BE badint — printing a refusal is not refusing — see $2"
+      # CONTROL 2 — uses e_data: a BE ELF32 forged to claim LSB is refused on the misread ehsize
+      grep -qF 'e32-ehsize disagrees' <<<"$g" || fail "elf-be ($a): a big-endian ELF32 whose e_data was forged to LSB(1) was NOT refused — elf-at is not taking byte order from e_data (it would read the big-endian ehsize bytes little-endian, 0x34 -> 0x3400, and the layout check would catch it) — see $2"
+      grep -qF 'BE-BAD-END' <<<"$g" && fail "elf-be ($a): the forged-endian ELF32 reached the marker after the gate — the e_data control did not bite — see $2"
+      # exactly two refusals total: the BE badint and the forged-endian header; a good subject refused, or one firing twice, changes this
+      local n; n="$(grep -ac 'CONSTRAINT:' <<<"$g")"
+      [[ "$n" -eq 2 ]] || fail "elf-be ($a): $n CONSTRAINT failures where exactly 2 are expected (the BE badint and the forged-endian header) — a readable subject was refused, or a refusal fired twice — see $2"
+      grep -qaE 'Unexpected Exception|general protection|invalid opcode|Exception vector|T-ERR' <<<"$g" && fail "elf-be ($a): the firmware took a CPU exception or a type-error abort (a BE 8-byte path?) — see $2"
+      note "$a: ppc's own openbios-qemu.elf (BE ELF32) read correctly — entry $ent, $phn phdrs (== host readelf); the authored BE good.elf passes and the BE badint is refused 'PT_INTERP after a PT_LOAD'; a LE ELF64 in the same boot still passes (sub-order per subject); a BE header forged to LSB is refused on the misread ehsize (uses e_data)"
+    }
+
+    # ── unix: -f iso, the default (patch-70 mmap'd) load area holds the 690 KB subject ──
+    ( cd "$BEWD" && printf '%s\n' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\ELF.FTH'    'load-base load-size evaluate' \
+      'load hd:\ELF32.FTH'  'load-base load-size evaluate' \
+      'load hd:\BE.FTH'     'load-base load-size evaluate' \
+      'load hd:\BEGOOD.BIN'  'be-good' \
+      'load hd:\BEREAL.BIN'  'be-real' \
+      'load hd:\LE64.BIN'    'be-le' \
+      'load hd:\BEINT.BIN'   'be-int' \
+      'load hd:\BADDATA.BIN' 'be-bad' 'bye' \
+      | "$BEUBIN" -f "$BEWD/be.iso" "$BEUDICT" > "$BEWD/unix.log" 2>&1 )
+    be_grade unix "$BEWD/unix.log"
+
+    # ── x86 and amd64: LITTLE-endian CPUs reading a BIG-endian ELF, over the serial prompt ──
+    for BEA in x86 amd64; do
+      if [[ $BEA == x86 ]]; then BEMB="$BEXMB"; BEDI="$BEXDI"; else BEMB="$BEAMB"; BEDI="$BEADI"; fi
+      BESER="$WORKDIR/elfbe-$BEA.sock"; BELOG="$BEWD/$BEA.log"; rm -f "$BESER" "$BELOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$BEMB" -initrd "$BEDI" -nic none -cdrom "$BEWD/be.iso" \
+        -display none -serial "unix:$BESER,server=on" -no-reboot >/dev/null 2>&1 &
+      BEQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$BESER" "$BELOG" --timeout 300 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ELF.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ELF32.FTH\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\BE.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "BE-READY" \
+        --send 'load /ide@1/cdrom@0:\\BEGOOD.BIN\r'  --expect "0 > " --send 'be-good\r' --expect "BE-GOOD-END" \
+        --send 'load /ide@1/cdrom@0:\\BEREAL.BIN\r'  --expect "0 > " --send 'be-real\r' --expect "BE-REAL-END" \
+        --send 'load /ide@1/cdrom@0:\\LE64.BIN\r'    --expect "0 > " --send 'be-le\r'   --expect "BE-LE-END" \
+        --send 'load /ide@1/cdrom@0:\\BEINT.BIN\r'   --expect "0 > " --send 'be-int\r'  --expect "> " \
+        --send 'load /ide@1/cdrom@0:\\BADDATA.BIN\r' --expect "0 > " --send 'be-bad\r'  --expect "> "
+      BERC=$?
+      kill "$BEQ" 2>/dev/null   # by PID, never by pattern
+      [[ $BERC -eq 0 ]] || fail "elf-be ($BEA): the prompt driver did not complete (rc=$BERC) — see $BELOG"
+      be_grade "$BEA" "$BELOG"
+    done
+
+    # ── ppc: the NATIVE big-endian door, pty console ────────────────────────
+    BEPLOG="$BEWD/ppc.log"; rm -f "$BEPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$BEPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ELF.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ELF32.FTH;1\r'  --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\BE.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "BE-READY" \
+      --send 'load cd:\\BEGOOD.BIN;1\r'  --expect "0 > " --send 'be-good\r' --expect "BE-GOOD-END" \
+      --send 'load cd:\\BEREAL.BIN;1\r'  --expect "0 > " --send 'be-real\r' --expect "BE-REAL-END" \
+      --send 'load cd:\\LE64.BIN;1\r'    --expect "0 > " --send 'be-le\r'   --expect "BE-LE-END" \
+      --send 'load cd:\\BEINT.BIN;1\r'   --expect "0 > " --send 'be-int\r'  --expect "> " \
+      --send 'load cd:\\BADDATA.BIN;1\r' --expect "0 > " --send 'be-bad\r'  --expect "> " \
+      -- qemu-system-ppc -bios "$BEPELF" -nographic -vga none -cdrom "$BEWD/be.iso" >/dev/null 2>&1
+    BEPRC=$?
+    [[ $BEPRC -eq 0 ]] || fail "elf-be (ppc): the prompt driver did not complete (rc=$BEPRC) — see $BEPLOG"
+    be_grade ppc "$BEPLOG"
+
+    pass "B.4 Spike 6 — the big-endian axis: REVIEW §E2 BUILT. struct.fth gained order 2 (the subject's declared byte order, read from sub-order), every ELF scalar field is sub-field:, and elf-at sets sub-order from e_data at bind — so the Forth reader that until now REFUSED a big-endian ELF by name reads one correctly. Proven on all four doors — the three little-endian CPUs (unix, x86, amd64) AND ppc's native big-endian one — against the REAL subject, ppc's own openbios-qemu.elf (a big-endian ELF32): entry 0x$BEENT and $BEPHNUM program headers, both equal to the host's readelf, the same bytes giving the same answer on every arch. The authored big-endian good.elf (ELF32 MSB) passes the gate and the big-endian badint is refused 'PT_INTERP after a PT_LOAD' — the gABI ordering check survives a byte-swapped phdr. TWO controls make it mean something: a little-endian ELF64 gated in the SAME boot still passes, so sub-order follows the SUBJECT and not a global flip or the CPU; and a big-endian ELF32 whose e_data is forged to LSB is refused on the misread ehsize (0x34 read little-endian is 0x3400), proving the reader takes byte order from e_data rather than guessing — the negative control for the whole mechanism. Byte order is a property of the field, not the CPU, and now it has its second subject. Spike 6 DONE (0 gate · 1 measure · 2 sweep · 3 map · 6 big-endian); Spike 4 (symbol poke) and 5 (identity) remain"
     ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
@@ -8797,7 +8964,12 @@ hex
 : fresh ( -- )  load-base cpy 40 move  cpy elf-at ;
 : c-class  ." c1:" fresh 0  @elf e_class  t! ?elf64 ." C1-END" cr ;
 : c-ehsize ." c2:" fresh 99 @elf e_ehsize t! ?elf64 ." C2-END" cr ;
-: c-endian ." c3:" fresh 2  @elf e_data   t! ?elf64 ." C3-END" cr ;
+\ c-endian: §E2 is now BUILT (Spike 6), so e_data=2 is a LEGAL byte order, not a
+\ refusal. This control proves the order is TAKEN FROM e_data: set MSB, re-bind
+\ (elf-at reads e_data -> sub-order=BE), and the SAME little-endian ehsize bytes
+\ now read big-endian (0x40 -> 0x4000) and are refused as "disagrees with the
+\ layout". The refusal is on the misread, which is the honoured-byte-order proof.
+: c-endian ." c3:" fresh 2  @elf e_data   t! cpy elf-at ?elf64 ." C3-END" cr ;
 : c-magic  ." c4:" fresh 0  @elf e_magic  t! ?elf64 ." C4-END" cr ;
 : em-good
   load-base elf-at ?elf64 load-size ?phdrs
@@ -9044,11 +9216,15 @@ P3
         || fail "§E1 on $A: $ECOUNT constraint failures fired where 6 are expected — 4 injected corruptions plus 2 cross-class refusals — see $ELOG"
       grep -qF 'want=2  got=0' <<<"$EL" \
         || fail "§E1 on $A: the e_class failure did not report both values (want=2 got=0). A constraint that says only 'failed' sends the reader back to the prompt to find out which — see $ELOG"
-      # The big-endian row is the E2 LIMIT asserted as a refusal: this layer
-      # declares byte order per field, so a BE ELF64 would be misread. It says
-      # so instead.
-      grep -qF 'big-endian ELF' <<<"$EL" \
-        || fail "§E2 on $A: e_data=2 (big-endian) was not refused by name — this layer fixes byte order at declaration time and would MISREAD such a file, so passing it silently is the exact defect §E2 records — see $ELOG"
+      # §E2 is now BUILT (Spike 6): byte order is TAKEN FROM e_data, not fixed at
+      # declaration. c-endian flips e_data to MSB(2) and re-binds, so the same
+      # little-endian ehsize bytes read big-endian — 0x40 becomes 0x4000 — and are
+      # refused as "disagrees". The 'got=4000' is the honoured-byte-order proof, and
+      # it is DISTINCT from c-ehsize's 'got=99', so this grep names c-endian alone.
+      # The four-arch BE READ of a real big-endian ELF32 is the elf-be track; here
+      # the point is only that the ELF64 reader takes order from the file too.
+      grep -qF 'got=4000' <<<"$EL" \
+        || fail "§E2 on $A: flipping e_data to MSB(2) and re-binding did not make e_ehsize read big-endian (no 'got=4000' — c-ehsize's is 'got=99') — byte order is not being taken from e_data, so the Spike-6 sub-field: path is not wired here — see $ELOG"
 
       # ── THE ELF32 HALF ──────────────────────────────────────────
       # Same questions, the other class, through the SAME generic words —
@@ -9105,7 +9281,7 @@ P3
       note "$A/ELF32: class=$E3C ehsize=$E3_EHSIZE (vs 40 for ELF64), $E3_PHNUM phdrs with p32-flags read from the SEVENTH member, $E3_SHNUM section names, load-base=$(ev em32-loadbase), entry $(ev em32-entry) → file offset $(ev em32-entryoff); ?elf64 and ?elf32 each refuse the other class, and a cleared hook names the missing file"
       note "$A: ?elf64+?phdrs accept the real image; load-base=$(ev em-loadbase), entry $(ev em-entry) → file offset $(ev em-entryoff), unmapped → -1; $ENAMES section names match the host; elf-new authored a header the same ?elf64 accepts; 4/4 corruptions refused by name and none returned"
     done
-    pass "REVIEW §E1 and §E4, built and measured on BOTH arches. The format moved into dsl/elf.fth on top of dsl/struct.fth — poke's own split (elf-64.pk is not libpoke), §E6's lesson applied to ourselves — and the engine no longer mentions ELF. §E1: ?elf64 carries poke-elf's constraints as predicates that ABORT with what they wanted and what they got, including its implication (e_osabi == NONE => e_abiversion == 0) which is just 'a 0= b or'; ?phdrs refuses a PT_LOAD running past EOF. §E4: elf-load-base is poke's get_load_base (min p_vaddr over PT_LOAD = $ET_LOADBASE), vaddr>off is vaddr_to_file_offset (entry $ET_ENTRY lives at file offset $ET_ENTRYOFF, and an address in no segment returns -1 rather than a plausible number), and sh-name reads the section-name STRING TABLE — all 0x$ET_SHNUM names match the host, in order. The controls are what make those mean anything: four corruptions injected into a real header — class, ehsize, byte order, magic — each aborts BY NAME with both values and NONE reaches the marker after it, because printing a refusal is not refusing. And the loop closes: elf-new authors a header field-by-field with t! and the SAME ?elf64 that rejects the corrupted image accepts it. The big-endian row is §E2's limit stated as a refusal rather than hidden: this layer declares byte order per field, so it says so instead of misreading the file. AND BOTH CLASSES: dsl/elf32.fth adds ELF32 and the generic words dispatch on e_class, measured against the firmware's OWN 32-bit payload — ehsize 0x34 against ELF64's 0x40, all three program headers including p32-flags read from the SEVENTH member where ELF64 puts it SECOND (a port that narrowed the widths and kept the order would print plausible permissions out of p_offset), all ten section names, load base and vaddr-to-file-offset. Its controls are the ones that make the dispatch mean anything: ?elf64 refuses the ELF32 and ?elf32 refuses the ELF64, each by name, and clearing the hook makes an ELF32 report WHICH FILE IS MISSING instead of silently going to the 64-bit half. The ELF32 subject is embedded at offset 0x200 of a padded file because `load` of a bare ELF32 never returns — the firmware's own loader recognises it and takes over"
+    pass "REVIEW §E1 and §E4, built and measured on BOTH arches. The format moved into dsl/elf.fth on top of dsl/struct.fth — poke's own split (elf-64.pk is not libpoke), §E6's lesson applied to ourselves — and the engine no longer mentions ELF. §E1: ?elf64 carries poke-elf's constraints as predicates that ABORT with what they wanted and what they got, including its implication (e_osabi == NONE => e_abiversion == 0) which is just 'a 0= b or'; ?phdrs refuses a PT_LOAD running past EOF. §E4: elf-load-base is poke's get_load_base (min p_vaddr over PT_LOAD = $ET_LOADBASE), vaddr>off is vaddr_to_file_offset (entry $ET_ENTRY lives at file offset $ET_ENTRYOFF, and an address in no segment returns -1 rather than a plausible number), and sh-name reads the section-name STRING TABLE — all 0x$ET_SHNUM names match the host, in order. The controls are what make those mean anything: four corruptions injected into a real header — class, ehsize, byte order, magic — each aborts BY NAME with both values and NONE reaches the marker after it, because printing a refusal is not refusing. And the loop closes: elf-new authors a header field-by-field with t! and the SAME ?elf64 that rejects the corrupted image accepts it. The big-endian row is §E2 BUILT (B.4 Spike 6): byte order is taken from e_data at bind time (every scalar field is sub-field:, read in the subject's declared order), so flipping e_data to MSB and re-binding makes the same ehsize bytes read big-endian (0x40 -> 0x4000) and be refused on the misread — the reader honours the file's own byte order rather than being fixed at declaration; the four-arch READ of a real big-endian ELF32 is the elf-be track. AND BOTH CLASSES: dsl/elf32.fth adds ELF32 and the generic words dispatch on e_class, measured against the firmware's OWN 32-bit payload — ehsize 0x34 against ELF64's 0x40, all three program headers including p32-flags read from the SEVENTH member where ELF64 puts it SECOND (a port that narrowed the widths and kept the order would print plausible permissions out of p_offset), all ten section names, load base and vaddr-to-file-offset. Its controls are the ones that make the dispatch mean anything: ?elf64 refuses the ELF32 and ?elf32 refuses the ELF64, each by name, and clearing the hook makes an ELF32 report WHICH FILE IS MISSING instead of silently going to the 64-bit half. The ELF32 subject is embedded at offset 0x200 of a padded file because `load` of a bare ELF32 never returns — the firmware's own loader recognises it and takes over"
     ;;
   rmw-fields)
     # mudge, "FORTH Hacking on Sparc Hardware", Phrack 53:9 (1998) --
@@ -9747,5 +9923,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|unix|launcher]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|elf-be|unix|launcher]" >&2; exit 1 ;;
 esac
