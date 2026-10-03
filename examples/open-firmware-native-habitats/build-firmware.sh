@@ -67,17 +67,20 @@ if [ ! -d "$WORKDIR/fcode-utils/.git" ]; then
     fi
 fi
 
-echo "==> applying patches/01-implement-patch.patch (idempotent)"
-if git -C "$SRC" apply --check "$HERE/patches/01-implement-patch.patch" 2>/dev/null; then
-    git -C "$SRC" apply "$HERE/patches/01-implement-patch.patch"
-    echo "    applied"
-elif git -C "$SRC" apply --reverse --check "$HERE/patches/01-implement-patch.patch" 2>/dev/null; then
-    echo "    already applied"
-else
-    echo "ERROR: the patch neither applies nor reverses — the tree has diverged." >&2
-    echo "       Compare $SRC/forth/debugging/firmware.fs against the patch." >&2
-    exit 1
-fi
+echo "==> applying patches/*.patch (idempotent, in order)"
+for p in "$HERE"/patches/*.patch; do
+    name="$(basename "$p")"
+    if git -C "$SRC" apply --check "$p" 2>/dev/null; then
+        git -C "$SRC" apply "$p"
+        echo "    applied $name"
+    elif git -C "$SRC" apply --reverse --check "$p" 2>/dev/null; then
+        echo "    already applied $name"
+    else
+        echo "ERROR: $name neither applies nor reverses — the tree has diverged." >&2
+        echo "       Compare $SRC against $p." >&2
+        exit 1
+    fi
+done
 
 echo "==> building the build-box image ($IMG)"
 podman build -q -t openbios-habitat-build -f "$HERE/Containerfile" "$WORKDIR" >/dev/null

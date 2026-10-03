@@ -6379,7 +6379,22 @@ small, both are named, neither is blocked on a question nobody has answered.*
          the track's assertion: the store stays **read-only on floppy, by name**.
       **Done means:** `boot-file` survives a power cycle on `floppy0`, the host image
       changed, and the no-drive control did not see it — the `persist` shape, third backing.
-- [ ] **24.2 — sun4m NVRAM from inside** ([habitats DELIVERY.md D2](examples/open-firmware-native-habitats/DELIVERY.md#d2--nvram-written-from-inside-ppc-only),
+- [x] **24.2 — sun4m NVRAM from inside — ✅ DONE 2026-10-02 (`patches/02-sun4m-nvram-binding.patch`).**
+      sun4m now persists a `setenv` across `reset-all`, like ppc. The fix ports Apple's
+      `nvram_init()`/`nvconf_init()` binding to `drivers/obio.c`'s `ob_nvram_init()` (binds the nvram
+      package + a `nvram` alias + `/chosen`), AND — the part the attempt below got wrong — first breaks
+      the checksum of QEMU's **fresh 32-byte empty SYSTEM partition** so `nvconf_init()` zaps to a
+      proper `DEF_SYSTEM_SIZE` layout the env fits in (the 16-byte config was overflowing and trapping
+      0x21 on the method's return). Threshold is exactly 32 bytes, so a `-prom-env`-populated or
+      already-written partition is left untouched — `-prom-env nvramrc` still works (the `firmware`
+      track's autotrace still passes) and a `setenv` persists. `smoke-habitat.sh persist sparc32`
+      PASSes on the patched build with the **stock blob as the control that still loses it**;
+      DELIVERY.md D2 is now ✅ on both. The Forth side (`nvram-store-configs` et al.) was already present
+      on sparc32 — "only the binding is absent" was wrong; it was the binding *plus* QEMU's undersized
+      partition. (`build-firmware.sh` now applies `patches/*.patch` in order.) The investigation that
+      got here is kept below for the record.
+
+      - [ ] (superseded) original item — ([habitats DELIVERY.md D2](examples/open-firmware-native-habitats/DELIVERY.md#d2--nvram-written-from-inside-both-tracks),
       track `smoke-habitat.sh persist sparc32`). **State:** `drivers/obio.c`'s
       `ob_nvram_init()` builds `/obio/eeprom` (reg, address, model `mk48t08`) and
       `finish-device`s it **without binding the nvram package methods** — `?m` says

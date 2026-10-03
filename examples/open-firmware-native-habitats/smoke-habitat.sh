@@ -155,42 +155,52 @@ smoke_media() {
     pass "media ($TRACK): the vocabulary loads off a disc the firmware mounts itself"
 }
 
-# ── does a setenv SURVIVE a reset? The two habitats disagree ─────────────────
+# ── does a setenv SURVIVE a reset? ───────────────────────────────────────────
 # The x86 sibling learned this the hard way in another guise: "it stuck" across
-# a printenv in the SAME session is not evidence of non-volatility. Both arms
-# below therefore reset the machine and look again.
+# a printenv in the SAME session is not evidence of non-volatility — so every arm
+# below resets the machine and looks again. The firmware that HAS the nvram
+# package bound persists; on sun4m that binding ships in the PATCHED build
+# ($PERSIST_FW, patches/02), and the STOCK sun4m blob is kept as the control that
+# still loses it. On ppc the stock Apple blob already persists ($PERSIST_FW empty).
 smoke_persist() {
     local script='device-end : q ." PERSISTED-ACROSS-RESET" cr ; q'
-    if [ "$CAN_PERSIST" = yes ]; then
-        boot_and_drive persist -- \
-            --expect "0 >" \
-            --send "setenv nvramrc $script\r" --expect "0 >" \
-            --send 'setenv use-nvramrc? true\r' --expect "0 >" \
-            --send '" update-nvram" " nvram" open-dev $call-method\r' --expect "0 >" \
-            --send 'reset-all\r' --expect "PERSISTED-ACROSS-RESET" \
-            --expect "0 >" \
-            || fail "the driver did not complete — see $LOG"
-        note "setenv + the /nvram node's update-nvram method + reset-all"
-        pass "persist ($TRACK): a config variable written from the ok prompt survives a machine reset and runs at power-on"
+    [ "$CAN_PERSIST" = yes ] || { pass "persist ($TRACK): not applicable"; }
+
+    # POSITIVE: the firmware with the binding persists a setenv across reset-all.
+    local pfw=()
+    if [ -n "${PERSIST_FW:-}" ]; then
+        [ -f "$PERSIST_FW" ] || skip "persist ($TRACK): no $PERSIST_FW — run ./build-firmware.sh $TRACK (the nvram binding ships in the patched firmware; needs podman + ~5 min)"
+        pfw=(-bios "$PERSIST_FW")
     fi
-    # The negative arm. This is deterministic, not a coin-flip: sun4m simply has
-    # no update-nvram to call (drivers/obio.c builds a bare eeprom node), so the
-    # write can only ever live in the in-memory /options property.
-    boot_and_drive persist -- \
+    boot_and_drive persist "${pfw[@]}" -- \
         --expect "0 >" \
         --send "setenv nvramrc $script\r" --expect "0 >" \
         --send 'setenv use-nvramrc? true\r' --expect "0 >" \
-        --send 'reset-all\r' --expect "Welcome to OpenBIOS" \
+        --send '" update-nvram" " nvram" open-dev $call-method\r' --expect "0 >" \
+        --send 'reset-all\r' --expect "PERSISTED-ACROSS-RESET" \
         --expect "0 >" \
-        --send 'printenv use-nvramrc?\r' --expect "0 >" \
-        || fail "the driver did not complete — see $LOG"
-    clean "$LOG" | awk '/reset-all/{f=1} f' | grep -q 'PERSISTED-ACROSS-RESET' \
-        && fail "sun4m NVRAM now PERSISTS a setenv — upstream has probably bound the nvram package to /obio/eeprom. That is good news, but DELIVERY.md and lib-habitat.sh's CAN_PERSIST=no are now wrong (see $LOG)"
-    note "the setenv did NOT survive the reset, as the missing binding predicts"
-    clean "$LOG" | awk '/printenv/{f=1} f' | grep -q 'use-nvramrc?  *"false"' \
-        || fail "expected use-nvramrc? back at its default \"false\" after the reset — see $LOG"
-    note "use-nvramrc? is back to its default: the write never reached the chip"
-    pass "persist ($TRACK): setenv is session-only here — no update-nvram method exists to flush it (the honest negative)"
+        || fail "the setenv did not survive reset-all — see $LOG"
+    note "setenv + the nvram node's update-nvram method + reset-all$([ -n "${PERSIST_FW:-}" ] && echo ' (patched firmware)')"
+
+    # CONTROL (only where persistence comes from OUR patch): the STOCK blob must
+    # still LOSE the setenv, or the binding is not what fixed it (not QEMU keeping
+    # a file-backed chip). Deterministic: stock obio.c has no update-nvram method.
+    if [ -n "${PERSIST_FW:-}" ]; then
+        boot_and_drive persist-stock -- \
+            --expect "0 >" \
+            --send "setenv nvramrc $script\r" --expect "0 >" \
+            --send 'setenv use-nvramrc? true\r' --expect "0 >" \
+            --send 'reset-all\r' --expect "Welcome to OpenBIOS" \
+            --expect "0 >" \
+            --send 'printenv use-nvramrc?\r' --expect "0 >" \
+            || fail "the stock-blob control did not complete — see $LOG"
+        clean "$LOG" | awk '/reset-all/{f=1} f' | grep -q 'PERSISTED-ACROSS-RESET' \
+            && fail "CONTROL did not bite: the STOCK sun4m blob ALSO persisted the setenv — then the binding patch is not what fixed it (QEMU or a file-backed chip is), and the claim is wrong (see $LOG)"
+        clean "$LOG" | awk '/printenv/{f=1} f' | grep -q 'use-nvramrc?  *"false"' \
+            || fail "control: expected use-nvramrc? back at its default \"false\" on the stock blob — see $LOG"
+        note "control: the STOCK blob still loses it (use-nvramrc? back to \"false\") — the binding is what persists it"
+    fi
+    pass "persist ($TRACK): a config variable written from the ok prompt survives a machine reset and runs at power-on$([ -n "${PERSIST_FW:-}" ] && echo ' (via the ported nvram binding; the stock blob still loses it)')"
 }
 
 # ── why nobody types a vocabulary in ─────────────────────────────────────────
@@ -344,8 +354,10 @@ smoke_firmware() {
     # 1. It is OUR firmware, not the blob QEMU ships. The build date is the
     #    discriminator the sibling rival lab uses for the same claim.
     local stock_date ours_date
-    stock_date=$(strings "$STOCK_BLOB" 2>/dev/null | grep -oE '[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{4}' | head -1)
-    ours_date=$(clean "$LOG" | grep -oE 'built on [A-Z][a-z]{2} [ 0-9][0-9] [0-9]{4}' | head -1 | sed 's/built on //')
+    # day is 1- or 2-digit with flexible spacing: "Oct 3 2026" and "Oct 13 2026"
+    # both match (a single-digit-day build used to silently fail this check).
+    stock_date=$(strings "$STOCK_BLOB" 2>/dev/null | grep -oE '[A-Z][a-z]{2} +[0-9]{1,2} [0-9]{4}' | head -1)
+    ours_date=$(clean "$LOG" | grep -oE 'built on [A-Z][a-z]{2} +[0-9]{1,2} [0-9]{4}' | head -1 | sed 's/built on //')
     [ -n "$ours_date" ] || fail "no build date in the banner — see $LOG"
     [ "$ours_date" != "$stock_date" ] \
         || fail "the running firmware's build date ($ours_date) matches the stock blob's — QEMU is booting $STOCK_BLOB, not $FW_ARTIFACT (see $LOG)"
