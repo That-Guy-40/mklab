@@ -178,6 +178,7 @@ declare -A EXEMPT=(
   [01-x86-revival.patch]="predates the rule (2026-07); the x86 revival, whose scope was the whole point and is described at length in its header"
   [05-x86-nvram-p1-ide-backing.patch]="predates the rule; drivers/ide.c reached for the NVRAM backing spikes"
   [07-x86-floppy-backing.patch]="predates the rule; drivers/floppy.c, same series"
+  [69-x86-floppy-write-via-dma.patch]="drivers/floppy.c is CONFIG_DRIVER_FLOPPY — among this lab's arches only x86 enables it (amd64/ppc build it out), the change is ISA-8237-specific, and the write path is reached only from arch/x86; declaring amd64/ppc would be a false claim, not a stronger one"
   [08-amd64-spike1-trampoline.patch]="predates the rule; Spike 1 touched Makefile.target and libgcc to get amd64 linking at all"
   [12-amd64-spike3-boots-linux.patch]="predates the rule; forth/admin/nvram.fs gained the CONFIG_AMD64 block"
 )

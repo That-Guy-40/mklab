@@ -1,0 +1,263 @@
+Subject: [PATCH 69/69] drivers/floppy.c: complete the x86 write over ISA DMA -- the sector reaches the host image and survives a power cycle; the non-DMA write could not complete against QEMU
+
+Arch-tested: x86
+
+THE WRITE IS NOW REAL. Patch 07 left the x86 floppy backing HALF done: the read
+path worked, the write transferred all 512 bytes and then hung at MSR 0x30
+(BUSY|NON_DMA) until a bounded poll gave up, failing honestly with WRITE FAILED.
+This patch makes the write land. `setenv boot-file X; update-nvram` on floppy0
+now returns success, the bytes appear in the host image, and a fresh boot on
+that image reads X back -- the "persist" shape, on a third backing.
+
+WHY THE NON-DMA WRITE COULD NOT COMPLETE (diagnosed 2026-10-03, TODO 24.1). It
+is a QEMU model bug, not a driver one. For a single-sector non-DMA write
+(EOT == start sector, MT cleared -- which patch 07 already did), hw/block/fdc.c's
+fdctrl_write_data() runs `if (!fdctrl_seek_to_next_sect()) break;` BEFORE the
+`if (data_pos == data_len) fdctrl_stop_transfer()`. seek_to_next_sect() returns
+0 at end-of-track for a non-multi-track command, so the break fires,
+stop_transfer is skipped, NON_DMA never clears, and the controller never turns
+the bus around. The non-DMA READ path escapes only because it sets MT on a
+double-sided disk, so its end-of-track seek returns 1. The DMA path has no such
+hazard: fdctrl_transfer_handler() falls through to end_transfer:, which ALWAYS
+calls fdctrl_stop_transfer. So DMA is not an optimisation here, it is the only
+path QEMU completes.
+
+THE BOUNCE, AND THE MISDIAGNOSIS IT CORRECTS. ISA DMA addresses only the low
+16 MiB (a 24-bit address), but OpenBIOS x86 relocates itself to the TOP of RAM:
+virt_to_phys() of a heap buffer measured 0x1ffcf910 (~512 MiB under -m 512), far
+out of the 8237's reach. A 2026-10-03 prototype got DMA *completing* but wrote
+zeros, and the finding recorded then blamed "the firmware's virt<->phys for
+arbitrary low memory is not the simple linear alias phys_to_virt assumes (its
+MMU/segment map is the open question)." THAT WAS WRONG, and the correction is the
+heart of this patch. x86 here has NO paging; translation is a flat segment whose
+base is virt_offset (arch/x86/segment.c), and a segment base wraps mod 2^32, so
+a physical address round-trips through phys_to_virt() EXACTLY. Measured, not
+reasoned: a sector staged at phys_to_virt(0x100000) read back byte-for-byte from
+QEMU's monitor (`xp /8xb 0x100000`) -- an observer OUTSIDE the guest -- equal to
+the source. The prototype's zeros were a bug in its 8237 programming (the page
+register for a 1 MiB address), not in the memory map. So the fix stages each
+sector in a fixed low page (FLOPPY_DMA_BOUNCE_PHYS = 0x100000): below 16 MiB,
+inside one 64 KiB DMA page, and free in a floppy boot (the firmware runs from
+the top; nothing is loaded at 1 MiB).
+
+VERIFIED, with a control that bites. `./smoke-openbios.sh floppy`: the positive
+arm writes a nonce via update-nvram and finds it in the HOST image; a fresh boot
+on that image prints the nonce back from printenv (survives the power cycle);
+the no-write control leaves the image blank. Two observers that the firmware
+cannot fake -- the host file and QEMU's monitor.
+
+X86 ONLY, BY CONSTRUCTION. drivers/floppy.c is CONFIG_DRIVER_FLOPPY; among this
+lab's arches only x86 enables it (amd64 and ppc build it out), and the code here
+is ISA-8237-specific (raw outb to the DMA ports, a <16 MiB bounce). The write
+path is reached only from arch/x86/openbios.c's nvram backing. tools/
+check-patch-scope.sh carries the matching exemption with this reason.
+
+Verified by: ./smoke-openbios.sh floppy
+
+--- a/drivers/floppy.c
++++ b/drivers/floppy.c
+@@ -5,6 +5,7 @@
+ #include "libc/vsprintf.h"
+ 
+ #include "drivers/drivers.h"
++#include "asm/io.h"             /* phys_to_virt/virt_to_phys for the DMA bounce */
+ 
+ #include "timer.h"
+ 
+@@ -49,6 +50,33 @@
+ #define DOR_MOT_EN2	0x40
+ #define DOR_MOT_EN3	0x80
+ 
++/* ISA 8237 DMA controller 1 (the 8-bit channels), ports for CHANNEL 2 -- the
++ * channel the PC floppy controller has been wired to since the 5150. Writing a
++ * sector is a memory->device ("read") transfer: the 8237 reads the bounce
++ * buffer and streams it to the FDC. See floppy_write_sector for why DMA at all
++ * (QEMU cannot complete a single-sector NON-DMA write -- TODO 24.1). */
++#define DMA1_CH2_ADDR	0x04		/* channel 2 base/current address */
++#define DMA1_CH2_COUNT	0x05		/* channel 2 base/current count   */
++#define DMA1_CH2_PAGE	0x81		/* channel 2 page register (A16-23) */
++#define DMA1_MASK	0x0a		/* single-channel mask register   */
++#define DMA1_MODE	0x0b		/* mode register                  */
++#define DMA1_CLEAR_FF	0x0c		/* clear the byte-pointer flip-flop */
++#define DMA_MODE_SINGLE_READ_CH2  0x4a	/* single | read-from-memory | ch 2 */
++#define DMA_MASK_SET_CH2	  0x06	/* set   mask bit for channel 2   */
++#define DMA_MASK_CLEAR_CH2	  0x02	/* clear mask bit for channel 2   */
++
++/* A fixed low-memory bounce page for the floppy write DMA. ISA DMA addresses
++ * only the low 16 MiB (a 24-bit address), but OpenBIOS x86 relocates itself to
++ * the TOP of RAM, so virt_to_phys(a stack/heap buffer) is far out of the
++ * 8237's reach. This page is in free conventional-extended RAM (the firmware
++ * runs from the top; nothing is loaded at 1 MiB in a floppy boot) and, being
++ * below 16 MiB and inside a single 64 KiB DMA page, is a legal 8237 target.
++ * phys_to_virt() reaches it EXACTLY: x86 translation here is a flat segment
++ * whose base is virt_offset (arch/x86/segment.c), with no paging, so the
++ * segment base wraps mod 2^32 and a physical address round-trips -- measured
++ * with QEMU's monitor reading this page from outside the guest (TODO 24.1). */
++#define FLOPPY_DMA_BOUNCE_PHYS	0x100000UL
++
+ /* Bits of main status register */
+ #define STATUS_BUSYMASK	0x0F		/* drive busy mask */
+ #define STATUS_BUSY	0x10		/* FDC busy */
+@@ -1005,24 +1033,67 @@
+ 	return 1;
+ }
+ 
+-/* KNOWN-BLOCKED against QEMU's S82078B model, measured 2026-08-23.
++/* Program 8237 DMA controller 1, channel 2, for a memory->device transfer of
++ * `len` bytes starting at physical `phys`. `phys` must be below 16 MiB and must
++ * not cross a 64 KiB boundary (the 8237's address counter is 16 bits + an
++ * independent page latch that does NOT increment on carry). The channel is
++ * MASKED first so the controller never acts on a half-written descriptor, and
++ * UNMASKED last so the FDC's DRQ is serviced the instant the write starts. */
++static void floppy_dma_setup_write(unsigned long phys, unsigned len)
++{
++	unsigned count = len - 1;	/* the 8237 transfers count+1 bytes */
++
++	outb(DMA_MASK_SET_CH2, DMA1_MASK);		/* mask channel 2        */
++	outb(0, DMA1_CLEAR_FF);				/* reset byte-pointer FF */
++	outb(DMA_MODE_SINGLE_READ_CH2, DMA1_MODE);	/* single, mem->device   */
++	outb(0, DMA1_CLEAR_FF);
++	outb(phys & 0xff, DMA1_CH2_ADDR);		/* address A0-A7         */
++	outb((phys >> 8) & 0xff, DMA1_CH2_ADDR);	/* address A8-A15        */
++	outb((phys >> 16) & 0xff, DMA1_CH2_PAGE);	/* page    A16-A23       */
++	outb(0, DMA1_CLEAR_FF);
++	outb(count & 0xff, DMA1_CH2_COUNT);		/* count low             */
++	outb((count >> 8) & 0xff, DMA1_CH2_COUNT);	/* count high            */
++	outb(DMA_MASK_CLEAR_CH2, DMA1_MASK);		/* unmask channel 2      */
++}
++
++/* Write one 512-byte sector over ISA DMA (8237 channel 2), the way a real PC
++ * floppy driver does -- and the way this one MUST, because the CPU-fed non-DMA
++ * write cannot complete against QEMU.
+  *
+- * All 512 bytes transfer ("sent 512 of 512"), and then the controller stays at
+- * status 0x30 (BUSY|NON_DMA) through 200,000 polls: it never turns the bus
+- * around, so result() reads no status bytes and reports -1. The bytes go out
+- * and the completion never comes back. The READ path on the same controller
+- * works (see the ST0_HA fix in read_ok), so this is specific to the non-DMA
+- * write turnaround, not to the driver's command plumbing in general.
++ * WHY NOT NON-DMA. Measured 2026-08-23, diagnosed 2026-10-03 (TODO 24.1): for a
++ * single-sector non-DMA write QEMU's hw/block/fdc.c runs
++ * `if (!fdctrl_seek_to_next_sect()) break;` BEFORE `if (data_pos==data_len)
++ * fdctrl_stop_transfer()`. With EOT==start and MT clear, seek_to_next returns 0
++ * at end-of-track on a non-multi-track command, so stop_transfer is skipped,
++ * NON_DMA never clears, and MSR sticks at 0x30 forever. The non-DMA READ path
++ * escapes this only because it sets MT (double-sided), so its end-of-track seek
++ * returns 1. The DMA path has no such hazard: QEMU's fdctrl_transfer_handler
++ * falls through to end_transfer:, which ALWAYS calls fdctrl_stop_transfer, so
++ * the controller turns the bus around and the result phase arrives.
+  *
+- * It fails HONESTLY -- bounded waits, a named message, and arch_nvram_put
+- * reporting WRITE FAILED -- which is the point. An earlier draft hung here
+- * forever with no output at all.
++ * THE BOUNCE. ISA DMA addresses only the low 16 MiB, but OpenBIOS x86 relocates
++ * itself to the top of RAM -- virt_to_phys(a heap buffer) is ~512 MiB, out of
++ * the 8237's reach. So the sector is staged in a fixed low page
++ * (FLOPPY_DMA_BOUNCE_PHYS), which phys_to_virt() reaches exactly (flat segment,
++ * no paging -- verified from outside the guest with QEMU's monitor, TODO 24.1).
+  */
+ static int floppy_write_sector(const char *src, unsigned sector,
+                                unsigned head, unsigned track)
+ {
+-	int i, status;
++	volatile unsigned char *bounce;
+ 	unsigned char cmd[9];
++	int status, spin;
++	unsigned i;
++
++	/* Stage the sector in the low-memory DMA bounce page. */
++	bounce = (volatile unsigned char *) phys_to_virt(FLOPPY_DMA_BOUNCE_PHYS);
++	for (i = 0; i < 512; i++)
++		bounce[i] = (unsigned char) src[i];
++
++	/* Arm the 8237 for this sector, then enable DMA on the controller (OR the
++	 * bit in -- set_drive leaves the drive/motor bits we must keep). */
++	floppy_dma_setup_write(FLOPPY_DMA_BOUNCE_PHYS, 512);
++	set_dor(0xff, DOR_DMA_EN);
+ 
+ 	cmd[0] = FD_WRITE & ~0x80;      /* MFM, single sector: MT cleared */
+ 	cmd[1] = (head << 2) | FD_DRIVE;
+@@ -1034,67 +1105,30 @@
+ 	cmd[7] = DISK_H1440_GAP;
+ 	cmd[8] = 0xff;
+ 
+-	printk_debug("floppy_write_sector c=%u h=%u r=%u\n", track, head, sector);
++	printk_debug("floppy_write_sector(DMA) c=%u h=%u r=%u\n",
++	             track, head, sector);
+ 
+ 	if (output_command(cmd, 9) < 0)
+ 		return -1;
+ 
+-	/* Execution phase begins when READY|NON_DMA is set.
+-	 *
+-	 * BOUNDED, unlike the read path's copy of this loop. An unbounded wait
+-	 * on a hardware status bit is a hang, not a wait: if the controller
+-	 * never enters the execution phase the firmware spins forever with no
+-	 * output, which is precisely what the first draft of this function did
+-	 * -- the store's first sector landed and the machine then sat mute
+-	 * until the harness killed it. A wait that cannot fail cannot be
+-	 * debugged. */
+-	{
+-		int spin;
+-		for (spin = 0; spin < 1000000; spin++) {
+-			status = fdc_state.fdc_inb(FD_STATUS);
+-			status &= STATUS_READY | STATUS_NON_DMA;
+-			if (status == (STATUS_READY | STATUS_NON_DMA))
+-				break;
+-		}
+-		if (status != (STATUS_READY | STATUS_NON_DMA)) {
+-			printk("floppy: write never entered execution phase"
+-			       " (status=%02x)\n", status);
+-			return -1;
+-		}
+-	}
+-
+-	for (i = 0; i < 512; i++) {
+-		if ((status = wait_til_ready()) < 0)
++	/* In DMA mode the CPU never touches FD_DATA: the 8237 streams the sector
++	 * and the controller then enters the result phase. Wait (BOUNDED -- a wait
++	 * that cannot fail is a hang) for that phase: RQM set WITH DIO set, i.e. the
++	 * controller is ready to hand bytes BACK. During the transfer DIO is clear,
++	 * so this does not fire early and let result() misread an empty phase. */
++	for (spin = 0; spin < 1000000; spin++) {
++		status = fdc_state.fdc_inb(FD_STATUS);
++		if ((status & (STATUS_READY | STATUS_DIR)) ==
++		    (STATUS_READY | STATUS_DIR))
+ 			break;
+-		status &= STATUS_READY | STATUS_DIR | STATUS_NON_DMA;
+-		/* DIR must be CLEAR here: cpu -> fdc */
+-		if (status != (STATUS_READY | STATUS_NON_DMA))
+-			break;
+-		fdc_state.fdc_outb(src[i], FD_DATA);
+ 	}
+-
+-	/* Wait for the execution phase to end -- WITHOUT touching FD_DATA.
+-	 *
+-	 * The read path drains FD_DATA here, because a read leaves residue in
+-	 * the FIFO past the end of the sector. A WRITE does not, and reading
+-	 * the data register while the controller is turning around EATS THE
+-	 * RESULT BYTES: result() then returns -1 and the caller sees a failure
+-	 * that its own cleanup manufactured. Copying the read's loop verbatim
+-	 * is exactly how that happened here (write result nr=-1, with garbage
+-	 * where ST0/ST1/ST2 should be). */
+-	{
+-		int spin;
+-		for (spin = 0; spin < 200000; spin++) {
+-			status = fdc_state.fdc_inb(FD_STATUS);
+-			if (!(status & STATUS_NON_DMA))
+-				break;
+-		}
++	if ((status & (STATUS_READY | STATUS_DIR)) !=
++	    (STATUS_READY | STATUS_DIR)) {
++		printk("floppy: DMA write never reached the result phase"
++		       " (status=%02x)\n", status);
++		return -1;
+ 	}
+ 
+-	printk_debug("floppy_write_sector: sent %d of 512\n", i);
+-
+-	if (i != 512)
+-		return -1;
+ 	if (!write_ok(head))
+ 		return -1;
+ 	return 512;

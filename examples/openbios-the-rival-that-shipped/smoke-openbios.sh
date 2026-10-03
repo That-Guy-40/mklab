@@ -656,27 +656,31 @@ case "$FLAVOR" in
     pass "P1+P2: boot-file=$NONCE survived a power cycle on $WANT_BACKEND (host image changed, arrived valid, and the no-drive control did NOT see it)"
     ;;
   floppy)
-    # The floppy backing, which is HALF done, and this track asserts exactly the
-    # half that works rather than pretending either more or less.
+    # The floppy backing, a THIRD NVRAM backing, now read AND write -- and this
+    # track proves the write by the one thing the firmware cannot fake: the bytes
+    # on the host image, and their survival of a power cycle.
     #
-    # WHAT IT PROVES: the FDC read path functions on x86 -- which it did not
-    # before, because read_ok() compared ST0's head field to the REQUESTED head
-    # while floppy_read_sectors() sets the MT bit, so every multi-track read was
-    # judged a failure after transferring perfectly. That bug sat behind
-    # CONFIG_DRIVER_FLOPPY=false for x86. If the store comes back reporting
-    # floppy0 as its backing, the read worked.
+    # READ (patch 07): fixed an upstream read_ok() bug -- it compared ST0's head
+    # field to the REQUESTED head while floppy_read_sectors() sets the MT bit, so
+    # every multi-track read was judged a failure after transferring perfectly.
+    # That sat behind CONFIG_DRIVER_FLOPPY=false for x86. "backed by floppy0"
+    # proves the read.
     #
-    # WHAT IT DOES NOT PROVE: writing. All 512 bytes transfer and then QEMU's FDC
-    # stays at MSR 0x30 (BUSY|NON_DMA, RQM clear). DIAGNOSED 2026-10-03 (TODO 24.1):
-    # it is a QEMU-model bug, not a driver one -- for a clean single-sector non-DMA
-    # write, hw/block/fdc.c's fdctrl_write_data() does `if (!seek_to_next_sect) break`
-    # BEFORE calling fdctrl_stop_transfer(), and seek_to_next_sect returns 0 at EOT
-    # for a non-multi-track command, so stop_transfer is skipped and NON_DMA never
-    # clears. The firmware cannot make QEMU finish it; the fix is the DMA path (which
-    # QEMU completes via fdctrl_transfer_handler's end_transfer). That gap is
-    # deliberately NOT a permanently-red test here; it is recorded in the doc and the
-    # driver. This track goes green on the read either way, and also asserts the write
-    # gap is still the gap it was -- which is what makes it notice if someone fixes it.
+    # WRITE (patch 69): the non-DMA write could NOT complete against QEMU -- all
+    # 512 bytes transferred and the FDC stuck at MSR 0x30 (BUSY|NON_DMA). DIAGNOSED
+    # 2026-10-03 (TODO 24.1) as a QEMU model bug: fdctrl_write_data() does
+    # `if (!seek_to_next_sect) break` BEFORE fdctrl_stop_transfer(), and
+    # seek_to_next_sect returns 0 at EOT for a non-multi-track command, so NON_DMA
+    # never clears. The DMA path has no such hazard (fdctrl_transfer_handler always
+    # stop_transfers), so the write now goes over ISA DMA (8237 ch 2) through a
+    # <16 MiB bounce page -- ISA DMA cannot reach the firmware at the top of RAM.
+    #
+    # THREE boots, with a control that bites:
+    #   1. write a nonce via update-nvram -> it must appear in the HOST image.
+    #   2. CONTROL: a boot that does NOT update-nvram -> the image stays blank, so
+    #      arm 1 is the write landing, not the boot writing.
+    #   3. a fresh boot on the WRITTEN image -> printenv reads the nonce back, i.e.
+    #      it survived the power cycle. The "persist" shape, third backing.
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
     MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
     [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
@@ -684,10 +688,13 @@ case "$FLAVOR" in
       "$WORKDIR/openbios/config/examples/x86_config.xml" \
       || skip "CONFIG_DRIVER_FLOPPY is off for x86 in the clone — nothing to measure"
 
+    FNONCE="FLOPPY-DMA-$$"
+
+    # --- boot 1: write the nonce over DMA ---
     FD="$WORKDIR/nvram-floppy.img"
     rm -f "$FD"; truncate -s 1474560 "$FD"     # exactly 1.44 MB: the H1440 geometry
     rm -f "$SOCK" "$LOG"
-    note "booting with a blank 1.44 MB floppy at fd0 → $LOG"
+    note "boot 1/3: write boot-file=$FNONCE via update-nvram (DMA) → $LOG"
     qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
       -initrd "$XDICT" \
       -drive "if=floppy,index=0,format=raw,file=$FD" \
@@ -695,23 +702,56 @@ case "$FLAVOR" in
     QPID=$!
     python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 120 \
       --expect "0 > " \
-      --send "setenv boot-file FLOPPY-PROBE\r" --expect "0 > " \
+      --send "setenv boot-file $FNONCE\r" --expect "0 > " \
       --send "\" /nvram\" \" update-nvram\" execute-device-method .\r" --expect "0 > "
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
-    [[ $RC -eq 0 ]] || fail "no prompt conversation on the floppy track (rc=$RC) — see $LOG"
 
+    [[ $RC -eq 0 ]] || fail "no prompt conversation on the floppy track (rc=$RC) — see $LOG"
     grep -q "nvram: backed by floppy0" "$LOG" \
       || fail "REGRESSION: the floppy read path no longer selects floppy0 as a backing — the ST0_HA/MT fix in read_ok() has come undone, or the media was not read — see $LOG"
     note "read path OK: the store was read off fd0 and floppy0 was selected"
-
-    if grep -q "WRITE FAILED to floppy0" "$LOG"; then
-      pass "floppy: the FDC READ path works on x86 (backing selected off a 1.44 MB image) and the write is still the known-blocked gap, failing honestly rather than hanging"
+    if grep -qE "nvram: WRITE FAILED|DMA write never reached the result phase" "$LOG"; then
+      fail "REGRESSION: the floppy DMA write failed or did not complete — $(grep -oE 'nvram: WRITE FAILED[^\\n]*|DMA write never reached the result phase[^\\n]*' "$LOG" | head -1) — the 8237/bounce path in drivers/floppy.c (patch 69) has regressed — see $LOG"
     fi
-    # The gap closed. That is good news and must not slip by unnoticed.
-    grep -q "nvram: WRITE FAILED" "$LOG" \
-      || fail "the floppy WRITE no longer reports failure — if the known-blocked turnaround is fixed, this track and the KNOWN-BLOCKED note in drivers/floppy.c both need updating, and persist-floppy should become a real track — see $LOG"
-    fail "the floppy write failed against a backing that is not floppy0 — this track is not measuring what it thinks — see $LOG"
+    grep -aq "$FNONCE" "$FD" \
+      || fail "the floppy write reported success but boot-file=$FNONCE is NOT in the host image — a write that does not land (the exact lie patch 69's ground-truth ruled out) — see $LOG"
+    note "write landed: '$FNONCE' is in the host image, an observer outside the firmware"
+
+    # --- boot 2 (CONTROL): no update-nvram, the image must stay blank ---
+    NEG="$WORKDIR/nvram-floppy-control.img"
+    rm -f "$NEG"; truncate -s 1474560 "$NEG"
+    rm -f "$SOCK" "$LOG.control"
+    note "boot 2/3: CONTROL — setenv but NO update-nvram"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
+      -initrd "$XDICT" \
+      -drive "if=floppy,index=0,format=raw,file=$NEG" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG.control" --timeout 120 \
+      --expect "0 > " \
+      --send "setenv boot-file $FNONCE\r" --expect "0 > "
+    kill "$QPID" 2>/dev/null
+    grep -aq "$FNONCE" "$NEG" \
+      && fail "CONTROL FAILED: boot-file=$FNONCE reached the host image WITHOUT update-nvram — the positive arm would prove nothing, because the bytes land without the write"
+    note "control bites: without update-nvram the image carries no nonce"
+
+    # --- boot 3 (PERSIST): a fresh boot on the WRITTEN image reads it back ---
+    rm -f "$SOCK" "$LOG.readback"
+    note "boot 3/3: fresh boot on the written image — printenv boot-file"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
+      -initrd "$XDICT" \
+      -drive "if=floppy,index=0,format=raw,file=$FD" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG.readback" --timeout 120 \
+      --expect "0 > " \
+      --send "printenv boot-file\r" --expect "0 > "
+    kill "$QPID" 2>/dev/null
+    grep -q "boot-file.*\"$FNONCE\"" "$LOG.readback" \
+      || fail "PERSIST FAILED: a fresh boot on the written image does not read boot-file=$FNONCE back — the write did not survive the power cycle — see $LOG.readback"
+
+    pass "floppy: the x86 FDC READ selects floppy0, and the WRITE now LANDS over ISA DMA (patch 69) — boot-file=$FNONCE written by update-nvram appears in the host image, is ABSENT in the no-write control, and is read back by printenv on a fresh boot (it survives the power cycle). The third NVRAM backing persists."
     ;;
   persist-os|persist-os-flash)
     # P2's OTHER half: not just a power cycle, but a POWER CYCLE WITH AN OS IN
