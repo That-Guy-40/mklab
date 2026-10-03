@@ -917,9 +917,21 @@ requires of any other cached fact.
       copied the whole message into a 512 B buffer and refused >447 B, so it could hash a test vector but
       never a real image; NIST vectors (event-replay, 4 arches) are the regression control and still pass.
       `dsl/eventlog.fth` gained `>evlog-entry-dig`/`evlog-author-image` (author an entry from a REAL
-      32-byte digest, where `>evlog-entry` only filled a placeholder byte). **Remaining:**
-      Spike 5 (identity), 3 (per-clause conformance map), 6 (big-endian axis),
-      4 (symbol poke). **Two loader findings were parked here for patches of their own** (both measured
+      32-byte digest, where `>evlog-entry` only filled a placeholder byte).
+      **✅ Spike 3 DONE 2026-10-03 (track `elf-conform`): the conformance map.** One malformed fixture
+      per gABI clause (the `elf-ladder` builder grew `badphent`/`badphoff`/`badalign`/`badcong`/
+      `badinterpnul`), each through the C gate beside `readelf` and `eu-elflint`, labelled by who
+      catches it. Findings: the gate EARNS ITS KEEP on `badint`/`badtrunc`/`badovl`/`badentry` — clauses
+      BOTH hosted tools miss (they are class- and address-map-blind); an honest BOUNDARY — a copy-safety
+      gate, not a conformance checker — so it is silent on the pure-conformance clauses where
+      `eu-elflint` catches `badalign`/`badcong` (power-of-two alignment, offset≡vaddr congruence) and
+      `readelf` stays quiet; and a UNIVERSAL BLIND SPOT, `badinterpnul` (a non-NUL-terminated PT_INTERP),
+      caught by NEITHER the gate NOR either tool — an upstream report against both. Self-control: a
+      gate-only, a tool-only and a neither row must all exist (an all-same map proves nothing); the
+      copy-safety clauses are a regression guard; the catchable tool columns assert their exact messages.
+      Fixtures authored ELF32 LE here; **Spike 6 re-authors them BE** (next, per the build-order recco).
+      **Remaining:** Spike 5 (identity), 6 (big-endian axis), 4 (symbol poke).
+      **Two loader findings were parked here for patches of their own** (both measured
       while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
       MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the
       interposed partition package, a buffer SIZED TO THE FILE, ~1.3 MiB of distinct loads exhausts the
