@@ -73,6 +73,7 @@ tracks=(
     test-smoke-dict-budget.sh
     test-smoke-marker.sh
     test-smoke-elf-ladder.sh
+    test-smoke-elf-sweep.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh

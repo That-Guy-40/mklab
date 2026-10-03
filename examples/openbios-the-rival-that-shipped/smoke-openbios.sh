@@ -209,6 +209,10 @@ TRACK (default multiboot):
                               it, state-valid honest after every load; good.elf LOADED then
                               RUN AND RETURNED on x86/amd64/ppc; the stale-record and
                               wrong-class controls; readelf/elflint per clause (Spike 3's map)
+  elf-sweep                   B.4 Spike 2: sweep the REAL ELFs the lab ships through
+                              the gate (firmware ELFs, /bin/true PIE, hello clients)
+                              beside readelf + eu-elflint; any UNEXPLAINED disagreement
+                              (not overlap/wrong-class) is a finding and fails
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -7368,6 +7372,204 @@ FTH
     [[ $LDR_HX == 1 || $LDR_HP == 1 ]] || LDR_HELLO_SAYS="the sibling lab's hello clients are not built here ($LDR_CLI), so the RAN rung is occupied by good.elf alone — UNPROBED with a real client, not failed"
     pass "B.4 Spike 0, DECIDED and built: the ELF gate lives in C (patch 68, libopenbios/elf_load.c), in front of the segment copy that 'load' performs — the irreversible step, which the plan had placed at 'go'. On unix, x86, amd64 and ppc every one-clause fixture is REFUSED by name before any byte moves (the gABI's three ordering clauses, a PT_LOAD past the end of the file, p_filesz > p_memsz, an entry in no PT_LOAD, a segment on the firmware's own entry page), the other class's good ELF is refused by the field that differs, and each door's OWN firmware ELF — whose load hung x86 and ppc before this — is refused as the overlap it is with the prompt intact; state-valid is 0 after every refusal and after an unrecognised load (the stale record that would have re-entered the previous image is fixed), so 'go' says so. good.elf, authored in each door's own class, is LOADED (state-valid -1) and then RUN AND RETURNED: 'go' enters it, x86 and amd64 write 'R' to COM1 and ret onto the return address the firmware planted, ppc blr's, and the prompt comes back; $LDR_HELLO_SAYS. amd64 now loads its own class (ELF64/EM_X86_64; it had accepted i386 code and faulted). The Forth reader agrees with the gate on the 4 clauses it has on the little-endian doors, passes the 3 it lacks, and REFUSES the big-endian subject by name on ppc — its declared limit, which is why the gate is C and why Spike 6 exists. BOOTED is not reached through this gate by anything on disk and the verdict says so. Conformance map, measured this run: $LDR_MAPSAYS"
     ;;
+  elf-sweep)
+    # B.4 Spike 2: sweep the REAL ELFs the lab ships THROUGH the C gate (patch 68),
+    # one row per file — the FIRMWARE's verdict beside readelf's and eu-elflint's.
+    # Spike 0 proved the gate on authored one-clause fixtures; this aims it at
+    # files nobody shaped for it and asks whether the three observers AGREE.
+    #
+    # ANY DISAGREEMENT IS A FINDING. Two kinds are EXPECTED and explained — a file
+    # the firmware refuses that the tools accept because the firmware knows
+    # something a static ELF checker cannot: (a) the OVERLAP — each door's own
+    # firmware ELF loads at the very address the running firmware occupies, which
+    # is why `load`-ing it hung x86/ppc before patch 68; no tool can know the
+    # firmware's live address map; (b) the WRONG CLASS — the gate loads only its
+    # own ELF class/data/machine, so the other door's good ELF is refused by the
+    # field that differs, which readelf/elflint (class-agnostic) never flag. An
+    # UNEXPLAINED refusal — the firmware rejecting a file BOTH tools pass, for a
+    # reason that is neither overlap nor wrong-class nor a gABI clause a tool also
+    # names — is a real finding and FAILS this track. So is the opposite: the
+    # firmware LOADING a file a tool rejects.
+    #
+    # THE HEADLINE REAL FILE is /bin/true: a distro ELF64 **PIE** (ET_DYN,
+    # PT_INTERP, dynamically linked) — nothing like the static ET_EXEC payloads
+    # the gate was built for. Whatever the gate does with it is MEASURED here, not
+    # predicted. The loader leaks are fixed (patches 71, 72), so files load in any
+    # order without the elf-ladder big-subject-last workaround.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the big-endian firmware ELF is a sweep subject"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed — it is a foreign oracle this sweep grades against"
+    SWP_XMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   SWP_XDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    SWP_AMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; SWP_ADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    SWP_XFW="$WORKDIR/openbios/obj-x86/openbios-builtin.elf"
+    SWP_AFW="$WORKDIR/openbios/obj-amd64/openbios-builtin.elf"
+    SWP_PFW="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$SWP_XMB" "$SWP_XDI" "$SWP_AMB" "$SWP_ADI" "$SWP_XFW" "$SWP_AFW" "$SWP_PFW"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all, then amd64 (its embedded image is dropped when unix builds after it)"
+    done
+    SWP_REAL="$(readlink -f /bin/true 2>/dev/null || true)"
+    [[ -n "$SWP_REAL" && -f "$SWP_REAL" ]] && file -b "$SWP_REAL" | grep -q '^ELF 64-bit LSB' || SWP_REAL=""
+    SWP_CLI="${OPENBIOS_CLIENTS_WORKDIR:-$HOME/openbios-clients-lab}"
+    SWP_HX=""; [[ -f "$SWP_CLI/hello-x86" ]] && file -b "$SWP_CLI/hello-x86" | grep -q '^ELF 32-bit LSB' && SWP_HX="$SWP_CLI/hello-x86"
+    SWP_HP=""; [[ -f "$SWP_CLI/hello-ppc" ]] && file -b "$SWP_CLI/hello-ppc" | grep -q '^ELF 32-bit MSB' && SWP_HP="$SWP_CLI/hello-ppc"
+    SWP_ELFLINT=0; command -v eu-elflint >/dev/null && SWP_ELFLINT=1
+    SWP_WD="$WORKDIR/elf-sweep"; rm -rf "$SWP_WD"; mkdir -p "$SWP_WD"
+    SWP_FIND=""      # unexplained disagreements (FAIL), by name
+    SWP_DIVERGE=""   # eu-elflint stricter than the gate+readelf on a LOADED file (NOTE, not fail)
+
+    # swp_oracle <hostfile> -> "<readelf-or-clean>|<elflint-or-clean-or-UNPROBED>"
+    swp_oracle() {
+      local r e
+      r="$(readelf -lW "$1" 2>&1 >/dev/null | grep -E '^readelf: (Error|Warning)' | sed 's/^readelf: //' | head -1)"; [[ -z "$r" ]] && r=clean
+      if [[ $SWP_ELFLINT == 1 ]]; then e="$(eu-elflint "$1" 2>&1 | grep -vE '^No errors$' | head -1)"; [[ -z "$e" ]] && e=clean; else e=UNPROBED; fi
+      printf '%s|%s' "$r" "$e"
+    }
+    # swp_fw <log> <NAME> -> the firmware's verdict token for that file
+    swp_fw() {
+      local log="$1" name="$2" blk sv
+      blk="$(awk -v s="<<$name>>" -v e="[$name]sv=" 'index($0,s){f=1} f{print} index($0,e){exit}' "$log" | tr -d '\r')"
+      sv="$(grep -aoE "\[$name\]sv= *-?[0-9a-f]+" "$log" | head -1 | grep -oE -- '-?[0-9a-f]+$')"
+      if   grep -qF 'overlaps the firmware image'        <<<"$blk"; then echo "REFUSED:overlap"
+      elif grep -qF "an ELF, but not this firmware's"    <<<"$blk"; then echo "REFUSED:not-ours[$(grep -oE "not this firmware's: .*" <<<"$blk" | head -1 | sed "s/not this firmware's: //; s/ *$//")]"
+      elif grep -qE 'elf-gate: REFUSED --'               <<<"$blk"; then echo "REFUSED:clause[$(grep -oE 'elf-gate: REFUSED -- [A-Za-z_]+[^(]*' <<<"$blk" | head -1 | sed 's/elf-gate: REFUSED -- //; s/ *$//')]"
+      elif grep -qF 'no loader recognised'               <<<"$blk"; then echo "NOT-ELF"
+      elif [[ "$sv" == -1 ]]; then echo "LOADED"
+      else echo "UNKNOWN(sv=${sv:-?})"; fi
+    }
+    # swp_classify <door> <NAME> <fw-token> <hostfile>  -> notes the row, flags a finding
+    swp_classify() {
+      local door="$1" name="$2" fw="$3" hf="$4" orc rel eln
+      orc="$(swp_oracle "$hf")"; rel="${orc%%|*}"; eln="${orc##*|}"
+      note "$door · $name: firmware=[$fw]  readelf=[$rel]  eu-elflint=[$eln]"
+      case "$fw" in
+        REFUSED:overlap|REFUSED:not-ours*)
+          # EXPECTED disagreement: the tools are class-, type- and address-map-blind, so
+          # they pass; the firmware legitimately refuses what overlaps its live image or
+          # is not its own ELF class/data/machine/type (a PIE's e_type=ET_DYN included).
+          : ;;
+        LOADED)
+          # readelf is the STRUCTURAL oracle: if it reports an error on a file the gate
+          # loaded, that is a finding. eu-elflint is stricter than any loader by design
+          # (W^X section flags, unknown vendor notes); its complaints on a file the gate
+          # and readelf both accept are a tool-coverage DIVERGENCE, noted, not a firmware bug.
+          [[ "$rel" == clean ]] \
+            || SWP_FIND+="$door/$name(firmware LOADED a file readelf reports broken: readelf=[$rel]) "
+          [[ "$eln" == clean || "$eln" == UNPROBED ]] \
+            || SWP_DIVERGE+="$door/$name{$eln} " ;;
+        REFUSED:clause*)
+          # the firmware named a gABI clause on a REAL file; a finding unless readelf names it too.
+          [[ "$rel" != clean ]] \
+            || SWP_FIND+="$door/$name(firmware refused $fw but readelf passes it) " ;;
+        *)
+          SWP_FIND+="$door/$name(firmware verdict $fw — neither a clean load, nor overlap/not-ours, nor a named clause) " ;;
+      esac
+    }
+
+    # ── stage one CD per door, drive the loads, capture per-file verdict ────────
+    # Each file: a <<NAME>> marker, the load, then state-valid — so the gate's
+    # message for that load is the block between the two, attributable by name.
+    swp_run_le() {  # swp_run_le <door> <mb> <dict>  (x86/amd64 over serial)
+      local door="$1" mb="$2" di="$3"
+      local d="$SWP_WD/stage-$door" iso="$SWP_WD/$door.iso"
+      local ser="$WORKDIR/swp-$door.sock" log="$SWP_WD/$door.log" q
+      rm -rf "$d"; mkdir -p "$d"
+      # subjects per door (staged name -> host file); every door gets its own
+      # firmware ELF (overlap) and the OTHER class's firmware ELF (wrong class).
+      cp "$SWP_XFW" "$d/XFW.ELF"; cp "$SWP_AFW" "$d/AFW.ELF"
+      local -a names
+      if [[ $door == x86 ]]; then
+        names=(XFW.ELF AFW.ELF); [[ -n "$SWP_HX" ]] && { cp "$SWP_HX" "$d/HELLO.ELF"; names+=(HELLO.ELF); }
+      else
+        names=(AFW.ELF XFW.ELF); [[ -n "$SWP_REAL" ]] && { cp "$SWP_REAL" "$d/REALPIE.ELF"; names+=(REALPIE.ELF); }
+      fi
+      genisoimage -quiet -o "$iso" -V SWEEP -r -J "$d" 2>/dev/null || fail "elf-sweep: genisoimage failed for $door"
+      rm -f "$ser" "$log"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$mb" -initrd "$di" -nic none -cdrom "$iso" \
+        -display none -serial "unix:$ser,server=on" -no-reboot >/dev/null 2>&1 &
+      q=$!
+      local -a steps=(--expect "0 > ") n
+      for n in "${names[@]}"; do
+        steps+=( --send ".\" <<$n>>\" cr"$'\r' --expect "> "
+                 --send "load /ide@1/cdrom@0:\\$n"$'\r' --expect "> "
+                 --send ".\" [$n]sv=\" state-valid @ . cr"$'\r' --expect "> " )
+      done
+      steps+=( --send '." SWEEP-ALIVE" cr'$'\r' --expect "SWEEP-ALIVE" )
+      python3 "$REPO/tools/drive-serial-repl.py" "$ser" "$log" --timeout 300 "${steps[@]}"
+      local rc=$?
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      [[ $rc -eq 0 ]] || fail "elf-sweep ($door): the prompt driver did not complete (rc=$rc) — a load that hung, or the prompt never came back — see $log"
+      grep -qF 'SWEEP-ALIVE' "$log" || fail "elf-sweep ($door): the prompt did not survive the sweep — see $log"
+      SWP_LAST_LOG="$log"; SWP_LAST_NAMES=("${names[@]}")
+    }
+
+    declare -A SWP_HOST=( [XFW.ELF]="$SWP_XFW" [AFW.ELF]="$SWP_AFW" [HELLO.ELF]="$SWP_HX" [REALPIE.ELF]="$SWP_REAL" )
+
+    # ── self-control: the finding gate must BITE (an all-PASS run that checks
+    # nothing looks identical otherwise). Feed swp_classify a SYNTHETIC unexplained
+    # refusal over a readelf-clean file; SWP_FIND must gain an entry. Then reset. ──
+    swp_classify SELFTEST SYNTH.ELF "REFUSED:clause[synthetic]" "$SWP_XMB"
+    [[ -n "$SWP_FIND" ]] \
+      || fail "elf-sweep: the finding gate is INERT — a synthetic unexplained refusal (a clause refusal on a readelf-clean file) did not register as a finding, so an all-PASS sweep would prove nothing"
+    note "finding gate verified to bite on the synthetic row; cleared before the real sweep"
+    SWP_FIND=""
+
+    for SWP_D in x86 amd64; do
+      if [[ $SWP_D == x86 ]]; then swp_run_le x86 "$SWP_XMB" "$SWP_XDI"; else swp_run_le amd64 "$SWP_AMB" "$SWP_ADI"; fi
+      for SWP_N in "${SWP_LAST_NAMES[@]}"; do
+        swp_classify "$SWP_D" "$SWP_N" "$(swp_fw "$SWP_LAST_LOG" "$SWP_N")" "${SWP_HOST[$SWP_N]}"
+      done
+      # regression guard: this door's OWN firmware ELF MUST be the overlap refusal
+      SWP_OWN=$([[ $SWP_D == x86 ]] && echo XFW.ELF || echo AFW.ELF)
+      [[ "$(swp_fw "$SWP_LAST_LOG" "$SWP_OWN")" == REFUSED:overlap ]] \
+        || fail "elf-sweep ($SWP_D): the door's own firmware ELF ($SWP_OWN) was NOT refused as an overlap — before patch 68 that load hung the firmware; the gate has regressed — see $SWP_LAST_LOG"
+      # and the OTHER class's firmware ELF MUST be refused by field ("not ours")
+      SWP_OTH=$([[ $SWP_D == x86 ]] && echo AFW.ELF || echo XFW.ELF)
+      case "$(swp_fw "$SWP_LAST_LOG" "$SWP_OTH")" in
+        REFUSED:not-ours*) : ;;
+        *) fail "elf-sweep ($SWP_D): the other class's firmware ELF ($SWP_OTH) was NOT refused by field — the per-door class gate has regressed — see $SWP_LAST_LOG" ;;
+      esac
+    done
+
+    # ── ppc: the big-endian door (pty), its own firmware ELF + hello-ppc if built ──
+    SWP_PD="$SWP_WD/stage-ppc"; rm -rf "$SWP_PD"; mkdir -p "$SWP_PD"
+    cp "$SWP_PFW" "$SWP_PD/PFW.ELF"; swp_pnames=(PFW.ELF)
+    [[ -n "$SWP_HP" ]] && { cp "$SWP_HP" "$SWP_PD/HELLO.ELF"; swp_pnames+=(HELLO.ELF); }
+    genisoimage -quiet -o "$SWP_WD/ppc.iso" -V SWEEP -r -J "$SWP_PD" 2>/dev/null || fail "elf-sweep: genisoimage failed for ppc"
+    SWP_PLOG="$SWP_WD/ppc.log"; rm -f "$SWP_PLOG"
+    swp_psteps=( --expect "Welcome to OpenBIOS" --expect "0 > " )
+    for n in "${swp_pnames[@]}"; do
+      swp_psteps+=( --send ".\" <<$n>>\" cr"$'\r' --expect "> "
+                    --send "load cd:\\$n;1"$'\r' --expect "> "
+                    --send ".\" [$n]sv=\" state-valid @ . cr"$'\r' --expect "> " )
+    done
+    swp_psteps+=( --send '." SWEEP-ALIVE" cr'$'\r' --expect "SWEEP-ALIVE" )
+    python3 "$REPO/tools/drive-pty-repl.py" "$SWP_PLOG" --timeout 700 --echo-gate --echo-timeout 8 \
+      "${swp_psteps[@]}" -- qemu-system-ppc -bios "$SWP_PFW" -nographic -vga none -cdrom "$SWP_WD/ppc.iso" >/dev/null 2>&1
+    SWP_PRC=$?
+    [[ $SWP_PRC -eq 0 ]] || fail "elf-sweep (ppc): the prompt driver did not complete (rc=$SWP_PRC) — see $SWP_PLOG"
+    grep -qF 'SWEEP-ALIVE' "$SWP_PLOG" || fail "elf-sweep (ppc): the prompt did not survive the sweep — see $SWP_PLOG"
+    declare -A SWP_PHOST=( [PFW.ELF]="$SWP_PFW" [HELLO.ELF]="$SWP_HP" )
+    for n in "${swp_pnames[@]}"; do swp_classify ppc "$n" "$(swp_fw "$SWP_PLOG" "$n")" "${SWP_PHOST[$n]}"; done
+    [[ "$(swp_fw "$SWP_PLOG" PFW.ELF)" == REFUSED:overlap ]] \
+      || fail "elf-sweep (ppc): the ppc firmware ELF (openbios-qemu.elf) was NOT refused as an overlap — the big-endian gate has regressed — see $SWP_PLOG"
+
+    # ── the finding gate: any UNEXPLAINED disagreement fails by name ────────────
+    [[ -z "$SWP_FIND" ]] \
+      || fail "elf-sweep: the three observers DISAGREE on a real file, unexplained — ${SWP_FIND% } — a firmware refusal of a file readelf passes (that is not the overlap or not-ours the firmware legitimately knows), or a firmware load of a file readelf reports structurally broken, is exactly the row this sweep exists to catch"
+
+    # eu-elflint being stricter than the gate+readelf is the tool-coverage map (Spike 3's
+    # territory), reported as data — NOT a firmware finding.
+    SWP_DIVSAYS="eu-elflint agreed with the gate+readelf on every LOADED file"
+    [[ -n "$SWP_DIVERGE" ]] && SWP_DIVSAYS="eu-elflint is STRICTER than the gate on ${SWP_DIVERGE% } — a file the firmware loads and readelf passes, which eu-elflint flags (W^X section flags / unknown vendor notes); the tool-coverage divergence Spike 3 maps, not a firmware bug"
+    note "$SWP_DIVSAYS"
+
+    SWP_REALSAYS="/bin/true is not staged (no ELF64 at /bin/true here), so the PIE row is UNPROBED this run"
+    [[ -n "$SWP_REAL" ]] && SWP_REALSAYS="the headline real file /bin/true — a distro ELF64 PIE — was refused [$(swp_fw "$SWP_WD/amd64.log" REALPIE.ELF)]: the gate loads only its own ET_EXEC, so a position-independent ET_DYN is refused by e_type, a distinction readelf and eu-elflint (both clean on it) never draw"
+    SWP_HELLOSAYS="the sibling hello clients are not built ($SWP_CLI), so the clean-LOADED agreement row is UNPROBED, not failed"
+    [[ -n "$SWP_HX" || -n "$SWP_HP" ]] && SWP_HELLOSAYS="the sibling hello client(s) LOADED cleanly (state-valid -1), readelf clean — the agreement row, proving the gate is not refusing everything"
+    pass "B.4 Spike 2 — the real-ELF sweep: every ELF the lab ships, through the C gate beside readelf and eu-elflint, one row each, and the observers AGREE once the firmware's two legitimate extra refusals are accounted for. Each door's OWN firmware ELF (x86/amd64/ppc) is refused as the OVERLAP it is — the load that hung x86 and ppc before patch 68 — which no static ELF checker can know because it is about the firmware's LIVE address map; the OTHER door's firmware ELF is refused by the field that differs (class/data/machine), which the class-agnostic tools never flag. $SWP_REALSAYS. $SWP_HELLOSAYS. No UNEXPLAINED disagreement survived — no file the firmware refuses that readelf passes for a reason that is neither overlap nor not-ours nor a named gABI clause, and no file the firmware loads that readelf reports broken — which is the finding this sweep exists to surface. $SWP_DIVSAYS. Loads ran in natural order, the loader leaks (patches 71/72) being fixed; the prompt survived every door (SWEEP-ALIVE)"
+    ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
     # unmeasured — and no claim is made about it. If a future spike wants the dsl
@@ -9277,5 +9479,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|unix|launcher]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|unix|launcher]" >&2; exit 1 ;;
 esac
