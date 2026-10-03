@@ -904,8 +904,21 @@ requires of any other cached fact.
       overlap/not-ours/a named clause, or a load `readelf` calls broken, FAILS by name; a self-control
       proves that finding gate bites). `eu-elflint` being stricter than the gate (W^X flags, the
       `ELFBoot` vendor note) is reported as the tool-coverage divergence Spike 3 maps, not a firmware
-      bug. Loads ran in natural order — the loader leaks (patches 71/72) being fixed. **Remaining:**
-      Spike 1 (measure-at-gate PCR), 5 (identity), 3 (per-clause conformance map), 6 (big-endian axis),
+      bug. Loads ran in natural order — the loader leaks (patches 71/72) being fixed.
+      **✅ Spike 1 DONE 2026-10-03 (track `elf-measure`): measure what you are about to run.** The firmware
+      hashes a REAL image at the gate (`load-base load-size sha256`) and its digest EQUALS the host's
+      `sha256sum` of that very file — ground truth, not a NIST constant — then authors an EV_IPL
+      `TCG_PCR_EVENT2` for it and replays PCR0 to exactly `tpm2_eventlog`'s and python's SHA256(0³²‖digest).
+      Negative control bites: one XOR-flipped image byte moves the digest to the host's flipped sha256sum
+      and PCR0 to the oracle's replay of the flipped log. On the x86 door the image LOADS (state-valid -1
+      = genuinely about to run) with a matching digest. AK quote stays UNKNOWN (stated). Required
+      extending the toolkit as lab content (no firmware change): `dsl/sha256.fth` rewritten to **stream**
+      (hash full 64-byte blocks from the source; only the tail pads into `padbuf`) — the old version
+      copied the whole message into a 512 B buffer and refused >447 B, so it could hash a test vector but
+      never a real image; NIST vectors (event-replay, 4 arches) are the regression control and still pass.
+      `dsl/eventlog.fth` gained `>evlog-entry-dig`/`evlog-author-image` (author an entry from a REAL
+      32-byte digest, where `>evlog-entry` only filled a placeholder byte). **Remaining:**
+      Spike 5 (identity), 3 (per-clause conformance map), 6 (big-endian axis),
       4 (symbol poke). **Two loader findings were parked here for patches of their own** (both measured
       while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
       MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the
