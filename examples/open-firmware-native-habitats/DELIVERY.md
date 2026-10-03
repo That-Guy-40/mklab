@@ -15,7 +15,7 @@ out to be the lab's spine.
 | | mechanism | SPARC (sun4m) | PPC (g3beige) |
 |---|---|---|---|
 | **D1** | `-prom-env nvramrc=…` — QEMU writes the NVRAM chip at machine init | ✅ | ✅ |
-| **D2** | `setenv nvramrc …` at the prompt, flush, reset | ❌ | ✅ |
+| **D2** | `setenv nvramrc …` at the prompt, flush, reset | ✅* | ✅ |
 | **D3** | `load <dev>:<path>` + `load-base load-size evaluate` | ✅ | ❌ |
 | **D4** | type it at the `0 >` prompt | ❌ | ❌ |
 
@@ -102,7 +102,13 @@ a truncated `nvramrc` would install a *half* vocabulary and still say `ok`.
 
 ---
 
-## D2 — NVRAM, written from inside (PPC only)
+## D2 — NVRAM, written from inside (both tracks)
+
+> **\*sun4m persists on the PATCHED build** (`patches/02-sun4m-nvram-binding.patch`,
+> via `build-firmware.sh sparc32`); the stock QEMU blob still loses it, and
+> `smoke-habitat.sh persist sparc32` keeps that as its control. ppc persists on
+> the stock Apple blob. See "How SPARC does it now" below.
+
 
 ```text
 0 > setenv nvramrc device-end : q ." PERSISTED-ACROSS-RESET" cr ; q  ok
@@ -127,40 +133,44 @@ NODE_METHODS( nvram ) = {
 `undefined word` on **both** tracks, which is exactly the sort of negative that
 looks like "the feature is missing" and is really "you are calling it wrong".
 
-### Why SPARC cannot do this
+### How SPARC does it now (`patches/02-sun4m-nvram-binding.patch`)
 
-`nvram_init()` — the function that runs `BIND_NODE_METHODS(get_cur_dev(),
-nvram)` — is called from `drivers/macio.c` and the other Apple ports. **Nothing
-on sun4m calls it.** `drivers/obio.c:168` has its own `ob_nvram_init()` that
-builds a bare node:
+Stock sun4m could *not* do this: `nvram_init()` — the function that runs
+`BIND_NODE_METHODS(get_cur_dev(), nvram)` — is called from `drivers/macio.c` and
+the other Apple ports, and **nothing on sun4m calls it**. `drivers/obio.c`'s
+`ob_nvram_init()` built a bare `/obio/eeprom` node (reg, address, model — no
+methods, no `nvram` alias), so `' update-nvram` reported `undefined word` and a
+`setenv` lived only in RAM.
 
-```c
-ob_new_obio_device("eeprom", NULL);
-nvram = (unsigned char *)ob_reg(base, offset, NVRAM_SIZE, 1);
-… "address" property … model "mk48t08" …
-fword("finish-device");
-```
+`patches/02` ports the Apple binding to `ob_nvram_init()`: it calls
+`nvconf_init()` + `nvram_init("/obio/eeprom")` (binding the nvram package's
+read/write/`update-nvram` methods to a child `nvram` node), aliases `nvram`, and
+opens it into `/chosen`. That alone was **not** enough, and the reason is the
+measured heart of this fix:
 
-reg, address, model — and no methods. Probed live:
+- QEMU's fresh sun4m mk48t08 presents a **valid but 32-byte** `NV_SIG_SYSTEM`
+  (0x70) partition at offset 0 (`70 1a 00 02 …`, a checksum that matches). The
+  generic `nvconf_init()` accepts it, so `nvram.config_size` is **16 bytes** —
+  and `nvram-store-configs` then serialises the whole env into those 16 bytes,
+  overflowing them and corrupting the heap. The symptom was a `Trap 0x21`
+  (Instruction Access Error) on the method's *return*, after `update-nvram` had
+  already run — found by printk-tracing the method, not by reading the dump.
+- So the patch, before `nvconf_init()`, detects that **exactly-32-byte** empty
+  SYSTEM partition and breaks its checksum, which makes `nvconf_init()` zap the
+  region to a proper `DEF_SYSTEM_SIZE` (0xc10) layout the env fits in. The
+  threshold is exactly 32: a partition QEMU populated from `-prom-env`, or one we
+  wrote on a previous boot, is **larger** and left untouched — so `-prom-env`
+  `nvramrc` is still honoured *and* a `setenv` persists across `reset-all`.
 
-```text
-0 > " update-nvram" " /obio/eeprom" find-package drop ?m
-NO-METHOD
-0 > " read" " /obio/eeprom" find-package drop ?m
-NO-METHOD
-0 > " nvram" find-package . .
-0                                  ← no such alias or node either
-```
+`smoke-habitat.sh persist sparc32` asserts it end to end on the patched build
+(set it, `update-nvram`, `reset-all`, watch `PERSISTED-ACROSS-RESET` run at
+power-on) and keeps the **stock blob as the control** — which must still lose it,
+or the binding is not what fixed it.
 
-So on sun4m a `setenv` can only ever live in RAM. `smoke-habitat.sh persist
-sparc32` asserts the behaviour end-to-end (set it, reset, watch it be gone) and
-says plainly in its failure message that if this ever *starts* passing, upstream
-has bound the package and this document is what needs updating.
-
-> **This is a genuine, upstream-reportable gap** in the same family as the
-> [rival lab's x86 revival patch](../openbios-the-rival-that-shipped/README.md):
-> the hardware is emulated, the driver is written, the Forth side is written —
-> only the binding is absent.
+> This corrects the earlier record (and TODO §24.2): the gap was **not** "only
+> the binding is absent" — the Forth side (`nvram-store-configs` et al.) is
+> present on sparc32, and the real obstacle was QEMU's undersized default
+> partition. Mirroring macio *plus* the 32-byte zap is what it took.
 
 ---
 

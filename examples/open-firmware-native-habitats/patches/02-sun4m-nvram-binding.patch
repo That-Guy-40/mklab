@@ -1,0 +1,58 @@
+diff --git a/drivers/obio.c b/drivers/obio.c
+index 12cdb46..37b1625 100644
+--- a/drivers/obio.c
++++ b/drivers/obio.c
+@@ -18,6 +18,7 @@
+ 
+ #include "drivers/drivers.h"
+ #include "arch/common/nvram.h"
++#include "packages/nvram.h"
+ #include "libopenbios/ofmem.h"
+ #include "obio.h"
+ #include "escc.h"
+@@ -190,6 +191,45 @@ ob_nvram_init(uint64_t base, uint64_t offset)
+     fword("encode-bytes");
+     push_str("idprom");
+     fword("property");
++
++    /* Bind the nvram package's methods (read/write/update-nvram) to a child
++     * "nvram" node of /obio/eeprom and alias it, so a setenv written at the ok
++     * prompt can be flushed to the mk48t08 and survive reset-all. Mirrors
++     * drivers/macio.c's macio_nvram_init() on the Apple ports; without it
++     * ob_nvram_init() leaves a bare eeprom node with no update-nvram method, so
++     * setenv lives only in RAM (habitats DELIVERY.md D2 / TODO 24.2). The nvram
++     * package drives sparc32's own arch_nvram_get/put/size, defined above. */
++    {
++        phandle_t dnode, chosen, aliases;
++        char buf[64];
++        int n;
++        unsigned char *ob = &nvram[NVRAM_OB_START];
++        unsigned int psize = ((unsigned)ob[3] | ((unsigned)ob[2] << 8)) * 16;
++
++        /* QEMU's fresh sun4m mk48t08 presents a VALID but 32-byte NV_SIG_SYSTEM
++         * (0x70) partition at offset 0 — far too small for a config. nvconf_init
++         * would accept it and nvram-store-configs would overflow those 16 bytes,
++         * corrupting the heap (a Trap 0x21 on the method's return). When that
++         * empty 32-byte partition is the whole config, break its checksum so
++         * nvconf_init rejects it and zaps to a proper DEF_SYSTEM_SIZE layout.
++         * The threshold is EXACTLY 32: a chip QEMU populated from -prom-env, or
++         * one we wrote on an earlier boot, has a larger partition and is left
++         * untouched — so -prom-env nvramrc is honoured AND a setenv persists
++         * across reset-all. (NV_SIG_SYSTEM=0x70 per packages/nvram.c.) */
++        if (ob[0] == 0x70 && psize <= 32)
++            ob[1] ^= 0xff;
++
++        nvconf_init();
++        dnode = nvram_init("/obio/eeprom");
++        set_int_property(dnode, "#bytes", arch_nvram_size());
++        n = snprintf(buf, sizeof(buf), "%s", get_path_from_ph(dnode));
++        aliases = find_dev("/aliases");
++        set_property(aliases, "nvram", buf, n + 1);
++        chosen = find_dev("/chosen");
++        push_str(buf);
++        fword("open-dev");
++        set_int_property(chosen, "nvram", POP());
++    }
+ }
+ 
+ static void

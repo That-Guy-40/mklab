@@ -26,10 +26,12 @@ habitat_track() {
         LOADCMD='load cdrom:\OFDIAG.FTH'
         HAS_FS=yes
         # Persisting a setenv needs the nvram package's `update-nvram` method.
-        # sun4m never gets one: drivers/obio.c's ob_nvram_init() builds a bare
-        # /obio/eeprom node (reg/address/model) and never calls nvram_init(),
-        # which is what BIND_NODE_METHODS(nvram) lives in.
-        CAN_PERSIST=no
+        # Stock sun4m lacks it — drivers/obio.c's ob_nvram_init() builds a bare
+        # /obio/eeprom node and never calls nvram_init(). patches/02 binds it
+        # (the nvram package + a `nvram` alias) AND zaps QEMU's bogus 32-byte
+        # SYSTEM partition so the config fits — so persistence works on the
+        # PATCHED build, while the stock blob still loses it (the control).
+        CAN_PERSIST=yes            # PERSIST_FW set after FW_ARTIFACT below
         # The four rungs of the ladder, as live targets on this machine.
         T_NOALIAS='nosuchalias'                  # OFDIAG-1
         T_NONODE='/obio/nosuch@9'                # OFDIAG-2
@@ -40,6 +42,7 @@ habitat_track() {
         # (build-firmware.sh), plus the stock blob to prove ours is not it.
         STOCK_BLOB=/usr/share/qemu/openbios-sparc32
         FW_ARTIFACT="$WORKDIR/openbios-sparc32-patched"
+        PERSIST_FW="$FW_ARTIFACT"   # the nvram binding ships in the patched build
         ;;
       ppc)
         QEMU=qemu-system-ppc
@@ -54,6 +57,7 @@ habitat_track() {
         # Apple machines DO get the nvram package: drivers/macio.c calls
         # nvram_init(), and arch/ppc/qemu/main.c even flushes on is_apple().
         CAN_PERSIST=yes
+        PERSIST_FW=""              # persists on the STOCK Apple blob; no control arm
         T_NOALIAS='nosuchalias'                  # OFDIAG-1
         T_NONODE='/pci@80000000/nosuch@9'        # OFDIAG-2
         T_OPENOK='/memory@0'                     # OFDIAG-0
