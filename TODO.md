@@ -896,12 +896,37 @@ requires of any other cached fact.
       loads; amd64 now loads ELF64; a stale `state-valid` and ppc's wrapped `_end` fixed on the way;
       four of seven clauses checked by neither readelf nor elflint. Next: Spike 1 (measure at the
       gate), then 5. **Two loader findings were parked here for patches of their own** (both measured
-      while building Spike 0): (a) `load` never frees
-      the interposed partition package, so ~1.3 MiB of distinct-path data in one boot exhausts the
-      heap and the **next `load` silently no-ops**, keeping the previous file's `load-base`/`load-size`
-      (and `state-valid`, if that load was valid) — a stale image `go` would re-enter (bug-class #1); the
-      `elf-ladder` track works around it (big subject last, refusals asserted to fire exactly once).
-      **STILL OPEN.** (b) **✅ DONE 2026-10-03 (`patches/70-unix-hosted-load-base-mapped.patch`).** The
+      while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
+      MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the
+      interposed partition package, a buffer SIZED TO THE FILE, ~1.3 MiB of distinct loads exhausts the
+      heap, the next `load` silently no-ops, a stale image `go` re-enters (bug-class #1)" — is wrong on
+      every specific. Measured on x86 with a `free-total` probe (sum of the `alloc-mem` free list) + QEMU
+      + an Explore pass over the load/fs/pathres source:
+      - **Not file-sized, and no no-op.** 12 distinct files totalling ~4.3 MiB all loaded, `load-size`
+        advancing correctly each time; even the 1.16 MiB firmware ELF dropped `free-total` by only ~384
+        bytes. The leak is a **constant ~352–376 bytes per `load`**, independent of file size.
+      - **Not the interpose.** `close-dev` DOES tear down the whole interpose chain —
+        `create-instance`/`destroy-instance` measured balanced **6/6** per `open-dev`+`close-dev`, so
+        "interposed package never freed" is refuted. Bisected: `open-dev` allocates ~416 B, `close-dev`
+        recovers ~36 → the residual is a **NON-instance `alloc-mem`** in the open/close path.
+      - **Scale.** 578 KiB of `alloc-mem` free ÷ ~360 B/load ≈ **~1600 loads** to exhaust, not ~18. The
+        `elf-ladder` "load #18 kept PAYLOAD's size" does NOT reproduce; its "big subject last" ordering
+        is premised on the wrong model (harmless, but unnecessary for the stated reason).
+      - **A SEPARATE, source-confirmed leak** (the agent found it): grubfs's `close`/`probe` methods never
+        free their C-`malloc`'d structs (`mi->gfs`, the `my_args_copy` path, the `open_ih` dev_fds). But
+        `arch/{x86,amd64}/lib.c`'s `malloc` is a **bump pointer with a no-op `free()`**, so on the arches
+        this lab builds+drives it is neither observable nor reclaimable; it would reclaim only on a
+        real-`free()` arch (ppc/sparc → `ofmem_free`), which this lab does not exercise for grubfs. A fix
+        here would be **theater** on every door we run, so it is NOT shipped — recorded for a future
+        ppc-verified pass.
+      **STILL OPEN, precisely scoped.** The real x86-observable leak is ~352 B/load of NON-instance
+      `alloc-mem` in `open-dev`/`close-dev` (decomposition: 949 B alloc / 597 B free per cycle). Crux:
+      *which* non-instance `alloc-mem` site — a string copy (`>in.arguments` / `interpose-args` / the
+      alias copy) set twice or not freed. Next experiment: per-call-site attribution (tag `alloc-mem`
+      by caller) across one `open-dev`+`close-dev`. Deliberately deferred: a wrong `free-mem` in the
+      intricate path-resolution code risks a use-after-free/double-free (heap corruption → crash), which
+      is a far worse regression than a leak that needs ~1600 loads to bite. (b) **✅ DONE 2026-10-03
+      (`patches/70-unix-hosted-load-base-mapped.patch`).** The
       hosted door's default `load-base` (`0x4000000`) was unmapped in the host process, so every `load`
       on unix segfaulted ("panic: segmentation violation at 4000000") unless a track `$setenv`'d it
       first — the workaround every unix load track carried. `arch/unix/unix.c`'s `arch_init()` now mmaps
