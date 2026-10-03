@@ -895,14 +895,22 @@ requires of any other cached fact.
       copy `load` performs (the irreversible step was never `go`); fixtures per door in the class it
       loads; amd64 now loads ELF64; a stale `state-valid` and ppc's wrapped `_end` fixed on the way;
       four of seven clauses checked by neither readelf nor elflint. Next: Spike 1 (measure at the
-      gate), then 5. **Two loader findings parked here for patches of their own** (both measured while
-      building Spike 0, both bug-class #1 — a record outliving its subject): (a) `load` never frees
+      gate), then 5. **Two loader findings were parked here for patches of their own** (both measured
+      while building Spike 0): (a) `load` never frees
       the interposed partition package, so ~1.3 MiB of distinct-path data in one boot exhausts the
       heap and the **next `load` silently no-ops**, keeping the previous file's `load-base`/`load-size`
-      (and `state-valid`, if that load was valid) — a stale image `go` would re-enter; the `elf-ladder`
-      track works around it (big subject last, refusals asserted to fire exactly once). (b) the hosted
-      door's default `load-base` (`4000000`) is unmapped, so every `load` on unix segfaults unless a
-      track `$setenv`s it first.
+      (and `state-valid`, if that load was valid) — a stale image `go` would re-enter (bug-class #1); the
+      `elf-ladder` track works around it (big subject last, refusals asserted to fire exactly once).
+      **STILL OPEN.** (b) **✅ DONE 2026-10-03 (`patches/70-unix-hosted-load-base-mapped.patch`).** The
+      hosted door's default `load-base` (`0x4000000`) was unmapped in the host process, so every `load`
+      on unix segfaulted ("panic: segmentation violation at 4000000") unless a track `$setenv`'d it
+      first — the workaround every unix load track carried. `arch/unix/unix.c`'s `arch_init()` now mmaps
+      a dedicated 16 MiB load area and feval's `<addr> constant load-base` (the x86 shape — only C knows
+      the host mapping; a separate region so the alloc-mem heap cannot clobber it). `smoke-openbios.sh
+      unix` loads a 200 KiB file with NO `$setenv` and asserts it lands (load-size + first byte at
+      load-base); the regression bites by name (a drift back to `0x4000000` resurfaces as the segfault,
+      measured by reverting). bare-metal amd64 keeps `0x4000000` (real RAM); `arch/unix` builds into
+      nothing else.
 - [x] **B.3 — build [`PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md`](PREBOOT_STRUCTURE_TOOLKIT_LAB_PLAN.md)** —
       **✅ COMPLETE 2026-09-03**: every §9 clause met (Spikes −1, 0, 1a/1b/1c, 2, 3 and the
       §12(2) bench), audited (#390: patches 59/60), and the plan's named follow-on taken as

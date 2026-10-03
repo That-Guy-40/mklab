@@ -9098,7 +9098,50 @@ PYX
     note "prompt reached: 3 4 + . answers 7, bye reaches Farewell!"
     note "a missing dictionary is NAMED and exits $UBRC; end-of-input exits 0 without spinning; a clean run prints no feval/fword line"
     note "stdin=0x$USTDIN stdout=0x$USTDOUT start-mem=0x$UMEM — all inside four bytes, which is what encode-int is handed"
-    pass "the firmware as a plain Unix process reaches its prompt again (TODO §18, patch 50): initialisation completes, '3 4 + .' answers 7 and 'bye' reaches Farewell!. The assertion is the PROPERTY that used to fail, not the boot — /chosen's stdin and stdout are read back from the prompt and must fit in FOUR BYTES, because that is what IEEE 1275 gives an integer (5.3.5.1) and an ihandle here IS a host pointer (pointer2cell is a plain cast at run time). glibc placed the Forth arena above 4 GiB and encode-int refused, CORRECTLY; arch/unix/unix.c now maps the arena and the dictionary below it, where every other target has always been — the QEMU firmwares live at 0x400000 and 0x4000000 — and patch 26's gate is untouched, because the refusal was never the bug. The named regression row returns the day that drifts back"
+
+    # ── TODO B.4 finding (b), patch 70: the hosted load-base must be MAPPED ──
+    # nvram.fs defaults load-base to 0x4000000 — a bare physical address mapped
+    # to NOTHING in this host process — so `load <file>` read the file straight
+    # into unmapped memory and the engine took "segmentation violation at
+    # 4000000" every time, unless a track $setenv'd load-base first (every unix
+    # load track carried that workaround). patch 70 feval's a load-base pointing
+    # into a dedicated mmap'd load area. Assert the OUTCOME: a load with NO
+    # $setenv lands. The regression bites BY NAME — if the default drifts back to
+    # the unmapped 0x4000000 the load SEGFAULTS and LOADED-OK never prints.
+    if command -v genisoimage >/dev/null; then
+      ULWD="$WORKDIR/unix-loadbase"; rm -rf "$ULWD"; mkdir -p "$ULWD/cd"
+      head -c 204800 /dev/zero | tr '\0' '\245' > "$ULWD/cd/PAYLOAD.BIN"   # 200 KiB of 0xA5
+      if genisoimage -quiet -o "$ULWD/t.iso" -V LBTEST -r -J "$ULWD/cd" 2>/dev/null; then
+        ULLOG="$WORKDIR/smoke-openbios-unix-loadbase.log"
+        printf '%s\n' \
+          '." LB=" load-base . cr' \
+          'load hd:\PAYLOAD.BIN' \
+          '." SZ=" load-size . cr' \
+          '." B0=" load-base c@ . cr' \
+          '." LOADED-OK" cr' 'bye' \
+          | "$UBIN" -f "$ULWD/t.iso" "$UDICT" > "$ULLOG" 2>&1
+        ULOUT="$(tr -d '\r' < "$ULLOG")"
+        grep -qaE 'segmentation violation|panic:' <<<"$ULOUT" \
+          && fail "REGRESSION: unix: 'load' with no \$setenv of load-base PANICKED ($(grep -aoE 'panic: [a-z ]+(at [0-9a-f]+)?|segmentation violation( at [0-9a-f]+)?' <<<"$ULOUT" | head -1)) — the hosted load-base is the unmapped nvram default (0x4000000) again; patch 70 (arch/unix/unix.c) is what maps it — see $ULLOG"
+        grep -qaF 'LOADED-OK' <<<"$ULOUT" \
+          || fail "unix: 'load' of PAYLOAD.BIN did not complete with no \$setenv of load-base — see $ULLOG"
+        ULB="$(grep -aoE 'LB=[0-9a-f]+' <<<"$ULOUT" | head -1 | sed 's/LB=//')"
+        [[ -n "$ULB" && "$ULB" != 4000000 ]] \
+          || fail "unix: the hosted load-base reads 0x${ULB:-?} — the unmapped nvram default 0x4000000 — so patch 70's mapped load area is not in effect — see $ULLOG"
+        ULSZ="$(grep -aoE 'SZ=[0-9a-f]+' <<<"$ULOUT" | head -1 | sed 's/SZ=//')"
+        [[ "$ULSZ" == 32000 ]] \
+          || fail "unix: load-size after the 200 KiB PAYLOAD.BIN is 0x${ULSZ:-?}, not 0x32000 — the file did not fully land at the mapped load-base — see $ULLOG"
+        grep -qaF 'B0=a5' <<<"$ULOUT" \
+          || fail "unix: load-base c@ is not 0xa5 — the payload's first byte is not AT load-base, so the read did not land where load-base points — see $ULLOG"
+        note "hosted load-base MAPPED at 0x$ULB (patch 70): a 200 KiB file loaded with NO \$setenv, load-size 0x$ULSZ, first byte at load-base; the segfault at the unmapped 0x4000000 is fixed"
+      else
+        note "SKIPPED the load-base check: genisoimage could not build the probe ISO — finding (b) is UNVERIFIED this run"
+      fi
+    else
+      note "SKIPPED the load-base check: genisoimage not installed — finding (b) (the hosted load-base) is UNVERIFIED this run"
+    fi
+
+    pass "the firmware as a plain Unix process reaches its prompt again (TODO §18, patch 50): initialisation completes, '3 4 + .' answers 7 and 'bye' reaches Farewell!. The assertion is the PROPERTY that used to fail, not the boot — /chosen's stdin and stdout are read back from the prompt and must fit in FOUR BYTES, because that is what IEEE 1275 gives an integer (5.3.5.1) and an ihandle here IS a host pointer (pointer2cell is a plain cast at run time). glibc placed the Forth arena above 4 GiB and encode-int refused, CORRECTLY; arch/unix/unix.c now maps the arena and the dictionary below it, where every other target has always been — the QEMU firmwares live at 0x400000 and 0x4000000 — and patch 26's gate is untouched, because the refusal was never the bug. The named regression row returns the day that drifts back. AND (TODO B.4 finding b, patch 70) the hosted load-base now points at a mapped load area: a file loads with no \$setenv workaround, where the nvram default 0x4000000 used to segfault the read"
     ;;
   file-writer)
     # TODO §20: the hosted firmware AUTHORS a file and the HOST runs it.
