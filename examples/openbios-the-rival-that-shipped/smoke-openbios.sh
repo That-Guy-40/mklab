@@ -213,6 +213,10 @@ TRACK (default multiboot):
                               the gate (firmware ELFs, /bin/true PIE, hello clients)
                               beside readelf + eu-elflint; any UNEXPLAINED disagreement
                               (not overlap/wrong-class) is a finding and fails
+  elf-measure                 B.4 Spike 1: measure a REAL image at the gate (sha256 of
+                              load-base), author an EV_IPL event2 for it, replay PCR0;
+                              ground-truthed vs the host sha256sum + tpm2_eventlog + python;
+                              one flipped image byte moves digest and PCR (quote UNKNOWN)
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -4460,6 +4464,141 @@ PY
     note "QUOTE: UNKNOWN — the replay proves the log is INTERNALLY CONSISTENT with the PCRs it implies (and two foreign implementations agree). It does NOT prove a machine measured these events: that needs the hardware-signed AK quote over the PCRs, which is not verified here and cannot be faked (see examples/metal-as-a-service/DEFERRED.md). UNKNOWN is a verdict, distinct from PASS."
 
     pass "B.3 Spike 1b (the replay): dsl/sha256.fth is SHA-256 (FIPS 180-4) in OpenBIOS Forth as a pure function, and it matches all three NIST test vectors on unix, amd64, x86 AND ppc — the width × byte-order control that only a pure function can run this cleanly (a 32-bit-masking slip would show on the 64-bit cells alone, a byte-order slip on the big-endian row alone; neither did). dsl/eventlog.fth's evlog-replay recomputes each PCR as SHA256(PCR ‖ digest) over the SAME (event2) parse the 1a reader prints from, and the firmware's PCR0/PCR1 of its own authored log equal TWO independent foreign oracles — tpm2_eventlog's own replayed pcrs and python hashlib's — which also agree with each other. The negative control that makes this attestation rather than theatre: flipping one byte of one digest moves PCR1 to exactly the value tpm2_eventlog replays for the flipped log, while PCR0 does not move. THE BOUNDARY IS STATED: the replay proves internal consistency; the hardware-signed AK quote is UNKNOWN and cannot be faked here. Spike 1 is COMPLETE (1a structure · 1b replay · 1c boundary)"
+    ;;
+  elf-measure)
+    # B.4 Spike 1: MEASURE WHAT YOU ARE ABOUT TO RUN. B.3's event-replay proved the
+    # hash and the extend chain on SYNTHETIC entries (placeholder-byte digests). This
+    # measures a REAL image the gate loads — sha256 of load-base over load-size — and
+    # authors a TCG_PCR_EVENT2 for THAT digest (dsl/eventlog.fth's new
+    # evlog-author-image), then replays the PCR.
+    #
+    # THE NEW ORACLE IS GROUND TRUTH: the firmware's digest of the loaded image must
+    # equal the HOST's sha256sum of that very file. event-replay graded the hash
+    # against NIST constants; here the subject is a real ELF and the oracle is the
+    # same bytes hashed by coreutils — the firmware measured what is actually on disk.
+    # Plus the two replay oracles (tpm2_eventlog, python) over the authored log, and
+    # the negative control: one byte changed in the image moves the digest AND the PCR.
+    #
+    # "ABOUT TO RUN" is literal on the x86 door: hello-x86 is ELF32 LSB, the class that
+    # door's gate LOADS (state-valid -1), so the measured digest is of an image the
+    # gate ACCEPTED to run — and it equals the digest unix measured. The AK quote stays
+    # UNKNOWN, said on every run (a replay is internal consistency, not hardware proof).
+    command -v tpm2_eventlog >/dev/null || skip "tpm2_eventlog not installed (apt install tpm2-tools) — the measured-boot replay oracle"
+    command -v sha256sum     >/dev/null || skip "sha256sum not installed — the ground-truth oracle"
+    command -v genisoimage   >/dev/null || skip "genisoimage not installed"
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    EMU="$WORKDIR/openbios/obj-amd64/openbios-unix"; EMUD="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    EMXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"; EMXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$EMU" "$EMUD" "$EMXMB" "$EMXDI"; do [[ -e "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    EMSTRUCT="$HERE/dsl/struct.fth"; EMSHA="$HERE/dsl/sha256.fth"; EMEVLOG="$HERE/dsl/eventlog.fth"
+    for f in "$EMSTRUCT" "$EMSHA" "$EMEVLOG"; do [[ -f "$f" ]] || fail "elf-measure: missing $f — this track stages the SHIPPED files"; done
+    grep -q 'evlog-author-image' "$EMEVLOG" || fail "elf-measure: dsl/eventlog.fth has no evlog-author-image — the real-digest authoring word this spike needs"
+    EMIMG="${OPENBIOS_CLIENTS_WORKDIR:-$HOME/openbios-clients-lab}/hello-x86"
+    { [[ -f "$EMIMG" ]] && file -b "$EMIMG" | grep -q '^ELF 32-bit LSB'; } \
+      || skip "no hello-x86 ELF32 at $EMIMG — build examples/openbios-clients-lab (the small real image this spike MEASURES, and the x86 gate LOADS as 'about to run')"
+
+    EMWD="$WORKDIR/elf-measure"; rm -rf "$EMWD"; mkdir -p "$EMWD/stage"
+    cp "$EMSTRUCT" "$EMWD/stage/STRUCT.FTH"; cp "$EMSHA" "$EMWD/stage/SHA.FTH"; cp "$EMEVLOG" "$EMWD/stage/EVLOG.FTH"
+    cp "$EMIMG" "$EMWD/stage/IMAGE.ELF"
+    # the negative control: ONE byte of the image XOR-flipped (python, so it always changes)
+    cp "$EMIMG" "$EMWD/stage/FLIP.ELF"
+    python3 - "$EMWD/stage/FLIP.ELF" <<'PY'
+import sys
+p=sys.argv[1]; b=bytearray(open(p,'rb').read()); b[0x80]^=0x5a; open(p,'wb').write(b)
+PY
+    EMHOST="$(sha256sum "$EMWD/stage/IMAGE.ELF" | cut -d' ' -f1)"
+    EMHOSTF="$(sha256sum "$EMWD/stage/FLIP.ELF" | cut -d' ' -f1)"
+    EMSZ_HEX="$(printf '%x' "$(stat -c%s "$EMWD/stage/IMAGE.ELF")")"
+    [[ "$EMHOST" != "$EMHOSTF" ]] || fail "elf-measure: the flipped image hashes the same as the original on the host — the control byte did not change the file"
+    genisoimage -quiet -o "$EMWD/m.iso"    "$EMWD/stage"       2>/dev/null || fail "elf-measure: genisoimage failed (plain)"
+    genisoimage -quiet -o "$EMWD/m-rj.iso" -r -J "$EMWD/stage" 2>/dev/null || fail "elf-measure: genisoimage failed (-r -J)"
+
+    em_val() { grep -aoE "$2=[0-9a-f]+" <<<"$1" | tail -1 | cut -d= -f2; }
+
+    # ── unix: measure IMAGE, author its event2, replay PCR0; then the flip control.
+    # LOAD ORDER: sha256.fth before eventlog.fth (evlog-replay/author name `sha256`).
+    EMD="$EMWD/run"; rm -rf "$EMD"; mkdir -p "$EMD"
+    EMOUT="$({ printf '%s\n' \
+        '40000 alloc-mem value cb' 'cb (u.) s" load-base" $setenv' \
+        'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+        'load hd:\SHA.FTH'    'load-base load-size evaluate' \
+        'load hd:\EVLOG.FTH'  'load-base load-size evaluate' \
+        '1000 alloc-mem value evbuf' \
+        'load hd:\IMAGE.ELF' \
+        '." SZ=" load-size . cr' \
+        'load-base load-size sha256 value imgdig' \
+        '." IMGDIG=" imgdig .digest cr' \
+        'evbuf imgdig evlog-author-image value evlen' \
+        'evbuf evlen s" OUT.EVT" write-file drop' \
+        '." PCR0=" evbuf evbuf evlen + 40 0 evlog-replay .digest cr' \
+        'load hd:\FLIP.ELF' \
+        'load-base load-size sha256 value flipdig' \
+        '." FLIPDIG=" flipdig .digest cr' \
+        'evbuf flipdig evlog-author-image drop' \
+        'evbuf evlen s" FLIP.EVT" write-file drop' \
+        '." PCR0F=" evbuf evbuf evlen + 40 0 evlog-replay .digest cr' \
+        'bye'
+      } | ( cd "$EMD" && "$EMU" -f "$EMWD/m.iso" "$EMUD" ) 2>&1 | tr -d '\r')"
+    EMOEVT="$EMD/OUT.EVT"; EMFEVT="$EMD/FLIP.EVT"
+    [[ -f "$EMOEVT" && -f "$EMFEVT" ]] || fail "elf-measure: the firmware wrote no OUT.EVT/FLIP.EVT — the author did not run: $(grep -aE 'undefined|TOO-LONG' <<<"$EMOUT" | head -2 | tr '\n' '|') — see output"
+    EM_IMGDIG="$(em_val "$EMOUT" IMGDIG)"; EM_FLIPDIG="$(em_val "$EMOUT" FLIPDIG)"
+    EM_PCR0="$(em_val "$EMOUT" PCR0)"; EM_PCR0F="$(em_val "$EMOUT" PCR0F)"; EM_SZ="$(em_val "$EMOUT" SZ)"
+    [[ -n "$EM_IMGDIG" && -n "$EM_PCR0" && -n "$EM_FLIPDIG" && -n "$EM_PCR0F" ]] \
+      || fail "elf-measure: the firmware did not print all of IMGDIG/PCR0/FLIPDIG/PCR0F: $(grep -aE 'IMGDIG|PCR0|FLIPDIG|undefined' <<<"$EMOUT" | tr '\n' '|')"
+
+    # (1) GROUND TRUTH: the firmware's digest of the loaded image == the host's sha256sum of the file.
+    [[ "$EM_IMGDIG" == "$EMHOST" ]] \
+      || fail "elf-measure: the firmware measured the image as $EM_IMGDIG but the host's sha256sum of the same file is $EMHOST — the firmware is not hashing the bytes that are actually on disk (load-base/load-size wrong, or the read truncated)"
+    # load-size must equal the file size, or the firmware measured a different span than the file.
+    [[ "$EM_SZ" == "$EMSZ_HEX" ]] \
+      || fail "elf-measure: load-size after loading IMAGE.ELF is 0x$EM_SZ, but the file is 0x$EMSZ_HEX bytes — the measured span is not the whole image"
+    note "ground truth: firmware sha256(load-base,load-size) = $EM_IMGDIG = host sha256sum(hello-x86), over all 0x$EM_SZ bytes"
+
+    # (2) the authored log's replayed PCR0 == tpm2_eventlog's AND python's, over the REAL digest.
+    EM_O1="$(oracle_pcr "$EMOEVT" 0)"
+    EM_O2="$(python3 -c "import hashlib,sys; print(hashlib.sha256(b'\0'*32+bytes.fromhex(sys.argv[1])).hexdigest())" "$EM_IMGDIG")"
+    [[ -n "$EM_O1" ]] || fail "elf-measure: tpm2_eventlog printed no pcr0 for the authored log $EMOEVT — the oracle is unavailable, grading would be meaningless"
+    [[ "$EM_PCR0" == "$EM_O1" ]] || fail "elf-measure: firmware PCR0 $EM_PCR0 != tpm2_eventlog's replay $EM_O1 of the authored log — the EV_IPL entry or the extend is wrong"
+    [[ "$EM_PCR0" == "$EM_O2" ]] || fail "elf-measure: firmware PCR0 $EM_PCR0 != python's SHA256(0^32 ‖ imgdigest) $EM_O2 — the extend is not SHA256(PCR‖digest) over this digest"
+    note "measured boot: author EV_IPL(pcr0) over the image digest; replayed PCR0 $EM_PCR0 == tpm2_eventlog == python SHA256(0^32‖digest)"
+
+    # (3) NEGATIVE CONTROL: one flipped image byte must move the digest AND the PCR, tracking the host.
+    [[ "$EM_FLIPDIG" != "$EM_IMGDIG" ]] \
+      || fail "elf-measure NEGATIVE CONTROL: flipping a byte of the image left the firmware digest unchanged ($EM_IMGDIG) — the measure is not reading the bytes it claims to"
+    [[ "$EM_FLIPDIG" == "$EMHOSTF" ]] \
+      || fail "elf-measure: the firmware's digest of the flipped image ($EM_FLIPDIG) != the host's sha256sum of it ($EMHOSTF) — it diverged, but not to the right value"
+    [[ "$EM_PCR0F" != "$EM_PCR0" ]] \
+      || fail "elf-measure NEGATIVE CONTROL: the flipped image replayed to the SAME PCR0 ($EM_PCR0) — a measured boot that cannot tell a changed image from the original is theatre"
+    EM_O1F="$(oracle_pcr "$EMFEVT" 0)"
+    [[ "$EM_PCR0F" == "$EM_O1F" ]] \
+      || fail "elf-measure: the firmware's PCR0 of the flipped image ($EM_PCR0F) != tpm2_eventlog's replay of the flipped log ($EM_O1F) — it moved but not the way the oracle says"
+    note "negative control: one flipped image byte moves the digest to the host's flipped sha256sum, and PCR0 to exactly tpm2_eventlog's replay of the flipped log"
+
+    # ── x86 door: the image the gate LOADS (state-valid -1 = about to run), same digest ──
+    EMSOCK="$WORKDIR/em-x86.sock"; EMXLOG="$EMWD/x86.log"; rm -f "$EMSOCK" "$EMXLOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$EMXMB" -initrd "$EMXDI" -nic none -cdrom "$EMWD/m-rj.iso" \
+      -display none -serial "unix:$EMSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    EMQ=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$EMSOCK" "$EMXLOG" --timeout 240 --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\SHA.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\IMAGE.ELF\r'  --expect "0 > " \
+      --send '." XSV=" state-valid @ . cr\r' --expect "0 > " \
+      --send '." XDIG=" load-base load-size sha256 .digest cr\r' --expect "0 > "
+    EMXRC=$?
+    kill "$EMQ" 2>/dev/null   # by PID, never by pattern
+    [[ $EMXRC -eq 0 ]] || fail "elf-measure (x86): the prompt driver did not complete (rc=$EMXRC) — see $EMXLOG"
+    EMXG="$(tr -d '\r' < "$EMXLOG")"
+    EM_XSV="$(grep -aoE 'XSV= *-?[0-9a-f]+' <<<"$EMXG" | head -1 | grep -oE -- '-?[0-9a-f]+$')"
+    EM_XDIG="$(em_val "$EMXG" XDIG)"
+    [[ "$EM_XSV" == -1 ]] \
+      || fail "elf-measure (x86): hello-x86 did not LOAD through the gate (state-valid=$EM_XSV, want -1) — the 'about to run' image was refused; it is ELF32 LSB, the x86 door's own class — see $EMXLOG"
+    [[ "$EM_XDIG" == "$EM_IMGDIG" ]] \
+      || fail "elf-measure (x86): the x86 gate measured $EM_XDIG, unix measured $EM_IMGDIG — the same image hashed to two values across doors — see $EMXLOG"
+    note "x86 door: hello-x86 LOADED (state-valid -1 = about to run) and the booted firmware's digest $EM_XDIG == unix's == host sha256sum"
+
+    note "QUOTE: UNKNOWN — the measure+replay proves the firmware hashed the real image and the log is internally consistent with the PCR it implies (two foreign oracles agree). It does NOT prove a TPM measured it into real hardware PCRs: that needs the hardware-signed AK quote, not verified here and not fakeable (see examples/metal-as-a-service/DEFERRED.md). UNKNOWN is a verdict, distinct from PASS."
+    pass "B.4 Spike 1 — measure what you are about to run: the firmware hashes a REAL image at the gate (sha256 of load-base over load-size) and its digest EQUALS the host's sha256sum of that very file, over all 0x$EM_SZ bytes — ground truth, not a NIST constant. It authors an EV_IPL TCG_PCR_EVENT2 for that digest (dsl/eventlog.fth's new evlog-author-image / >evlog-entry-dig, which copy a real 32-byte measurement where >evlog-entry only filled a placeholder byte) and replays PCR0 to exactly tpm2_eventlog's and python's SHA256(0^32‖digest). The negative control bites: one XOR-flipped image byte moves the firmware's digest to the host's flipped sha256sum and PCR0 to tpm2_eventlog's replay of the flipped log. On the x86 door the image is one the gate LOADS (state-valid -1 = genuinely about to run), and the booted firmware's digest matches unix's byte for byte. The AK quote stays UNKNOWN and the verdict says so: a replay is internal consistency, not hardware proof. Spike 1 DONE; Spike 2 (the sweep) already shipped"
     ;;
   event-real)
     # B.3, the edge past Spike 1: a REAL edk2 (OVMF) measured-boot event log from a
@@ -9479,5 +9618,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|unix|launcher]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|unix|launcher]" >&2; exit 1 ;;
 esac

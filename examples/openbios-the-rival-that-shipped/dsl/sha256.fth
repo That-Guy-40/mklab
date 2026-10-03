@@ -86,22 +86,36 @@ variable ve variable vf variable vg variable vh
 create padbuf 200 allot
 create digest 20 allot
 
+variable s-tot                          \ total message length (bytes), for the bit-length field
+
 \ sha256 ( adr len -- digest-adr ): hash `len` bytes at `adr`; the 32-byte
 \ big-endian digest is left in `digest` (a static buffer — copy it out if you
-\ need it to survive the next call). Refuses a message the pad buffer cannot
-\ hold rather than overrunning it.
+\ need it to survive the next call).
+\
+\ STREAMING: the full 64-byte blocks are hashed straight from the source, so
+\ there is no length cap — only the final partial block + the padding + the
+\ 64-bit bit length land in padbuf (which therefore needs just two blocks). The
+\ earlier version copied the WHOLE message into a 512-byte padbuf and refused
+\ anything over 447 bytes, which could hash a test vector but never a real image
+\ (B.4 Spike 1 measures a multi-KB ELF). The NIST FIPS 180-4 vectors (event-replay
+\ row A) are the regression control for this rewrite.
 : sha256 ( adr len -- digest-adr )
-  dup 1bf > if ." SHA256-TOO-LONG" cr 2drop digest exit then
-  dup >r                                  ( adr len ) ( r: len )
-  padbuf 200 erase
-  padbuf swap move                        \ message
-  padbuf r@ + 80 swap c!                  \ the 0x80 terminator
-  \ padded length: smallest multiple of 64 >= len+1+8
-  r@ 9 + 3f + 40 negate and               ( padlen )
-  \ bit length, 64-bit big-endian, in the last 8 bytes: high word 0 (len < 2^29)
-  dup padbuf + 8 - >r
-  0 r@ l!-be   r> 4 + r> 8 * swap l!-be   ( padlen )
+  dup s-tot !                             ( adr len )   \ remember total for the bit length
   sha256-init
+  padbuf 80 erase                         \ clear the two final blocks (128 bytes)
+  \ 1) hash every FULL 64-byte block directly from the source
+  dup 6 rshift 0 ?do  over i 40 * + sha256-block  loop   ( adr len )
+  \ 2) the tail (len mod 64 bytes) into padbuf, then pad
+  3f and >r                               ( adr ) ( r: taillen )
+  s-tot @ r@ - +                          ( tailadr ) ( r: taillen )   \ adr + (tot & ~63)
+  padbuf r@ move                          ( ) ( r: taillen )           \ tail -> padbuf[0..taillen)
+  80 padbuf r@ + c!                       \ the 0x80 terminator at padbuf[taillen]
+  r> 9 + 3f + 40 negate and               ( padlen )   \ roundup(taillen+1+8, 64): 64 or 128
+  \ 64-bit big-endian bit length (of the TOTAL message) in the last 8 bytes
+  dup padbuf + 8 - >r                     ( padlen ) ( r: lenfield )
+  0 r@ l!-be                              \ high 32 bits = 0 (message < 2^29 bytes)
+  r> 4 +  s-tot @ 8 *  swap l!-be         ( padlen )   \ low 32 bits = tot*8
+  \ 3) hash the final block(s) from padbuf
   40 / 0 do  padbuf i 40 * + sha256-block  loop
   8 0 do  Hst i cells + @  digest i 4 * +  l!-be  loop
   digest ;

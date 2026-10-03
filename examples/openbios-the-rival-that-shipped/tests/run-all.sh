@@ -74,6 +74,7 @@ tracks=(
     test-smoke-marker.sh
     test-smoke-elf-ladder.sh
     test-smoke-elf-sweep.sh
+    test-smoke-elf-measure.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh

@@ -198,6 +198,26 @@ variable ev-dig-adr
   1 04 33 00000000 >evlog-entry   \ pcr1 EV_SEPARATOR,      digest 0x33
   rec@ swap - ;
 
+\ author ONE crypto-agile entry whose 32-byte SHA-256 digest is COPIED from a REAL
+\ measurement at `dig-adr` (e.g. `sha256` of a loaded image), not a constant fill.
+\ This is what a measurer needs: >evlog-entry only authors placeholder-byte digests.
+\ ( pcr type dig-adr -- )
+: >evlog-entry-dig ( pcr type dig-adr -- )
+  >r                              ( pcr type ) ( r: dig-adr )
+  swap >w32 >w32                  \ pcrIndex, eventType
+  1 >w32                          \ digest count = 1
+  0b >w16  rec@ ev-dig-adr !  r> 20 >wbytes   \ (sha256, the real 32 bytes)
+  rec@ ev-size-adr !
+  4 >w32  0 >w32 ;                \ eventSize 4, event payload 0
+
+\ author a header + ONE EV_IPL(0x0d) entry into `buf` measuring the image whose
+\ SHA-256 digest is at `dig-adr`, at pcr0 — "what you are about to run", recorded.
+\ ( buf dig-adr -- len )
+: evlog-author-image ( buf dig-adr -- len )
+  >r dup >rec >evlog-header
+  0 0d r> >evlog-entry-dig        \ pcr0, EV_IPL, the real digest
+  rec@ swap - ;
+
 \ ── the REPLAY (Spike 1b — the attestation payoff, needs sha256.fth loaded) ────
 \ A PCR is an iterated hash: it starts as 32 zero bytes and every event that
 \ names it extends it, PCR = SHA256(PCR ‖ digest). Replaying the log recomputes
