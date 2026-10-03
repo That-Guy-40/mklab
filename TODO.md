@@ -1540,14 +1540,22 @@ that is itself serving NFS. That is a run, not a role.
   **already vendored** at [`examples/debian-http-boot/upstream-tutorial/`](examples/debian-http-boot/upstream-tutorial/);
   the RAM-root-over-HTTP building block.
 
-- [ ] **`sstrip` (ELFkickers) in the RAM-boot image pipeline — parked here on 2026-09-05,
-      where it belongs.** The preboot-Forth proposal of 2026-08-29 bundled `sstrip` with the
-      firmware structure work; its review (`REVIEW-preboot-forth-as-a-poke-engine.md` G5, step 7)
-      found it is a *different project*: a host-side pass over a file at rest, before the image is
-      assembled, and none of that path goes through firmware. Never done, and nobody has asked for
-      it. If it is ever wanted, this is the lab: measure what `sstrip` saves on a real RAM-booted
-      static binary (bytes, and the boot-time delta over HTTP), and keep the un-stripped build as
-      the control — the ELFkickers source is already vendored as an oracle in the OpenBIOS lab.
+- [ ] **`sstrip` (ELFkickers) in the RAM-boot image pipeline — STAYS PARKED (scope re-measured
+      2026-10-03; confirmed a different project, not a small task).** The preboot-Forth proposal of
+      2026-08-29 bundled `sstrip` with the firmware structure work; its review
+      (`REVIEW-preboot-forth-as-a-poke-engine.md` G5, step 7) found it is a *different project*: a
+      host-side pass over a file at rest, before the image is assembled, and none of that path goes
+      through firmware. Never done, and nobody has asked for it.
+      **Scope correction (the entry was optimistic):** (1) `sstrip` is NOT actually vendored — the
+      `examples/openbios-the-rival-that-shipped/oracle/elfkickers/` oracle is only the `elfls` + `elfrw`
+      subset, so building it means first vendoring `sstrip.c` from upstream ELFkickers (byte-exact +
+      attributed, per the provenance convention). (2) The useful half — the **boot-time delta over
+      HTTP** — needs the full RAM-boot pipeline (iPXE + HTTP serve + QEMU boot + timing), which is the
+      heavy/root-adjacent path, not a quick measurement. The bytes-saved-in-isolation half is small but
+      low-value on its own (sstrip's savings — dropping the section-header table — are well understood).
+      **Decision: leave parked.** Revive only as a scheduled RAM-boot sub-lab when someone wants the
+      boot-delta number; at that point vendor `sstrip.c` beside `elfls`/`elfrw`, measure
+      bytes + HTTP-boot delta on a real static payload, and keep the un-stripped build as the control.
 
 ## 5. AlmaLinux: demo + automated run (RHEL-family `rd.break`, mirror Rocky)
 
@@ -4962,16 +4970,16 @@ work items, and are deliberately not checkboxes here.
       phase-4 parser — and its "could not parse" branch now **refuses** instead of warning
       and returning 0, because an unchecked thing must not read as a checked one.
 
-- [ ] **15.9 — should `push` become a verb in phases 4 and 5?** *(split out of 15.6 on
-      2026-08-30, once there was something to push to.)* 15.6 said a registry would
-      "justify it in phases 4/5"; the registry now exists, and the honest answer is that
-      nothing has yet needed the verb. `examples/local-registry/` pushes with `podman push`
-      directly, which is what a reader would type. Adding a verb to two drivers is a real
-      blast radius — usage text, tests, the guided path, `check-doc-verbs`' probe boundary —
-      and this repo's own rule is that a verb added speculatively is a verb nobody has
-      watched work, which is precisely the defect 15.6 existed to fix. **So it is a decision
-      to make on evidence, not a leftover:** wire it when a lab wants to push as part of a
-      flow, and it arrives with a caller.
+- [x] **15.9 — should `push` become a verb in phases 4 and 5? — ✅ DECIDED 2026-10-03: NO (defer,
+      wire-with-a-caller).** *(split out of 15.6 on 2026-08-30, once there was something to push to.)*
+      15.6 said a registry would "justify it in phases 4/5"; the registry now exists, and the honest
+      answer is that nothing has yet needed the verb. `examples/local-registry/` pushes with
+      `podman push` directly, which is what a reader would type. Adding a verb to two drivers is a real
+      blast radius — usage text, tests, the guided path, `check-doc-verbs`' probe boundary — and this
+      repo's own rule is that a verb added speculatively is a verb nobody has watched work, which is
+      precisely the defect 15.6 existed to fix. **Decision: do NOT add it now.** It is resolved, not a
+      leftover: the verb is wired the day a lab wants to push as part of a flow, arriving with its
+      caller (the test that watches it work). Recording the decision closes the open question.
 - [x] **15.7 — one spec hard-codes ~~this machine's~~ NOBODY'S home.** ✅ **DONE
       2026-08-30**, and the framing was wrong in a way worth keeping: `/home/user/mklab/…`
       is not this machine's home, it is **no machine's**. The five sibling specs that carry
@@ -6504,6 +6512,20 @@ small, both are named, neither is blocked on a question nobody has answered.*
   `reset-all` within one run was ever measured. §23's table said "yes" for Apple; it now
   says no. A store that survives a *reset* and not an *exit* is fine for `nvramrc` and a
   boot counter within a session and useless for anything the host must find afterwards.
+
+> **DISPOSITION DECISION 2026-10-03 — §25–34 are an ICEBOX, not an active queue.** Everything from
+> here down (§25 FCode option ROMs, §26 attested-boot capstone, §27 toolkit-downstream ideas, §28
+> coreboot ROM workbench, §29 coreboot verified boot, §30 UKI workbench, §31 UEFI workbench, §32
+> pacme-in-the-workbench, §33 the meta-roadmap, §34 coreboot bring-up) is a **design corpus**: each is
+> a proposed NEW lab, self-labelled "discussion draft, not scheduled," and §33 "schedules nothing."
+> The decision is to leave them that way. **None enters the active queue without an explicit decision
+> to build that specific lab** (a scoping pass + a plan file, as B.1/B.2/B.4 have); the write-ups below
+> stand as the record and the on-ramp when one is chosen. **Nearest-to-ready if revived:** §25's
+> *portability proof* (§25.1) — the `optrom` track already boots one `.fc` card on x86/amd64/ppc, so
+> the remaining work is mostly a token-coverage finding, not new firmware — and §30 (UKI workbench,
+> which partially exists as `examples/uki-workbench/`). Everything else is a fresh-lab commitment and
+> should be costed before scheduling. This note is the answer to "what do we do with §25–34"; it does
+> not expand or retire any of them.
 
 ## 25. FCode option ROMs — portability, and the malicious card (2026-09-13)
 
