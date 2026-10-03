@@ -6386,6 +6386,33 @@ small, both are named, neither is blocked on a question nobody has answered.*
       `NO-METHOD` for `read` and `update-nvram`, and there is no `nvram` alias — so `setenv`
       lives in RAM and is gone at `reset-all`. The chip is emulated, `arch_nvram_get/put`
       exist for sparc32, the Forth side exists: **only the binding is absent.** Do:
+
+      **⚠️ ATTEMPTED 2026-10-02 — the "only the binding is absent" premise is WRONG; the obvious
+      port (mirror macio) does not work on sun4m, measured.** The one-function patch was written
+      (bind the generic `nvram` NODE_METHODS to a `/obio/eeprom/nvram` child + a `nvram` alias +
+      `/chosen nvram`, exactly as `drivers/macio.c`'s `macio_nvram_init()` does via `nvram_init()`
+      + `nvconf_init()`), built for sparc32 in the habitats podman box, and driven on qemu-system-sparc.
+      Results, each a boot:
+      - The **alias/node binding WORKS**: `" nvram" open-dev` resolves and opens (no `NO-METHOD`).
+      - **`update-nvram` TRAPS**: `" update-nvram" " nvram" open-dev $call-method` → `Trap 0x21
+        (Instruction Access Error)`, mid-command, before any `reset-all`. So the *method* faults, not
+        the whole firmware.
+      - **Control:** the clean build (patch 01 only) runs `see set-defaults` and keeps going
+        (`STILL-ALIVE`), and the trap seen at `bye` happens on the clean build too — i.e. `bye`
+        trapping is ordinary sun4m behaviour here, NOT evidence of instability. The fault is specific
+        to the `update-nvram` path.
+      - **Measured, correcting the premise:** the three Forth words the package needs
+        (`nvram-store-configs`, `nvram-load-configs`, `set-defaults`) ARE defined on sparc32 (`see`
+        shows them) — so "the Forth side" is not the gap. The gap is the **partition MODEL**:
+        `nvconf_init()` scans for a CHRP `NV_SIG_SYSTEM` partition and, finding none on a Sun chip,
+        `zap_nvram()`s and re-creates CHRP partitions — a format the mk48t08's Sun idprom/OBP layout
+        does not share. The generic (Apple/CHRP) package is the wrong tool for the Sun chip; mirroring
+        macio cannot port cleanly.
+      - **Honest outcome:** the patch was NOT shipped (it would make `update-nvram` trap). The track
+        keeps its honest negative — sun4m persist is session-only, by name. **The real next step is a
+        Sun-specific nvram config/store path** (respect the idprom + Sun env format, don't impose CHRP
+        partitions), which is a genuine port, not the one-function binding this item assumed. Reclassify
+        before the next attempt. Original plan, left for that attempt:
       1. A patch in the habitats lab (`patches/`, applied by its `build-firmware.sh`, the
          lab's one build path) that calls the same `BIND_NODE_METHODS(get_cur_dev(), nvram)`
          `nvram_init()` does on the Apple ports, from `ob_nvram_init()`, and creates the
