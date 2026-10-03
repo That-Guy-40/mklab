@@ -1,0 +1,88 @@
+Subject: [PATCH 70/70] arch/unix: point the hosted load-base at mapped memory -- `load` on openbios-unix no longer segfaults on the default
+
+Arch-tested: x86 amd64 ppc unix
+
+THE HOSTED DOOR'S DEFAULT load-base WAS UNMAPPED. forth/admin/nvram.fs defaults
+load-base to 0x4000000 (64 MiB). On bare-metal amd64 that is real RAM and
+correct; but openbios-unix is a HOSTED process whose memory is three mmap'd
+regions (the Forth arena at 0x20000000, the dictionary at 0x30000000, and
+below-4G scratch), and nothing is mapped at 0x4000000. So `load <dev>:\FILE` read
+the file straight into unmapped memory and the engine took
+
+    panic: segmentation violation at 4000000
+
+inside the device read -- every time, unless a track `$setenv`'d load-base into
+the arena first. Every unix load track (elf-ladder, the dsl showcases) carried
+that workaround. Measured while building B.4 Spike 0, parked in TODO B.4 as
+finding (b).
+
+THE FIX mirrors x86. arch/x86/openbios.c already feval's a load-base that is
+actually reachable (there because only C knows virt_offset after the GDT
+rebase). Here only C knows the host mapping, so arch_init() mmaps a dedicated
+16 MiB load area below 4 GiB and feval's `<addr> constant load-base`. It is a
+SEPARATE region, not the Forth arena: load-base inside the alloc-mem heap would
+be clobbered by the next allocation. The constant shadows the nvram config word
+(a redefinition, exactly as x86 does), which stays put so `" load-base"
+evaluate` still resolves if this ever regresses.
+
+SCOPE. The change is in arch/unix/unix.c, which is compiled into NOTHING but
+openbios-unix -- x86, amd64 and ppc do not build it, so their images are
+byte-unaffected by construction (not merely "retested green"). The `unix` leg is
+what this patch validates.
+
+VERIFIED, control run not reasoned. `./smoke-openbios.sh hosted-load`:
+  - WITHOUT the fix (reverted, rebuilt): load-base reads 4000000 and
+    `load hd:\PAYLOAD.BIN` panics "segmentation violation at 4000000".
+  - WITH the fix: load-base reads a mapped address, the 200 KiB file lands there
+    (load-size correct, load-base c@ == the file's first byte), no panic.
+The track asserts both that the default is no longer the unmapped 0x4000000 AND
+that the load lands -- a regression to the old default resurfaces as the segfault.
+
+Verified by: ./smoke-openbios.sh hosted-load
+
+--- a/arch/unix/unix.c
++++ b/arch/unix/unix.c
+@@ -51,6 +51,16 @@
+  * into the mapping's neighbour. The dictionary is one mmap below 4 GiB at
+  * 0x30000000; the 4 MiB Forth arena is at 0x20000000, so nothing moves. */
+ #define DICTIONARY_SIZE	(1024*1024)	/* 1 MiB for the dictionary  */
++/* mklab (TODO B.4 finding b): a mapped load area for the hosted door's
++ * load-base. The nvram default (0x4000000) is a bare physical address that is
++ * mapped to NOTHING in this host process, so `load <file>` read the file into
++ * unmapped memory and the engine took "panic: segmentation violation" inside
++ * the device read -- every time, unless a track $setenv'd load-base into the
++ * arena first. 16 MiB is generous: the largest image the lab loads here is the
++ * ~1.16 MiB firmware ELF, and a hosted process has address space to spare.
++ * SEPARATE from the Forth arena on purpose -- load-base inside the alloc-mem
++ * heap would be clobbered by the next allocation. */
++#define LOAD_AREA_SIZE	(16*1024*1024)
+ 
+ #if defined(_FILE_OFFSET_BITS) && (_FILE_OFFSET_BITS==64)
+ #define lseek lseek64
+@@ -636,6 +646,26 @@
+          * gate in libopenbios/elf_load.c refuses the copy by name and leaves
+          * the image at load-base, where the toolkit can still read it. */
+         elf_segments_placeable = 0;
++
++        /* mklab (TODO B.4 finding b): point load-base at a mapped buffer.
++         * forth/admin/nvram.fs defaults it to 0x4000000 -- correct on bare-metal
++         * amd64 (real RAM), WRONG in this host process, where nothing is mapped
++         * there and `load` segfaulted in the device read. x86 solves the same
++         * shape by feval'ing a mapped load-base (arch/x86/openbios.c); only C
++         * knows the host mapping, so do it here. This shadows the nvram config
++         * word (a redefinition, like x86's), which stays put so `" load-base"
++         * evaluate` still resolves if this ever regresses. */
++        {
++                void *lb = alloc_below_4g(LOAD_AREA_SIZE, 0x10000000,
++                                          "the hosted load area");
++                if (lb) {
++                        char buf[64];
++                        /* Forth's base is hex here, matching nvram.fs. */
++                        snprintf(buf, sizeof(buf), "%lx constant load-base",
++                                 (unsigned long)(uintptr_t)lb);
++                        feval(buf);
++                }
++        }
+ }
+ 
+ int

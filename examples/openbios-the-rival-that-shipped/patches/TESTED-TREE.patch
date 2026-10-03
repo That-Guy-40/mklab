@@ -3182,7 +3182,7 @@ index 253394c..8670e9a 100644
  
      /* Allocate 8MB memory at load-base */
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
-index cb9757e..33cfa2b 100644
+index cb9757e..139e5b5 100644
 --- a/arch/unix/unix.c
 +++ b/arch/unix/unix.c
 @@ -17,6 +17,7 @@
@@ -3201,7 +3201,7 @@ index cb9757e..33cfa2b 100644
  #include "libopenbios/console.h"
  #include "libopenbios/openbios.h"
  #include "openbios-version.h"
-@@ -40,7 +42,15 @@
+@@ -40,7 +42,25 @@
  #include "libopenbios/ofmem.h"
  
  #define MEMORY_SIZE	(4*1024*1024)	/* 4M ram for hosted system */
@@ -3215,10 +3215,20 @@ index cb9757e..33cfa2b 100644
 + * into the mapping's neighbour. The dictionary is one mmap below 4 GiB at
 + * 0x30000000; the 4 MiB Forth arena is at 0x20000000, so nothing moves. */
 +#define DICTIONARY_SIZE	(1024*1024)	/* 1 MiB for the dictionary  */
++/* mklab (TODO B.4 finding b): a mapped load area for the hosted door's
++ * load-base. The nvram default (0x4000000) is a bare physical address that is
++ * mapped to NOTHING in this host process, so `load <file>` read the file into
++ * unmapped memory and the engine took "panic: segmentation violation" inside
++ * the device read -- every time, unless a track $setenv'd load-base into the
++ * arena first. 16 MiB is generous: the largest image the lab loads here is the
++ * ~1.16 MiB firmware ELF, and a hosted process has address space to spare.
++ * SEPARATE from the Forth arena on purpose -- load-base inside the alloc-mem
++ * heap would be clobbered by the next allocation. */
++#define LOAD_AREA_SIZE	(16*1024*1024)
  
  #if defined(_FILE_OFFSET_BITS) && (_FILE_OFFSET_BITS==64)
  #define lseek lseek64
-@@ -62,6 +72,7 @@ static ucell *memory;
+@@ -62,6 +82,7 @@ static ucell *memory;
  static int diskemu;
  
  static int segfault = 0;
@@ -3226,7 +3236,7 @@ index cb9757e..33cfa2b 100644
  static int verbose = 0;
  
  #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
-@@ -177,11 +188,109 @@ static ucell read_dictionary(char *fil)
+@@ -177,11 +198,109 @@ static ucell read_dictionary(char *fil)
  	return ret;
  }
  
@@ -3336,7 +3346,7 @@ index cb9757e..33cfa2b 100644
  static int unix_availchar(void)
  {
  	int tmp = getc(stdin);
-@@ -189,6 +298,8 @@ static int unix_availchar(void)
+@@ -189,6 +308,8 @@ static int unix_availchar(void)
  		ungetc(tmp, stdin);
  		return -1;
  	}
@@ -3345,7 +3355,7 @@ index cb9757e..33cfa2b 100644
  	return 0;
  }
  
-@@ -200,7 +311,59 @@ static int unix_putchar(int c)
+@@ -200,7 +321,59 @@ static int unix_putchar(int c)
  
  static int unix_getchar(void)
  {
@@ -3406,7 +3416,7 @@ index cb9757e..33cfa2b 100644
  }
  
  static struct _console_ops unix_console_ops = {
-@@ -363,13 +526,72 @@ int_handler(int signo __attribute__ ((unused)),
+@@ -363,13 +536,72 @@ int_handler(int signo __attribute__ ((unused)),
      exit(1);
  }
  
@@ -3480,7 +3490,7 @@ index cb9757e..33cfa2b 100644
  	if (!memory) {
  		printk("panic: not enough memory on host system.\n");
  		exit_terminal();
-@@ -404,6 +626,16 @@ arch_init( void )
+@@ -404,6 +636,36 @@ arch_init( void )
  
  	device_end();
          bind_func("platform-boot", boot);
@@ -3494,10 +3504,30 @@ index cb9757e..33cfa2b 100644
 +         * gate in libopenbios/elf_load.c refuses the copy by name and leaves
 +         * the image at load-base, where the toolkit can still read it. */
 +        elf_segments_placeable = 0;
++
++        /* mklab (TODO B.4 finding b): point load-base at a mapped buffer.
++         * forth/admin/nvram.fs defaults it to 0x4000000 -- correct on bare-metal
++         * amd64 (real RAM), WRONG in this host process, where nothing is mapped
++         * there and `load` segfaulted in the device read. x86 solves the same
++         * shape by feval'ing a mapped load-base (arch/x86/openbios.c); only C
++         * knows the host mapping, so do it here. This shadows the nvram config
++         * word (a redefinition, like x86's), which stays put so `" load-base"
++         * evaluate` still resolves if this ever regresses. */
++        {
++                void *lb = alloc_below_4g(LOAD_AREA_SIZE, 0x10000000,
++                                          "the hosted load area");
++                if (lb) {
++                        char buf[64];
++                        /* Forth's base is hex here, matching nvram.fs. */
++                        snprintf(buf, sizeof(buf), "%lx constant load-base",
++                                 (unsigned long)(uintptr_t)lb);
++                        feval(buf);
++                }
++        }
  }
  
  int
-@@ -521,7 +753,9 @@ int main(int argc, char *argv[])
+@@ -521,7 +783,9 @@ int main(int argc, char *argv[])
  	/* Initialise console */
  	init_console(unix_console_ops);
  
@@ -3508,7 +3538,7 @@ index cb9757e..33cfa2b 100644
  		printk("panic: not enough memory.\n");
  		return 1;
  	}
-@@ -556,7 +790,17 @@ int main(int argc, char *argv[])
+@@ -556,7 +820,17 @@ int main(int argc, char *argv[])
          if (verbose)
              printk("done.\n");
  
@@ -3527,7 +3557,7 @@ index cb9757e..33cfa2b 100644
  	forth_init();
  
  	PUSH_xt( bind_noname_func(arch_init) );
-@@ -580,12 +824,50 @@ int main(int argc, char *argv[])
+@@ -580,12 +854,50 @@ int main(int argc, char *argv[])
  		}
  
  		enterforth((xt_t)PC);
@@ -3579,7 +3609,7 @@ index cb9757e..33cfa2b 100644
  
  	} else {		/* input file is not a dictionary */
  		printk("not supported.\n");
-@@ -595,8 +877,8 @@ int main(int argc, char *argv[])
+@@ -595,8 +907,8 @@ int main(int argc, char *argv[])
  	if (diskemu!=-1)
  		close(diskemu);
  
