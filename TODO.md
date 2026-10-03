@@ -912,13 +912,17 @@ requires of any other cached fact.
       - **Scale.** 578 KiB of `alloc-mem` free ÷ ~360 B/load ≈ **~1600 loads** to exhaust, not ~18. The
         `elf-ladder` "load #18 kept PAYLOAD's size" does NOT reproduce; its "big subject last" ordering
         is premised on the wrong model (harmless, but unnecessary for the stated reason).
-      - **A SEPARATE, source-confirmed leak** (the agent found it): grubfs's `close`/`probe` methods never
-        free their C-`malloc`'d structs (`mi->gfs`, the `my_args_copy` path, the `open_ih` dev_fds). But
-        `arch/{x86,amd64}/lib.c`'s `malloc` is a **bump pointer with a no-op `free()`**, so on the arches
-        this lab builds+drives it is neither observable nor reclaimable; it would reclaim only on a
-        real-`free()` arch (ppc/sparc → `ofmem_free`), which this lab does not exercise for grubfs. A fix
-        here would be **theater** on every door we run, so it is NOT shipped — recorded for a future
-        ppc-verified pass.
+      - **A SEPARATE leak — ✅ ALSO FIXED 2026-10-03 (`patches/72-grubfs-frees-its-open-and-probe-allocations.patch`).**
+        grubfs's `open`/`close`/`probe` never freed their C-`malloc`'d `mi->gfs`, the `my_args_copy`
+        path, or the two `open_ih` descriptors (`mi->gfs->dev_fd` and the probe's active `curfs->dev_fd`).
+        `arch/{x86,amd64}/lib.c`'s `malloc` is a bump pointer with a **no-op `free()`**, so there it is
+        neither observable nor reclaimable — and "attack it on ppc" turned out infeasible: ppc's grubfs
+        `fsys_table` is **empty** (all `CONFIG_FSYS_*` false → grubfs never mounts), and the ppc track
+        does not load files. The arch that BOTH exercises grubfs (amd64 config's `CONFIG_FSYS_ISO9660`)
+        AND has a real `free()` is the **hosted `openbios-unix`** (host glibc). Measured there with a
+        `mallinfo2().uordblks` probe: **+272 B per `load` → 0** after the fix (flat across 10 loads,
+        loads still succeed). `close_io` frees the descriptor without touching the parent ihandle
+        (`open_ih` sets `do_close=0`); `curfs` is the static `dummy_fs`, never a malloc'd instance.
       **✅ DONE 2026-10-03 (`patches/71-create-instance-records-alloc-size-after-clear.patch`) — PINPOINTED
       and FIXED.** A per-size histogram of every `alloc-mem`/`free-mem` in one `open-dev`+`close-dev`
       decomposed the ~352 B EXACTLY: the **six instance blocks** (0x2c/0x30/0x30/0x34/0x48/0x58 = 352 B)

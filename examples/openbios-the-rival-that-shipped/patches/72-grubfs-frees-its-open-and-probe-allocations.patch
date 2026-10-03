@@ -1,0 +1,74 @@
+Subject: [PATCH 72/72] fs/grubfs: free what open/probe allocate -- mi->gfs, the args path, and both open_ih descriptors; ~272 B/load leaked (B.4 finding a, grubfs half)
+
+Arch-tested: x86 amd64 ppc unix
+
+grubfs leaked C-`malloc`'d memory on every `load` through it. Three allocations
+in the open/probe path had no matching free:
+  - `grubfs_files_open`: `path = my_args_copy()` was freed only on the error
+    (fd==-1) path; on success the path is strdup'd into `fd->path` and the
+    original copy was dropped.
+  - `grubfs_files_close`: freed `fd` and `fd->path` but NOT the `grubfs_t`
+    (`mi->gfs`, malloc'd at mount) nor the `open_ih` descriptor saved in
+    `mi->gfs->dev_fd`.
+  - `grubfs_files_probe`: `open_ih`'s the ACTIVE read descriptor into the global
+    `curfs->dev_fd` (what `devread` uses) and closed it only on the
+    fs-not-found path; a probed-and-mounted fs leaked it, and each new probe
+    overwrote it.
+
+INVISIBLE on this lab's QEMU doors, REAL on the hosted one. x86/amd64's `malloc`
+(arch/{x86,amd64}/lib.c) is a bump pointer with a no-op `free()`, so there the
+leak is neither reclaimable nor observable -- which is why TODO B.4 first left
+this "for a ppc pass." But ppc's grubfs `fsys_table` is empty (all
+`CONFIG_FSYS_*` false) so grubfs never mounts there, and the ppc track does not
+load files. The arch that BOTH exercises grubfs (amd64 config: `CONFIG_FSYS_ISO9660`)
+AND has a real `free()` is the HOSTED `openbios-unix` (host glibc) -- so that is
+where it was measured and fixed.
+
+MEASURED, not reasoned. A `mallinfo2().uordblks` probe over ten `load hd:\FILE`
+on openbios-unix: glibc bytes-in-use climbed a steady +272 B per load. After this
+patch it is FLAT (+0 per load after a one-time mount setup), and `load`/`close`
+still work (grubfs mounts iso9660 and the ten loads succeed). close_io frees the
+descriptor without touching the parent ihandle (open_ih sets do_close=0; the
+parent is close-dev's); curfs is the one static dummy_fs, never a malloc'd
+instance, so freeing mi->gfs is safe.
+
+This is the SEPARATE leak noted alongside B.4 finding (a) -- distinct from the
+instance-block leak fixed in patch 71 (that was the Forth alloc-mem heap; this is
+C malloc). Together they close the two leaks the elf-ladder build surfaced.
+
+Verified by: ./smoke-openbios.sh unix / floppy / elf-ladder / multiboot (all
+green), plus the hosted mallinfo2 flat-line measurement.
+
+--- a/fs/grubfs/grubfs_fs.c
++++ b/fs/grubfs/grubfs_fs.c
+@@ -209,6 +209,7 @@
+ 			mi->gfs->fd->len = filemax;
+ 			mi->gfs->fd->path = strdup(path);
+ 
++			free( path );		/* strdup'd above; was leaked on this path */
+ 			RET( -1 );
+ 		}
+ 	}
+@@ -229,6 +230,22 @@
+ 		free((void *)(gf->path));
+ 	free(gf);
+ 
++	/* grubfs_files_open open_ih()'d a descriptor into mi->gfs->dev_fd and
++	 * malloc()'d the grubfs_t; neither was released here, so each open leaked
++	 * both (visible on the hosted target, whose free() is real glibc; a no-op
++	 * on the bump-allocator doors). close_io frees the fd (open_ih sets
++	 * do_close=0, so the parent ihandle -- owned by close-dev -- is untouched);
++	 * curfs is the static dummy_fs, never this instance, so freeing it is safe. */
++	close_io(mi->gfs->dev_fd);
++	free(mi->gfs);
++
++	/* grubfs_files_probe open_ih()'d the ACTIVE read descriptor into the global
++	 * curfs->dev_fd (what devread uses) and never closed it on the mount-found
++	 * path -- so every probed-and-opened fs leaked it, and each new probe
++	 * overwrote it. The fs is done here, so release it. (Single-fs design: curfs
++	 * is the one static dummy_fs, as the readers already assume.) */
++	close_io(curfs->dev_fd);
++
+ 	filepos = 0;
+ 	filemax = 0;
+ }
