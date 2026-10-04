@@ -29,42 +29,47 @@ hex
 \ ── the layouts ────────────────────────────────────────────────────
 \ The header's first 0x18 bytes are elf.fth's; only what follows is declared.
 
+\ sub-field: — read in the SUBJECT's byte order (B.4 Spike 6). ELF32 is where
+\ this earns its keep: ppc's own openbios-qemu.elf is a big-endian ELF32, and
+\ every scalar below is read in the order e_data declares (elf-at sets sub-order).
+\ ELF32 has no 8-byte fields, so a BE ELF32 reads with no caveat -- unlike the
+\ ELF64 lo/hi split in elf.fth, which is why the BE axis lands on the 32-bit class.
 struct
-  18   field: e32-ident         \ the shared prefix, addressed by elf.fth
-  4 le-field: e32-entry
-  4 le-field: e32-phoff
-  4 le-field: e32-shoff
-  4 le-field: e32-flags
-  2 le-field: e32-ehsize
-  2 le-field: e32-phentsize
-  2 le-field: e32-phnum
-  2 le-field: e32-shentsize
-  2 le-field: e32-shnum
-  2 le-field: e32-shstrndx
+  18    field: e32-ident         \ the shared prefix, addressed by elf.fth
+  4 sub-field: e32-entry
+  4 sub-field: e32-phoff
+  4 sub-field: e32-shoff
+  4 sub-field: e32-flags
+  2 sub-field: e32-ehsize
+  2 sub-field: e32-phentsize
+  2 sub-field: e32-phnum
+  2 sub-field: e32-shentsize
+  2 sub-field: e32-shnum
+  2 sub-field: e32-shstrndx
 constant /elf32-ehdr             \ 0x34, and the file says so in e32-ehsize
 
 struct
-  4 le-field: p32-type
-  4 le-field: p32-offset
-  4 le-field: p32-vaddr
-  4 le-field: p32-paddr
-  4 le-field: p32-filesz
-  4 le-field: p32-memsz
-  4 le-field: p32-flags          \ SEVENTH here, SECOND in ELF64
-  4 le-field: p32-align
+  4 sub-field: p32-type
+  4 sub-field: p32-offset
+  4 sub-field: p32-vaddr
+  4 sub-field: p32-paddr
+  4 sub-field: p32-filesz
+  4 sub-field: p32-memsz
+  4 sub-field: p32-flags          \ SEVENTH here, SECOND in ELF64 (reorder is orthogonal to byte order)
+  4 sub-field: p32-align
 constant /elf32-phdr             \ 0x20
 
 struct
-  4 le-field: s32-name
-  4 le-field: s32-type
-  4 le-field: s32-flags
-  4 le-field: s32-addr
-  4 le-field: s32-offset
-  4 le-field: s32-size
-  4 le-field: s32-link
-  4 le-field: s32-info
-  4 le-field: s32-addralign
-  4 le-field: s32-entsize
+  4 sub-field: s32-name
+  4 sub-field: s32-type
+  4 sub-field: s32-flags
+  4 sub-field: s32-addr
+  4 sub-field: s32-offset
+  4 sub-field: s32-size
+  4 sub-field: s32-link
+  4 sub-field: s32-info
+  4 sub-field: s32-addralign
+  4 sub-field: s32-entsize
 constant /elf32-shdr             \ 0x28
 
 /elf32-phdr array: phdr32[]
@@ -89,7 +94,8 @@ constant /elf32-shdr             \ 0x28
 : ?elf32 ( -- )
   @elf e_magic   t@ 464c457f      s" bad ELF magic (want 7f 'E' 'L' 'F')"  chk
   @elf e_class   t@ 1             s" not ELF32 (e_class)"                  chk
-  @elf e_data    t@ 1             s" big-endian ELF: this layer declares byte order per field, so it would MISREAD one (REVIEW E2)" chk
+  @elf e_data    t@ dup 1 = swap 2 =  or
+    s" e_data is neither LSB(1) nor MSB(2)"  chk?          \ §E2 built (Spike 6): BE ELF32 read, not refused
   @elf e32-ehsize t@ /elf32-ehdr  s" e32-ehsize disagrees with the layout" chk
   elf32-phnum 0<> if
     @elf e32-phentsize t@ /elf32-phdr s" e32-phentsize disagrees with the layout" chk

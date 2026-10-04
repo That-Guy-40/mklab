@@ -119,6 +119,25 @@ hex
 : dev-field:    ( off width -- off' )  0 1 (tfield) ;  \ ...through rb@/rb!
 : le-dev-field: ( off width -- off' )  1 1 (tfield) ;
 
+\ ── order 2: "the SUBJECT's declared byte order" (B.4 Spike 6) ──────
+\ The three orders above are FIXED at declaration. A real format carries its own
+\ byte order in a field of its own -- ELF's e_data (1=LSB, 2=MSB), a BMP's, a
+\ TIFF's -- and the same layout must then be read EITHER way depending on that
+\ byte. So the engine gains a THIRD order value, 2, meaning "not a fixed order:
+\ read sub-order, a variable the format sets from its own byte-order field at
+\ bind time." This is the plan's sentence made literal -- byte order is a
+\ property of the FIELD, and for a sub-field: it is a property the SUBJECT
+\ declares -- and it is the honest form of §E2, which until Spike 6 this layer
+\ could only REFUSE (a BE ELF was halted by name because every field was baked
+\ le-field:). sub-order defaults to 1 (LE), so nothing that does not set it
+\ behaves differently; and eff-order below leaves 0 and 1 untouched, so EVERY
+\ field declared field:/le-field:/dev-field: reads byte-for-byte as before -- the
+\ sentinel is seen ONLY by a sub-field:, which only the ELF readers use.
+variable sub-order   1 sub-order !    \ 0 = BE, 1 = LE; a format sets it from its own header
+: sub-field:    ( off width -- off' )  2 0 (tfield) ;  \ order follows sub-order (memory)
+\ eff-order ( order -- order' ): resolve the sentinel. A no-op for 0 and 1.
+: eff-order ( order -- order' )  dup 2 = if drop sub-order @ then ;
+
 \ ── typed fetch and store ──────────────────────────────────────────
 \ An unsupported width REFUSES and names the width. Returning a plausible number
 \ for a width nobody implemented is how a parser reports success while reading
@@ -160,12 +179,12 @@ hex
 
 : t@ ( adr tid -- u )
   dup t-space >r
-  dup t-order swap t-width                  ( adr order width )
+  dup t-order eff-order swap t-width        ( adr order width )   \ eff-order: 0/1 pass through, 2 -> sub-order
   r> if (t@dev) else (t@mem) then ;
 
 : t! ( u adr tid -- )
   dup t-space >r
-  dup t-order swap t-width                  ( u adr order width )
+  dup t-order eff-order swap t-width        ( u adr order width )
   r> if (t!dev) else (t!mem) then ;
 
 

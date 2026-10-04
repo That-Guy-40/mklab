@@ -71,7 +71,9 @@ its `dsl/` holds 14 files, 2,403 lines.
 - **Where the contract's vocabulary already exists, by hand.** `elf.fth`'s
   `hook` aborts with `this is an ELF32 and dsl/elf32.fth is not loaded` — the
   registry's "name what is absent," done once for one module pair. `?elf64`
-  refuses a big-endian ELF *by name* rather than misread it (the honest halt).
+  once refused a big-endian ELF *by name* rather than misread it; B.4 Spike 6
+  lifted that (every scalar field is now `sub-field:`, read in the subject's
+  declared order), so it READS one — the honest halt became an honest read.
   `struct.fth` already keeps `t-off`/`t-width`/`t-order` per field — the
   `NAME-fields` enumerator's data is there; only the word is missing. Each
   module's header carries its manifest as **prose** (what it is NOT, what is
