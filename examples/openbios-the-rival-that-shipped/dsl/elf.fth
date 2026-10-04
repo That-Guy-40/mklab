@@ -295,6 +295,39 @@ variable ph-load?  variable ph-phdr#  variable ph-interp#
     then
   loop ;
 
+\ ── §E4, SYMBOLS: find one by name (B.4 Spike 4) ────────────────────
+\ poke reads a symbol as `Elf64_Sym @ symtab[i]` and resolves its name through the
+\ linked string table; the firmware needs the same to find WHERE a named variable
+\ or function lives in a loaded image, which is the address a poke-before-boot then
+\ writes. The .symtab's sh_link names its OWN string table (not the section-name
+\ one), so a symbol's name is read through that, not through sh64-name. st_value is
+\ 8 bytes in ELF64, declared lo/hi so a 32-bit cell serves too (the subjects here
+\ load below 4 GiB, so -lo is the whole address). Oracle: nm / readelf -s.
+struct
+  4 sub-field: st_name          \ offset into the symtab's linked string table
+  1    field:  st_info
+  1    field:  st_other
+  2 sub-field: st_shndx
+  4 sub-field: st_value-lo   4 sub-field: st_value-hi
+  4 sub-field: st_size-lo    4 sub-field: st_size-hi
+constant /elf64-sym
+: elf64-symtab ( -- sh | 0 )     \ the SHT_SYMTAB (2) section header, or 0 if stripped
+  elf64-shnum 0 ?do i elf64-sh dup sh_type t@ 2 = if unloop exit then drop loop  0 ;
+0 value _sy-str   0 value _sy-base   0 value _sy-n
+: ?symtab ( -- flag )            \ fill the three values from .symtab; false if none
+  elf64-symtab dup 0= if drop false exit then
+  dup sh_link t@ elf64-sh sh_offset-lo t@ @elf + to _sy-str   \ the LINKED string table
+  dup sh_offset-lo t@ @elf + to _sy-base
+  sh_size-lo t@ /elf64-sym / to _sy-n  true ;
+: sym@ ( i -- sym-adr )  /elf64-sym * _sy-base + ;
+: sym-find ( name-adr name-len -- st_value | 0 )   \ 0 = not found (or no symtab)
+  ?symtab 0= if 2drop 0 exit then
+  _sy-n 0 ?do
+    i sym@ st_name t@ _sy-str +  >r 2dup r> -rot cstr= if
+      2drop  i sym@ st_value-lo t@  unloop exit
+    then
+  loop  2drop 0 ;
+
 \ The string table, which poke spells `string @ shdr[strtab].sh_offset + off`.
 : elf64-shstrtab ( -- adr )  @elf e_shstrndx t@ elf64-sh sh_offset-lo t@ @elf + ;
 : sh64-name ( i -- adr )     elf64-sh sh_name t@ elf64-shstrtab + ;
