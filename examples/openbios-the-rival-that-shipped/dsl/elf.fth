@@ -299,6 +299,30 @@ variable ph-load?  variable ph-phdr#  variable ph-interp#
 : elf64-shstrtab ( -- adr )  @elf e_shstrndx t@ elf64-sh sh_offset-lo t@ @elf + ;
 : sh64-name ( i -- adr )     elf64-sh sh_name t@ elf64-shstrtab + ;
 
+\ ── §E4, the IDENTITY method: .note.gnu.build-id (B.4 Spike 5) ──────
+\ The build-id note walk `tlv-primitives` proved, GENERALISED: there the host
+\ computed the note's file offset and handed it to the firmware; here the firmware
+\ FINDS it, by walking the section headers for `.note.gnu.build-id` and parsing the
+\ note. That is the difference between a demo and a gate — a gate reads the identity
+\ of the image in front of it on its own. A note is namesz(4) descsz(4) type(4),
+\ then name[namesz] padded to 4, then desc[descsz]; the three sizes are in the
+\ subject's byte order, so sub-field: (Spike 6) reads them big- or little-endian as
+\ the file declares. The desc of a .note.gnu.build-id is the build-id itself.
+struct  4 sub-field: n_namesz  4 sub-field: n_descsz  4 sub-field: n_type  constant /elf-nhdr
+: find-build-id ( -- desc-adr desc-len | 0 0 )
+  @elf e_class t@ 2 <> if 0 0 exit then   \ ELF64 subject (the cc-built payloads); ELF32 notes are a trivial mirror, unneeded here (elf64? is defined below, so the class is read inline)
+  elf64-shnum 0 ?do
+    i sh64-name  s" .note.gnu.build-id" cstr= if
+      i elf64-sh sh_offset-lo t@ @elf +        ( note-adr )
+      dup n_descsz t@                          ( note-adr descsz )
+      over n_namesz t@  3 + -4 and             ( note-adr descsz aligned-namesz )
+      >r swap c r> + +  swap                    ( desc-adr descsz )   \ desc = note +12 +align4(namesz)
+      unloop exit
+    then
+  loop  0 0 ;
+: .build-id ( -- )  \ contiguous hex, so a host diffs it against readelf -n verbatim
+  find-build-id dup 0= if 2drop ." (no build-id)" else 0 ?do dup i + c@ .hx2 loop drop then ;
+
 \ ── names for the values a human actually reads (a small §E6) ──────
 : .p-type ( n -- )          \ fixed 7 columns, so the table lines up
   dup 1 = if ." LOAD   " else dup 2 = if ." DYNAMIC" else

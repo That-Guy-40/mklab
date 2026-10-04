@@ -225,6 +225,10 @@ TRACK (default multiboot):
                               real BE ELF32 (ppc's own openbios-qemu.elf) on all four doors,
                               a LE ELF64 in the same boot (byte order per SUBJECT, not CPU),
                               a BE badint refused by name, and a BE-claiming-LE header caught
+  elf-identity                B.4 Spike 5: identity before trust — the firmware FINDS a loaded
+                              image's .note.gnu.build-id (walking section headers) and refuses a
+                              mismatch against a provenance record BEFORE go; a one-byte rebuild →
+                              new build-id → stale record → refused, re-stamped → admitted
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -8005,6 +8009,192 @@ FTH
 
     pass "B.4 Spike 6 — the big-endian axis: REVIEW §E2 BUILT. struct.fth gained order 2 (the subject's declared byte order, read from sub-order), every ELF scalar field is sub-field:, and elf-at sets sub-order from e_data at bind — so the Forth reader that until now REFUSED a big-endian ELF by name reads one correctly. Proven on all four doors — the three little-endian CPUs (unix, x86, amd64) AND ppc's native big-endian one — against the REAL subject, ppc's own openbios-qemu.elf (a big-endian ELF32): entry 0x$BEENT and $BEPHNUM program headers, both equal to the host's readelf, the same bytes giving the same answer on every arch. The authored big-endian good.elf (ELF32 MSB) passes the gate and the big-endian badint is refused 'PT_INTERP after a PT_LOAD' — the gABI ordering check survives a byte-swapped phdr. TWO controls make it mean something: a little-endian ELF64 gated in the SAME boot still passes, so sub-order follows the SUBJECT and not a global flip or the CPU; and a big-endian ELF32 whose e_data is forged to LSB is refused on the misread ehsize (0x34 read little-endian is 0x3400), proving the reader takes byte order from e_data rather than guessing — the negative control for the whole mechanism. Byte order is a property of the field, not the CPU, and now it has its second subject. Spike 6 DONE (0 gate · 1 measure · 2 sweep · 3 map · 6 big-endian); Spike 4 (symbol poke) and 5 (identity) remain"
     ;;
+  elf-identity)
+    # B.4 Spike 5: IDENTITY BEFORE TRUST. The firmware reads the image's
+    # .note.gnu.build-id AT THE GATE and compares it with a provenance record
+    # before `go` — the record-outlives-its-subject guard (CLAUDE.md bug class #1),
+    # now inside the firmware. A build-id is the linker's content hash of the build;
+    # a payload rebuilt with even one byte changed carries a different one, so a
+    # record stamped for the old build no longer describes the new one, and the
+    # gate refuses it BY NAME rather than running something the record cannot vouch
+    # for. "A digest bound to a record" — the plan's own words, and its own scope
+    # guard: this is NOT a signature scheme (no key verifies the build-id); the
+    # anchor is the provenance record on the host, and the verdict says so.
+    #
+    # THE GENERALISATION OVER tlv-primitives. There the HOST computed the note's
+    # file offset and handed it to the firmware; a gate cannot be handed the answer,
+    # so dsl/elf.fth's new find-build-id WALKS THE SECTION HEADERS for
+    # `.note.gnu.build-id` and parses the note itself (reusing the §E4 section
+    # machinery + the Spike-6 sub-field: reads, so the three note sizes come in the
+    # subject's byte order). The read is cross-checked against `readelf -n` on every
+    # door — the same bytes, the same build-id, on the three little-endian CPUs AND
+    # ppc reading the little-endian ELF64 payload.
+    #
+    # THE SUBJECTS ARE REAL REBUILDS, not byte-flips: cc links V1 and V2 from source
+    # that differs in ONE byte (`return 42` vs `return 43`), and the linker's
+    # --build-id=sha1 makes their build-ids differ — so "rebuilt with one byte
+    # changed" is literally that, and the gate's refusal of V2-against-V1's-record is
+    # the record outliving its subject, measured. Two controls that make it mean
+    # something: the SAME V2 against a record RE-STAMPED from V2 is admitted (the
+    # gate is not simply always-refusing), and a payload with NO build-id (stripped)
+    # is refused as identity-absent (an image whose identity cannot be read is an
+    # UNKNOWN, not a pass — the honest-halt discipline).
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the big-endian door reads the same little-endian payload's identity"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed — the foreign oracle for the build-id"
+    IDCC="$(command -v cc || command -v gcc || true)"
+    [[ -n "$IDCC" ]] || skip "no cc/gcc — this track links two payloads that differ by one source byte so their build-ids differ; without a linker there is nothing to stamp"
+    IDUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; IDUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    IDXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   IDXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    IDAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; IDADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    IDPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$IDUBIN" "$IDUDICT" "$IDXMB" "$IDXDI" "$IDAMB" "$IDADI" "$IDPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    for f in "$HERE/dsl/struct.fth" "$HERE/dsl/elf.fth"; do [[ -f "$f" ]] || fail "elf-identity: missing $f — this track stages the SHIPPED files"; done
+    grep -q 'find-build-id' "$HERE/dsl/elf.fth" || fail "elf-identity: dsl/elf.fth has no find-build-id — the Spike-5 identity reader is absent"
+    IDWD="$WORKDIR/elf-identity"; rm -rf "$IDWD"; mkdir -p "$IDWD/stage"
+    cp "$HERE/dsl/struct.fth" "$IDWD/stage/STRUCT.FTH"; cp "$HERE/dsl/elf.fth" "$IDWD/stage/ELF.FTH"
+    # two payloads that differ in ONE source byte -> two different build-ids (real rebuilds)
+    printf 'int _start(void){ return 42; }\n' > "$IDWD/v1.c"
+    printf 'int _start(void){ return 43; }\n' > "$IDWD/v2.c"
+    for v in v1 v2; do
+      "$IDCC" -nostdlib -static -Wl,--build-id=sha1 -o "$IDWD/$v.elf" "$IDWD/$v.c" 2>"$IDWD/$v.cc.log" \
+        || skip "cc could not link a --build-id payload ($(tail -1 "$IDWD/$v.cc.log")) — nothing to stamp"
+    done
+    file -b "$IDWD/v1.elf" | grep -q '^ELF 64-bit LSB' || skip "cc produced $(file -b "$IDWD/v1.elf"), not an ELF64 LSB — the find-build-id reader here is ELF64"
+    # a third payload with NO build-id (the identity-absent control)
+    cp "$IDWD/v1.elf" "$IDWD/noid.elf"
+    if command -v strip >/dev/null; then strip --remove-section=.note.gnu.build-id "$IDWD/noid.elf" 2>/dev/null || true; fi
+    readelf -n "$IDWD/noid.elf" 2>/dev/null | grep -qi 'build id' \
+      && { "$IDCC" -nostdlib -static -Wl,--build-id=none -o "$IDWD/noid.elf" "$IDWD/v1.c" 2>/dev/null || true; }
+    readelf -n "$IDWD/noid.elf" 2>/dev/null | grep -qi 'build id' \
+      && skip "could not produce a payload WITHOUT a build-id (neither strip nor --build-id=none worked) — the identity-absent control has no subject"
+    # host ground truth: the two build-ids, which MUST differ (else the rebuild changed nothing)
+    IDB1="$(readelf -n "$IDWD/v1.elf" | awk '/Build ID/{print tolower($NF); exit}')"
+    IDB2="$(readelf -n "$IDWD/v2.elf" | awk '/Build ID/{print tolower($NF); exit}')"
+    [[ "$IDB1" =~ ^[0-9a-f]{40}$ && "$IDB2" =~ ^[0-9a-f]{40}$ ]] || fail "elf-identity: readelf gave no sha1 build-id for a payload (v1='$IDB1' v2='$IDB2')"
+    [[ "$IDB1" != "$IDB2" ]] || fail "elf-identity: V1 and V2 have the SAME build-id ($IDB1) though their source differs by a byte — the --build-id does not track content, so the whole premise is unmeasurable here"
+    note "two real rebuilds: V1 build-id ${IDB1:0:12}…, V2 ${IDB2:0:12}… (differ — the linker's content hash tracks the one-byte source change)"
+    # the provenance records = the raw 20-byte build-ids the firmware compares against
+    printf '%s' "$IDB1" | xxd -r -p > "$IDWD/stage/PROV1.BIN"
+    printf '%s' "$IDB2" | xxd -r -p > "$IDWD/stage/PROV2.BIN"
+    [[ "$(stat -c%s "$IDWD/stage/PROV1.BIN")" -eq 20 && "$(stat -c%s "$IDWD/stage/PROV2.BIN")" -eq 20 ]] \
+      || fail "elf-identity: a provenance record is not 20 bytes — the sha1 build-id did not round-trip through xxd"
+    # stage the payloads padded +0x200 (a bare ELF cannot be `load`ed — the firmware's loader grabs it)
+    for v in v1 v2 noid; do python3 -c "import sys; open(sys.argv[2],'wb').write(b'\0'*512+open(sys.argv[1],'rb').read())" "$IDWD/$v.elf" "$IDWD/stage/${v^^}.BIN"; done
+    cat > "$IDWD/stage/ID.FTH" <<'FTH'
+hex
+\ the provenance GATE: snapshot a staged record, then refuse an image whose
+\ build-id does not match it — BY NAME, before the go-marker. find-build-id and
+\ the byte-range compare are the shipped readers' (dsl/elf.fth, dsl/struct.fth);
+\ only the policy (compare to THIS record) lives here.
+400 alloc-mem value prov-buf   variable prov-len
+: load-prov ( -- )  load-base prov-buf load-size move  load-size prov-len ! ;
+: ranges= ( a1 l1 a2 l2 -- flag )  rot 2dup = 0= if 2drop 2drop false exit then nip mem= ;
+: ?identity ( -- )             \ aborts by name on mismatch or an unreadable identity
+  prov-buf prov-len @  find-build-id
+  dup 0= if 2drop 2drop ." REFUSED: image has no .note.gnu.build-id (identity cannot be read)" cr abort then
+  ranges= 0= if ." REFUSED: build-id does not match the provenance record" cr abort then ;
+: gated-go ( -- )  ." gate:" ?identity ." IDENTITY-OK-GO" cr ;   \ the marker is PAST the gate: absent on a refusal
+." ID-READY" cr
+FTH
+    genisoimage -quiet -o "$IDWD/id.iso" -V ELFID -r -J "$IDWD/stage" 2>/dev/null || fail "elf-identity: genisoimage failed"
+
+    # ── the same grading for every door ─────────────────────────────────────
+    id_grade() {  # id_grade <arch> <log>
+      local a="$1" g; g="$(tr -d '\r' < "$2")"
+      grep -qF 'ID-READY' <<<"$g" || fail "elf-identity ($a): ID.FTH never finished loading — see $2"
+      # the build-id the firmware READ equals the host's readelf (the read is correct on this arch)
+      local rid; rid="$(grep -aoE 'IDV1=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$rid" == "$IDB1" ]] || fail "elf-identity ($a): find-build-id read ${rid:-absent} where readelf -n says $IDB1 — the section-header walk or the note parse is wrong on this arch — see $2"
+      # exactly two admits (V1/PROV1 and V2/PROV2) and two refusals (V2/PROV1 mismatch, NOID absent)
+      local ok ref mm nobid
+      ok="$(grep -acF 'IDENTITY-OK-GO' <<<"$g")"
+      mm="$(grep -acF 'build-id does not match the provenance record' <<<"$g")"
+      nobid="$(grep -acF 'image has no .note.gnu.build-id' <<<"$g")"
+      ref=$((mm + nobid))
+      [[ "$ok" -eq 2 ]] || fail "elf-identity ($a): $ok 'IDENTITY-OK-GO' where exactly 2 are expected (V1 vs its record, and V2 vs a record RE-STAMPED from V2) — the gate admitted the wrong set — see $2"
+      [[ "$mm" -eq 1 ]] || fail "elf-identity ($a): the rebuilt payload (V2) against V1's STALE record fired the build-id mismatch $mm times where exactly 1 is expected — the record-outlives-its-subject guard did not bite, or bit twice — see $2"
+      [[ "$nobid" -eq 1 ]] || fail "elf-identity ($a): the no-build-id payload was refused as identity-absent $nobid times where exactly 1 is expected — an image whose identity cannot be read must be refused, not admitted — see $2"
+      # the go-marker must be ABSENT on each refusal — printing a refusal is not refusing
+      [[ "$ok" -eq $(( $(grep -acF 'gate:' <<<"$g") - ref )) ]] || fail "elf-identity ($a): an 'IDENTITY-OK-GO' followed a refusal — the gate printed a complaint and then went anyway — see $2"
+      grep -qaE 'Unexpected Exception|general protection|invalid opcode|Exception vector|T-ERR' <<<"$g" && fail "elf-identity ($a): the firmware took a CPU exception — see $2"
+      note "$a: find-build-id read $rid (== readelf -n); V1 admitted against its record, V2 (one source byte changed → build-id ${IDB2:0:12}…) REFUSED against V1's stale record, admitted once its record is re-stamped, and a payload with no build-id refused as identity-absent"
+    }
+
+    # the four typed probes, one shape (PROV1 → V1 ok → V2 refused; PROV2 → V2 ok; NOID refused)
+    id_lines() {  # id_lines <load-prefix> <suffix>
+      local p="$1" s="$2"
+      printf '%s\n' --send "load ${p}PROV1.BIN${s}\r" --expect "> " --send 'load-prov\r' --expect "> " \
+        --send "load ${p}V1.BIN${s}\r" --expect "> " --send 'load-base 200 + elf-at\r' --expect "> " \
+        --send '." IDV1=" .build-id cr\r' --expect "> " --send 'gated-go\r' --expect "IDENTITY-OK-GO" \
+        --send "load ${p}V2.BIN${s}\r" --expect "> " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "> " \
+        --send "load ${p}PROV2.BIN${s}\r" --expect "> " --send 'load-prov\r' --expect "> " \
+        --send "load ${p}V2.BIN${s}\r" --expect "> " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "IDENTITY-OK-GO" \
+        --send "load ${p}NOID.BIN${s}\r" --expect "> " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "> "
+    }
+
+    # ── unix: -f iso, default (patch-70 mmap'd) load area ──
+    ( cd "$IDWD" && printf '%s\n' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\ELF.FTH'    'load-base load-size evaluate' \
+      'load hd:\ID.FTH'     'load-base load-size evaluate' \
+      'load hd:\PROV1.BIN' 'load-prov' \
+      'load hd:\V1.BIN' 'load-base 200 + elf-at' '." IDV1=" .build-id cr' 'gated-go' \
+      'load hd:\V2.BIN' 'load-base 200 + elf-at' 'gated-go' \
+      'load hd:\PROV2.BIN' 'load-prov' \
+      'load hd:\V2.BIN' 'load-base 200 + elf-at' 'gated-go' \
+      'load hd:\NOID.BIN' 'load-base 200 + elf-at' 'gated-go' 'bye' \
+      | "$IDUBIN" -f "$IDWD/id.iso" "$IDUDICT" > "$IDWD/unix.log" 2>&1 )
+    id_grade unix "$IDWD/unix.log"
+
+    # ── x86 and amd64: over the serial prompt ──
+    for IDA in x86 amd64; do
+      if [[ $IDA == x86 ]]; then IDMB="$IDXMB"; IDDI="$IDXDI"; else IDMB="$IDAMB"; IDDI="$IDADI"; fi
+      IDSER="$WORKDIR/elfid-$IDA.sock"; IDLOG="$IDWD/$IDA.log"; rm -f "$IDSER" "$IDLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$IDMB" -initrd "$IDDI" -nic none -cdrom "$IDWD/id.iso" \
+        -display none -serial "unix:$IDSER,server=on" -no-reboot >/dev/null 2>&1 &
+      IDQ=$!
+      mapfile -t ID_STEPS < <(id_lines '/ide@1/cdrom@0:\\' '')
+      python3 "$REPO/tools/drive-serial-repl.py" "$IDSER" "$IDLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ELF.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ID.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "ID-READY" \
+        --send 'load /ide@1/cdrom@0:\\PROV1.BIN\r'  --expect "0 > " --send 'load-prov\r' --expect "> " \
+        --send 'load /ide@1/cdrom@0:\\V1.BIN\r'     --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " \
+        --send '." IDV1=" .build-id cr\r' --expect "> " --send 'gated-go\r' --expect "IDENTITY-OK-GO" \
+        --send 'load /ide@1/cdrom@0:\\V2.BIN\r'     --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "> " \
+        --send 'load /ide@1/cdrom@0:\\PROV2.BIN\r'  --expect "0 > " --send 'load-prov\r' --expect "> " \
+        --send 'load /ide@1/cdrom@0:\\V2.BIN\r'     --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "IDENTITY-OK-GO" \
+        --send 'load /ide@1/cdrom@0:\\NOID.BIN\r'   --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "> "
+      IDRC=$?
+      kill "$IDQ" 2>/dev/null   # by PID, never by pattern
+      [[ $IDRC -eq 0 ]] || fail "elf-identity ($IDA): the prompt driver did not complete (rc=$IDRC) — see $IDLOG"
+      id_grade "$IDA" "$IDLOG"
+    done
+
+    # ── ppc: the big-endian door reads the same little-endian payload's identity ──
+    IDPLOG="$IDWD/ppc.log"; rm -f "$IDPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$IDPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ELF.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ID.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "ID-READY" \
+      --send 'load cd:\\PROV1.BIN;1\r'  --expect "0 > " --send 'load-prov\r' --expect "> " \
+      --send 'load cd:\\V1.BIN;1\r'     --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " \
+      --send '." IDV1=" .build-id cr\r' --expect "> " --send 'gated-go\r' --expect "IDENTITY-OK-GO" \
+      --send 'load cd:\\V2.BIN;1\r'     --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "> " \
+      --send 'load cd:\\PROV2.BIN;1\r'  --expect "0 > " --send 'load-prov\r' --expect "> " \
+      --send 'load cd:\\V2.BIN;1\r'     --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "IDENTITY-OK-GO" \
+      --send 'load cd:\\NOID.BIN;1\r'   --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " --send 'gated-go\r' --expect "> " \
+      -- qemu-system-ppc -bios "$IDPELF" -nographic -vga none -cdrom "$IDWD/id.iso" >/dev/null 2>&1
+    IDPRC=$?
+    [[ $IDPRC -eq 0 ]] || fail "elf-identity (ppc): the prompt driver did not complete (rc=$IDPRC) — see $IDPLOG"
+    id_grade ppc "$IDPLOG"
+
+    pass "B.4 Spike 5 — identity before trust: the firmware reads an image's .note.gnu.build-id AT THE GATE and refuses a mismatch against a provenance record BEFORE go. dsl/elf.fth's new find-build-id generalises the tlv-primitives note walk — where the host used to compute the note's offset and hand it over, the gate now WALKS THE SECTION HEADERS for .note.gnu.build-id and parses the note itself (reusing the §E4 section machinery and the Spike-6 sub-field: reads). Proven on all four doors — unix, x86, amd64 AND ppc reading the little-endian ELF64 payload — with the build-id read equal to readelf -n's on every arch. The subjects are REAL rebuilds: cc links V1 and V2 from source differing by ONE byte, and --build-id=sha1 makes their build-ids differ ($IDB1 vs $IDB2), so the gate's refusal of V2 against V1's record is the record OUTLIVING ITS SUBJECT, measured — CLAUDE.md bug class #1, caught before go instead of after. Two controls bite: the SAME V2 is ADMITTED once its record is re-stamped (the gate is not simply always-refusing), and a payload with NO build-id is refused as identity-absent (an image whose identity cannot be read is an UNKNOWN, not a pass). NOT a signature scheme — no key verifies the build-id; the anchor is the provenance record on the host, and this says so. Spike 5 DONE (0 gate · 1 measure · 2 sweep · 3 map · 5 identity · 6 big-endian); only Spike 4 (symbol lookup + poke) remains"
+    ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
     # unmeasured — and no claim is made about it. If a future spike wants the dsl
@@ -9923,5 +10113,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|elf-be|unix|launcher]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|elf-be|elf-identity|unix|launcher]" >&2; exit 1 ;;
 esac
