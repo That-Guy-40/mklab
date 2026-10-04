@@ -55,7 +55,7 @@ claimant**; the profile registers `bootparams` before `pe`, so the meaningful ke
 identity wins. That first-match-by-registration-order is a documented dispatch policy,
 not an accident — and it is why the dissector loads the readers in that order.
 
-## The attestation strand — the self-prediction HALF is built ([`smoke-uki-pcrsig.sh`](smoke-uki-pcrsig.sh))
+## The attestation strand — self-prediction ([`smoke-uki-pcrsig.sh`](smoke-uki-pcrsig.sh)) AND the measured boot ([`smoke-uki-attest-boot.sh`](smoke-uki-attest-boot.sh))
 
 A UKI built with a PCR key carries its **own signed prediction** of the PCR-11 values a measured
 boot will produce — the `.pcrsig` section (per TPM bank, per boot phase-path) + the `.pcrpkey` to
@@ -65,9 +65,16 @@ independent `systemd-measure sign` over the UKI's **own** sections (`.linux`/`.o
 `.uname`/`.sbat`/`.pcrpkey`) + the same key + ukify's four phase-paths **reproduces the carried
 policy digests exactly** — the self-prediction is a faithful computation over the UKI's own bytes,
 and `.pcrpkey` is the lab signing key. **Control:** a one-byte `.cmdline` change predicts *different*
-digests (the prediction tracks the artifact). **The heavy half stays deferred** — that an **actual
-OVMF+swtpm boot** measures PCR 11 to this value needs a live TPM and is **UNKNOWN, not PASS**, never
-claimed here.
+digests (the prediction tracks the artifact). **The measured-boot half is now built** —
+[`smoke-uki-attest-boot.sh`](smoke-uki-attest-boot.sh) boots a bootable PCR-keyed UKI under
+**genuine OVMF + a real swtpm TPM 2.0**, the systemd-stub measures its sections into PCR 11, the
+guest reads the **live** PCR 11 from its own `/sys/class/tpm/tpm0`, and `tpm2_eventlog` (the foreign
+oracle) replays the kernel's TCG event log to **exactly** that register — its 14 PCR-11 events the
+UKI's 7 sections measured name-then-content. A one-section change moves PCR 11 (the control bites).
+**One residual stays UNKNOWN, named:** PHASE-level `.pcrsig` *policy* satisfaction needs a
+`systemd-pcrphase` initrd (a busybox initrd never runs it, so the boot measures sections-only — it
+differs from `systemd-measure calculate`'s phase-applied value by exactly that extension,
+diagnosed). OVMF/swtpm-gated → SKIPs where they are absent.
 
 ## What this lab does NOT do (scope guards)
 
@@ -92,7 +99,8 @@ claimed here.
 |---|---|---|
 | `smoke-uki-dissect.sh` | `identify` names container=pe, .linux=bootparams, .initrd=cpio through the contract, matching objdump/file/cpio, with no per-format code | garbage → unrecognised; drop `cpio-conform` → .initrd unclaimed + `need-module cpio` names it absent |
 | `smoke-uki-rescue.sh` | `pe-write` grows .cmdline, `cpio-write` flips a config inside .initrd — each a scoped delta agreeing with a foreign pre-edit oracle | an oversize .cmdline → `edit| TOO-BIG`; a length-changing config edit → `cpio| LEN-CHANGE`; bytes unchanged after each refusal |
-| `smoke-uki-pcrsig.sh` | the UKI's carried `.pcrsig` self-prediction reproduces exactly under an independent `systemd-measure` over its own sections (host-side; the OVMF+swtpm boot is deferred) | a one-byte `.cmdline` change predicts different PCR policy digests |
+| `smoke-uki-pcrsig.sh` | the UKI's carried `.pcrsig` self-prediction reproduces exactly under an independent `systemd-measure` over its own sections (host-side, no boot) | a one-byte `.cmdline` change predicts different PCR policy digests |
+| `smoke-uki-attest-boot.sh` | a bootable PCR-keyed UKI boots under real OVMF+swtpm; the guest's LIVE PCR 11 is replayed from the kernel's TCG log by `tpm2_eventlog` (the 14 events are the UKI's sections); phase-level `.pcrsig` policy stays UNKNOWN, named | a one-section `.cmdline` change moves the live PCR 11 |
 
 ## Layout
 
@@ -104,7 +112,8 @@ uki-workbench/
 ├── uki-dissect.fth           the capstone consumer: dissect a UKI in contract words only
 ├── smoke-uki-dissect.sh      identify NAMES every typed artifact a real UKI carries
 ├── smoke-uki-rescue.sh       the in-RAM rescue edits via the contract's NAME-write surface
-└── smoke-uki-pcrsig.sh       the UKI's self-predicted PCR-11 measurement, graded host-side
+├── smoke-uki-pcrsig.sh       the UKI's self-predicted PCR-11 measurement, graded host-side
+└── smoke-uki-attest-boot.sh  the UKI's MEASURED boot into a real OVMF+swtpm TPM, PCR-11 read live
 ```
 
 ## Running it
@@ -114,6 +123,7 @@ uki-workbench/
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-dissect.sh
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-rescue.sh
 ./smoke-uki-pcrsig.sh   # host-only (no firmware/QEMU); needs ukify + systemd-measure
+./smoke-uki-attest-boot.sh   # boots the UKI under real OVMF + swtpm; needs ovmf, swtpm, a TPM-capable kernel
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. They **SKIP by name** without

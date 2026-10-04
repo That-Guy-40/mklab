@@ -371,10 +371,17 @@ and its scope is confirmed with the user before building, per the usual rule for
       `is_bzimage` greps `file` for `executable bzImage`, but `file-5.46` prints `executable, bzImage`
       (comma), so the `uki`/`uki-edit`/`cmdline-edit`/`bootparams` tracks + the rescue smokes SKIP "no
       bzImage" though a valid one sits at the builder's own default path — same brittle-regex-over-tool-
-      output shape this file warns about; fix that before claiming the showcase green. GENUINELY DEFERRED
-      (UNKNOWN≠PASS): the attestation BOOT half — the carried `.pcrsig` == a real OVMF+swtpm boot's PCR 11
-      (needs a live TPM + `systemd-measure`, which is MISSING here) — and the Authenticode
-      extract-and-host-verify.)_ The motive is an emergency **rescue boot** — fix a
+      output shape this file warns about; fix that before claiming the showcase green. ATTESTATION BOOT
+      HALF — **MOSTLY BUILT 2026-10-04** (`examples/uki-workbench/smoke-uki-attest-boot.sh`): a bootable
+      PCR-keyed UKI boots under genuine OVMF + a real swtpm TPM 2.0, the systemd-stub measures its
+      sections into PCR 11, the guest reads the LIVE PCR 11, and `tpm2_eventlog` replays the kernel's TCG
+      log to exactly that register (its 14 PCR-11 events = the UKI's 7 sections, name+content); a
+      one-section change moves PCR 11 (the control bites). `systemd-measure` is present at
+      `/usr/lib/systemd/systemd-measure` (off PATH). GENUINELY DEFERRED (UNKNOWN≠PASS): the PHASE-level
+      `.pcrsig` **policy** satisfaction — the boot measures sections-only, differing from
+      `systemd-measure calculate`'s phase-applied value by exactly the enter-initrd extension (diagnosed);
+      reaching it needs a `systemd-pcrphase` initrd unlocking a `.pcrsig`-sealed secret — plus the
+      Authenticode extract-and-host-verify.)_ The motive is an emergency **rescue boot** — fix a
       machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
       readers already *find* these; this arc *mutates* them, on the write words that already exist
       (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields` already do graded in-place surgery). **Build
