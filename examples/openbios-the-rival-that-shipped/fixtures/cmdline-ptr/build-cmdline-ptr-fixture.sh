@@ -29,7 +29,7 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 mkdir -p "$OUT"
 
 # ── the subject: a REAL bzImage (its loader is the foreign oracle) ────────────
-is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86 boot executable bzImage'; }
+is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86.*bzImage'; }
 SRC="${2:-}"
 if [[ -z "$SRC" ]]; then
   for c in "${BZIMAGE:-}" \

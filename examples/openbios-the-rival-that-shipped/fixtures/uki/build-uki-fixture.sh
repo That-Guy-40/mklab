@@ -26,7 +26,7 @@ command -v objcopy >/dev/null || { echo "objcopy not installed (binutils)" >&2; 
 STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
 [[ -f "$STUB" ]] || { echo "missing $STUB (systemd-boot-efi) — the EFI stub" >&2; exit 1; }
 
-is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86 boot executable bzImage'; }
+is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86.*bzImage'; }
 SRC=""
 for c in "${BZIMAGE:-}" \
   /media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/build/linux-6.12.30/arch/x86/boot/bzImage \

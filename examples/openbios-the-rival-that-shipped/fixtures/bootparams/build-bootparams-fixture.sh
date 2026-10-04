@@ -19,7 +19,7 @@
 set -eu
 OUT="${1:?usage: build-bootparams-fixture.sh <out.setup>}"
 
-is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86 boot executable bzImage'; }
+is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86.*bzImage'; }
 
 SRC=""
 CANDS=(
