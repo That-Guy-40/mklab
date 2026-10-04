@@ -37,13 +37,27 @@ The **capstone that consumes the contract**, on the `unix` door, self-proving:
   `file`-version regression (`is_bzimage` greps `executable bzImage`; `file-5.46` prints
   `executable, bzImage`) makes the fixture builder SKIP, so re-verification is blocked until
   that grep is made comma-tolerant — the UKI/rescue tracks are passing-via-SKIP meanwhile.
-- **The attestation strand — the SELF-PREDICTION half is DONE** (`smoke-uki-pcrsig.sh`), the
-  BOOT half is deferred. A PCR-keyed UKI (lab keypair, `ukify --pcr-*-key --measure`) carries a
-  `.pcrsig`; an independent `systemd-measure sign` over the UKI's own sections + key + phase-paths
-  reproduces the carried policy digests exactly (host-side, no boot), `.pcrpkey` is the lab key,
-  and a tampered `.cmdline` predicts different digests. **Still deferred, UNKNOWN not PASS:** the
-  carried prediction == an **actual OVMF+swtpm boot's** PCR 11 (needs a live TPM), and the
-  Authenticode extract-and-host-verify. The plan §3 has the feasibility rows.
+- **The attestation strand — SELF-PREDICTION done, MEASURED BOOT now mostly done too
+  (2026-10-04), one phase-level residual named.**
+  - SELF-PREDICTION (`smoke-uki-pcrsig.sh`): a PCR-keyed UKI (lab keypair, `ukify --pcr-*-key
+    --measure`) carries a `.pcrsig`; an independent `systemd-measure sign` over the UKI's own
+    sections + key + phase-paths reproduces the carried policy digests exactly (host-side, no
+    boot), `.pcrpkey` is the lab key, a tampered `.cmdline` predicts different digests.
+  - MEASURED BOOT (`smoke-uki-attest-boot.sh`, NEW): the live-TPM counterpart. A bootable
+    PCR-keyed UKI (real kernel + initrd) boots under **genuine OVMF + a real swtpm TPM 2.0**;
+    the systemd-stub measures its sections into PCR 11; the guest reads the LIVE PCR 11 from its
+    own `/sys/class/tpm/tpm0`; and `tpm2_eventlog` (the foreign oracle) replays the kernel's TCG
+    event log to EXACTLY that register, its 14 PCR-11 events being the UKI's 7 sections measured
+    name-then-content. A one-section change (`.cmdline`) moves PCR 11 — content-sensitive (the
+    negative control bites). This closes the plan's old "the carried prediction == an actual
+    OVMF+swtpm boot's PCR 11 (needs a live TPM)" for the *measurement*: the real TPM saw this UKI
+    and nothing else, foreign-oracle-graded. OVMF/swtpm-gated → SKIPs where they are absent.
+  - **STILL DEFERRED, UNKNOWN not PASS:** PHASE-level `.pcrsig` *policy satisfaction*. The boot
+    above measures sections-only; `systemd-measure calculate` reports a value with the
+    enter-initrd PHASE already applied, so the two differ by exactly that phase extension
+    (diagnosed, not a mismatch). Reaching the phase needs a `systemd-pcrphase` initrd (a busybox
+    initrd never runs it); the end-to-end proof is such an initrd unlocking a `.pcrsig`-sealed
+    secret. Plus the Authenticode extract-and-host-verify. The plan §3 has the feasibility rows.
 - **NAME-live** — DONE as `fdt-live` (#477), consumed by the pacme lab.
 
 ## Grading discipline (the repo's rules, applied here)
