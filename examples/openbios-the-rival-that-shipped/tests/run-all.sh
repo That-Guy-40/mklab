@@ -78,6 +78,7 @@ tracks=(
     test-smoke-elf-conform.sh
     test-smoke-elf-be.sh
     test-smoke-elf-identity.sh
+    test-smoke-elf-symbol.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
     test-smoke-coreboot-amd64.sh

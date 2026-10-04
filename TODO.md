@@ -964,7 +964,23 @@ requires of any other cached fact.
       identity-absent (unreadable identity is UNKNOWN, not a pass); and the mechanism's negative control
       (defeat the byte-compare → V2 wrongly admitted, watched to bite). NOT a signature scheme — no key
       verifies the build-id; the anchor is the provenance record on the host, and the verdict says so.
-      **Remaining:** Spike 4 (symbol lookup + poke-before-boot) — the last B.4 spike.
+      **✅ Spike 4 DONE 2026-10-03 (track `elf-symbol`): symbols — look one up, then poke it before
+      boot.** `dsl/elf.fth`'s new `sym-find` walks the `.symtab` (resolving names through its `sh_link`
+      string table) and finds a symbol by NAME in a loaded image — its address EQUAL to `nm`/`readelf -s`,
+      on ALL FOUR doors (unix/x86/amd64 AND ppc reading the LE ELF64 payload), an absent name → 0 not an
+      invented address. Then GNU poke's headline trick on the bytes ABOUT TO RUN, on the amd64 door
+      whose class the payload runs: `cc` links a client whose global `outbyte` `_start` emits to COM1;
+      the firmware finds `outbyte`, runs it UNPOKED (emits 'A', the original), re-loads, snapshots the
+      byte, pokes it to 'Z' (`region-diff`: exactly ONE byte changed at the symbol's address), and runs
+      again — it emits 'Z'. The OUTCOME is the grade, not the mechanism: the two runs emit DIFFERENT
+      bytes (and the poked run must NOT emit 'A', the unpoked must NOT emit 'Z'), so the poke changed
+      what the program DOES; the unpoked run is the control a grep passing either way would hide.
+      **✅ B.4 COMPLETE (2026-10-03): all seven spikes done — 0 gate · 1 measure · 2 sweep · 3 map ·
+      4 symbol-poke · 5 identity · 6 big-endian.** The ELF reader moved from a word at the prompt to a
+      C gate in the load path (Spike 0), the grading became a boot ladder, and the Forth reader became
+      the gate's agreement oracle on all four arches and both byte orders. Each spike is a
+      `smoke-openbios.sh` track with a wrapper + run-all entry; all lab content (no firmware/patch
+      change past Spike 0's patch 68).
       **Two loader findings were parked here for patches of their own** (both measured
       while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
       MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the

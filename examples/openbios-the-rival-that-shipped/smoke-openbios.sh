@@ -229,6 +229,10 @@ TRACK (default multiboot):
                               image's .note.gnu.build-id (walking section headers) and refuses a
                               mismatch against a provenance record BEFORE go; a one-byte rebuild →
                               new build-id → stale record → refused, re-stamped → admitted
+  elf-symbol                  B.4 Spike 4: symbols — sym-find walks the .symtab to find a symbol
+                              by name (address == nm, all four doors), then POKES it before boot:
+                              the firmware finds `outbyte`, pokes it, and the running client emits
+                              the POKED value (the unpoked run emits the original — the outcome grades)
   event-log                   B.3 Spike 1a: dsl/eventlog.fth authors + parses a
                               crypto-agile TCG measured-boot event log (little-
                               endian, the complement to CBFS), graded vs the TPM
@@ -8195,6 +8199,179 @@ FTH
 
     pass "B.4 Spike 5 — identity before trust: the firmware reads an image's .note.gnu.build-id AT THE GATE and refuses a mismatch against a provenance record BEFORE go. dsl/elf.fth's new find-build-id generalises the tlv-primitives note walk — where the host used to compute the note's offset and hand it over, the gate now WALKS THE SECTION HEADERS for .note.gnu.build-id and parses the note itself (reusing the §E4 section machinery and the Spike-6 sub-field: reads). Proven on all four doors — unix, x86, amd64 AND ppc reading the little-endian ELF64 payload — with the build-id read equal to readelf -n's on every arch. The subjects are REAL rebuilds: cc links V1 and V2 from source differing by ONE byte, and --build-id=sha1 makes their build-ids differ ($IDB1 vs $IDB2), so the gate's refusal of V2 against V1's record is the record OUTLIVING ITS SUBJECT, measured — CLAUDE.md bug class #1, caught before go instead of after. Two controls bite: the SAME V2 is ADMITTED once its record is re-stamped (the gate is not simply always-refusing), and a payload with NO build-id is refused as identity-absent (an image whose identity cannot be read is an UNKNOWN, not a pass). NOT a signature scheme — no key verifies the build-id; the anchor is the provenance record on the host, and this says so. Spike 5 DONE (0 gate · 1 measure · 2 sweep · 3 map · 5 identity · 6 big-endian); only Spike 4 (symbol lookup + poke) remains"
     ;;
+  elf-symbol)
+    # B.4 Spike 4: SYMBOLS — look one up, then POKE it before boot. elf-hash was
+    # there; this adds the .symtab walk (dsl/elf.fth's sym-find) so the firmware
+    # finds a symbol by NAME in a loaded image — its address, equal to nm's — and
+    # then does GNU poke's headline trick on the bytes ABOUT TO RUN: change one byte
+    # at a symbol's address, and let the OUTCOME be the grade. Not "I wrote a byte"
+    # (the mechanism) but "the running program now emits a different value" (the
+    # outcome) — the distinction CLAUDE.md's §2 is entirely about.
+    #
+    # THE SUBJECT. cc links a tiny payload whose global `outbyte` is emitted to COM1
+    # by _start (movb outbyte(%rip) → out 0x3f8 → ret), so it carries a real .symtab
+    # (nm/readelf -s are the oracle) AND runs under OpenBIOS `go`, returning to the
+    # prompt the way the elf-ladder client does. It is ELF64, so the RUN happens on
+    # the amd64 door (its class); the SYMBOL LOOKUP, being a read, runs on all four
+    # doors against the same payload (x86/ppc/unix read the ELF64 as data, as Spike 1
+    # and 5 do) — so "a symbol's address equals nm's" is proven on every arch and the
+    # poke-and-run outcome on the door that can run it.
+    #
+    # THE OUTCOME, AND ITS CONTROL. The firmware finds `outbyte` by name, pokes its
+    # byte, shows the one-byte change with region-diff, and `go`s: the client emits
+    # the POKED value. The control is the SAME payload run WITHOUT the poke — it emits
+    # the ORIGINAL. A poke that changed bytes but not behaviour, or a grep that would
+    # pass on either, is exactly the mechanism-not-outcome trap; here the two runs
+    # emit DIFFERENT bytes and the grade is which one appeared.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-ppc    >/dev/null || skip "qemu-system-ppc not installed — the symbol LOOKUP is proven on the big-endian door too"
+    command -v genisoimage        >/dev/null || skip "genisoimage not installed"
+    command -v readelf            >/dev/null || skip "readelf (binutils) not installed"
+    command -v nm                 >/dev/null || skip "nm (binutils) not installed — the symbol-address oracle"
+    SYCC="$(command -v cc || command -v gcc || true)"
+    [[ -n "$SYCC" ]] || skip "no cc/gcc — this track links a payload with a named global it then pokes; without a linker there is no .symtab to walk"
+    SYUBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"; SYUDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
+    SYXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot";   SYXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    SYAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"; SYADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    SYPELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    for f in "$SYUBIN" "$SYUDICT" "$SYXMB" "$SYXDI" "$SYAMB" "$SYADI" "$SYPELF"; do [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh all first"; done
+    for f in "$HERE/dsl/struct.fth" "$HERE/dsl/elf.fth" "$HERE/dsl/region.fth"; do [[ -f "$f" ]] || fail "elf-symbol: missing $f — this track stages the SHIPPED files"; done
+    grep -q 'sym-find' "$HERE/dsl/elf.fth" || fail "elf-symbol: dsl/elf.fth has no sym-find — the Spike-4 symbol walk is absent"
+    SYWD="$WORKDIR/elf-symbol"; rm -rf "$SYWD"; mkdir -p "$SYWD/stage"
+    cp "$HERE/dsl/struct.fth" "$SYWD/stage/STRUCT.FTH"; cp "$HERE/dsl/elf.fth" "$SYWD/stage/ELF.FTH"; cp "$HERE/dsl/region.fth" "$SYWD/stage/REGION.FTH"
+    # the payload: a global emitted to COM1 by _start, linked low (clear of the firmware, like the elf-ladder fixtures)
+    cat > "$SYWD/sym.c" <<'C'
+unsigned char outbyte = 0x41;   /* 'A' — the value _start emits, and the one the firmware will poke */
+void _start(void){
+    __asm__ __volatile__(
+        "movb outbyte(%%rip), %%al\n\t"
+        "movw $0x3f8, %%dx\n\t"
+        "outb %%al, %%dx\n\t"
+        ::: "rax","rdx");
+}
+C
+    "$SYCC" -nostdlib -static -no-pie -Wl,-e,_start -Wl,-Ttext=0x20000 -o "$SYWD/sym.elf" "$SYWD/sym.c" 2>"$SYWD/cc.log" \
+      || skip "cc could not link the payload ($(tail -1 "$SYWD/cc.log")) — nothing to walk or poke"
+    file -b "$SYWD/sym.elf" | grep -q '^ELF 64-bit LSB' || skip "cc produced $(file -b "$SYWD/sym.elf"), not an ELF64 — sym-find here is ELF64 and the run is the amd64 door"
+    # host ground truth: the two symbol addresses (derive, don't cache)
+    SYM_OUT="$(nm "$SYWD/sym.elf" | awk '$3=="outbyte"{print $1}')"; SYM_OUT="${SYM_OUT#"${SYM_OUT%%[!0]*}"}"; SYM_OUT="${SYM_OUT:-0}"
+    SYM_START="$(nm "$SYWD/sym.elf" | awk '$3=="_start"{print $1}')"; SYM_START="${SYM_START#"${SYM_START%%[!0]*}"}"
+    [[ -n "$SYM_OUT" && -n "$SYM_START" ]] || fail "elf-symbol: nm gave no address for outbyte/_start (out='$SYM_OUT' start='$SYM_START')"
+    # readelf -s must AGREE with nm before either is trusted as the oracle
+    SYM_OUT_RE="$(readelf -sW "$SYWD/sym.elf" | awk '$8=="outbyte"{print $2}' | head -1 | sed 's/^0*//')"
+    [[ "${SYM_OUT_RE:-0}" == "${SYM_OUT:-0}" ]] || fail "elf-symbol: nm ($SYM_OUT) and readelf -s ($SYM_OUT_RE) disagree on outbyte's address — the oracle is not trustworthy"
+    note "symbol oracle: outbyte at 0x$SYM_OUT, _start at 0x$SYM_START (nm == readelf -s)"
+    # stage: the bare ELF (runnable on amd64) and a padded copy (read as data for the 4-door lookup)
+    cp "$SYWD/sym.elf" "$SYWD/stage/SYM.ELF"
+    python3 -c "import sys; open(sys.argv[2],'wb').write(b'\0'*512+open(sys.argv[1],'rb').read())" "$SYWD/sym.elf" "$SYWD/stage/SYMPAD.BIN"
+    cat > "$SYWD/stage/SP.FTH" <<'FTH'
+hex
+variable poke-at
+: show-sym ( -- )   \ the three lookups, for the per-arch oracle cross-check
+  ." SYM-OUT=" s" outbyte" sym-find dup poke-at ! u.
+  ."  SYM-START=" s" _start" sym-find u.
+  ."  SYM-MISS=" s" zzz" sym-find u. cr ;
+." SP-READY" cr
+FTH
+    genisoimage -quiet -o "$SYWD/sym.iso" -V ELFSYM -r -J "$SYWD/stage" 2>/dev/null || fail "elf-symbol: genisoimage failed"
+
+    # ── the LOOKUP grade, every door ────────────────────────────────────────
+    sy_lookup_grade() {  # <arch> <log>
+      local a="$1" g; g="$(tr -d '\r' < "$2")"
+      grep -qF 'SP-READY' <<<"$g" || fail "elf-symbol ($a): SP.FTH never finished loading — see $2"
+      local o s m
+      o="$(grep -aoE 'SYM-OUT=[0-9a-f]+'   <<<"$g" | head -1 | cut -d= -f2)"
+      s="$(grep -aoE 'SYM-START=[0-9a-f]+' <<<"$g" | head -1 | cut -d= -f2)"
+      m="$(grep -aoE 'SYM-MISS=[0-9a-f]+'  <<<"$g" | head -1 | cut -d= -f2)"
+      [[ "$o" == "$SYM_OUT" ]]   || fail "elf-symbol ($a): sym-find outbyte read ${o:-absent} where nm/readelf say $SYM_OUT — the .symtab walk or the linked-strtab name read is wrong on this arch — see $2"
+      [[ "$s" == "$SYM_START" ]] || fail "elf-symbol ($a): sym-find _start read ${s:-absent} where nm says $SYM_START — see $2"
+      [[ "$m" == 0 ]]            || fail "elf-symbol ($a): sym-find of an absent name returned ${m:-absent}, not 0 — a lookup that invents an address for a symbol that is not there is worse than one that fails — see $2"
+    }
+
+    # ── unix / x86 / ppc: LOOKUP ONLY (the ELF64 client's class does not run here) ──
+    ( cd "$SYWD" && printf '%s\n' \
+      'load hd:\STRUCT.FTH' 'load-base load-size evaluate' \
+      'load hd:\ELF.FTH'    'load-base load-size evaluate' \
+      'load hd:\SP.FTH'     'load-base load-size evaluate' \
+      'load hd:\SYMPAD.BIN' 'load-base 200 + elf-at' 'show-sym' 'bye' \
+      | "$SYUBIN" -f "$SYWD/sym.iso" "$SYUDICT" > "$SYWD/unix.log" 2>&1 )
+    sy_lookup_grade unix "$SYWD/unix.log"
+
+    SYSER="$WORKDIR/elfsym-x86.sock"; SYLOG="$SYWD/x86.log"; rm -f "$SYSER" "$SYLOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$SYXMB" -initrd "$SYXDI" -nic none -cdrom "$SYWD/sym.iso" \
+      -display none -serial "unix:$SYSER,server=on" -no-reboot >/dev/null 2>&1 &
+    SYQ=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SYSER" "$SYLOG" --timeout 240 \
+      --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\ELF.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\SP.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "SP-READY" \
+      --send 'load /ide@1/cdrom@0:\\SYMPAD.BIN\r' --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " \
+      --send 'show-sym\r' --expect "SYM-MISS="
+    SYRC=$?; kill "$SYQ" 2>/dev/null   # by PID, never by pattern
+    [[ $SYRC -eq 0 ]] || fail "elf-symbol (x86): the prompt driver did not complete (rc=$SYRC) — see $SYLOG"
+    sy_lookup_grade x86 "$SYLOG"
+
+    SYPLOG="$SYWD/ppc.log"; rm -f "$SYPLOG"
+    python3 "$REPO/tools/drive-pty-repl.py" "$SYPLOG" --timeout 600 --echo-gate --echo-timeout 8 \
+      --expect "Welcome to OpenBIOS" --expect "0 > " \
+      --send 'load cd:\\STRUCT.FTH;1\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\ELF.FTH;1\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load cd:\\SP.FTH;1\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "SP-READY" \
+      --send 'load cd:\\SYMPAD.BIN;1\r' --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " \
+      --send 'show-sym\r' --expect "SYM-MISS=" \
+      -- qemu-system-ppc -bios "$SYPELF" -nographic -vga none -cdrom "$SYWD/sym.iso" >/dev/null 2>&1
+    SYPRC=$?
+    [[ $SYPRC -eq 0 ]] || fail "elf-symbol (ppc): the prompt driver did not complete (rc=$SYPRC) — see $SYPLOG"
+    sy_lookup_grade ppc "$SYPLOG"
+
+    # ── amd64: the FULL arc — look up, poke at the found address, and let the OUTCOME grade ──
+    # The sequence, in one boot: look up outbyte (== nm); run the client UNPOKED (it
+    # emits the original byte); re-load, snapshot its byte, poke it to 'Z', show the
+    # one-byte change with region-diff, run again (it emits the POKED byte). The two
+    # runs must emit DIFFERENT bytes — that difference is the grade.
+    SYASER="$WORKDIR/elfsym-amd64.sock"; SYALOG="$SYWD/amd64.log"; rm -f "$SYASER" "$SYALOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$SYAMB" -initrd "$SYADI" -nic none -cdrom "$SYWD/sym.iso" \
+      -display none -serial "unix:$SYASER,server=on" -no-reboot >/dev/null 2>&1 &
+    SYAQ=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SYASER" "$SYALOG" --timeout 240 \
+      --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\STRUCT.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\ELF.FTH\r'    --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\REGION.FTH\r' --expect "0 > " --send 'load-base load-size evaluate\r' --expect "0 > " \
+      --send 'load /ide@1/cdrom@0:\\SP.FTH\r'     --expect "0 > " --send 'load-base load-size evaluate\r' --expect "SP-READY" \
+      --send 'load /ide@1/cdrom@0:\\SYMPAD.BIN\r' --expect "0 > " --send 'load-base 200 + elf-at\r' --expect "> " \
+      --send 'show-sym\r' --expect "SYM-MISS=" \
+      --send 'load /ide@1/cdrom@0:\\SYM.ELF\r'    --expect "0 > " \
+      --send '." UNRUNmark" cr\r'                --expect "UNRUNmark" \
+      --send 'go\r'                               --expect "0 > " \
+      --send '." ENDUNmark" cr\r'                  --expect "ENDUNmark" \
+      --send 'load /ide@1/cdrom@0:\\SYM.ELF\r'    --expect "0 > " \
+      --send 'poke-at @ 8 region-snapv\r'         --expect "0 > " \
+      --send '5a poke-at @ c!\r'                  --expect "0 > " \
+      --send '." DIFFS=" region-diffs u. cr\r'    --expect "0 > " \
+      --send '." PKRUNmark" cr\r'                  --expect "PKRUNmark" \
+      --send 'go\r'                               --expect "0 > " \
+      --send '." ENDPKmark" cr\r'                  --expect "ENDPKmark"
+    SYARC=$?; kill "$SYAQ" 2>/dev/null   # by PID, never by pattern
+    [[ $SYARC -eq 0 ]] || fail "elf-symbol (amd64): the prompt driver did not complete (rc=$SYARC) — see $SYALOG"
+    sy_lookup_grade amd64 "$SYALOG"
+    SYAG="$(tr -d '\r' < "$SYALOG")"
+    # the poke landed at the symbol's address, exactly one byte
+    grep -qE 'DIFFS=1( |$)' <<<"$SYAG" || fail "elf-symbol (amd64): region-diff saw $(grep -aoE 'DIFFS=[0-9a-f]+' <<<"$SYAG" | head -1 | cut -d= -f2) changed bytes where exactly 1 is expected — the poke at the symbol's address hit the wrong span or more than one byte — see $SYALOG"
+    # THE OUTCOME: the unpoked run emits the ORIGINAL byte, the poked run emits 'Z'; they must DIFFER.
+    # Each window runs from its own marker line (sent alone, so its echo cannot also carry the end
+    # marker — the console-echoes-the-command trap that closed the first window on itself) to the end.
+    syw() { awk -v s="$1" -v e="$2" 'index($0,s){f=1;next} index($0,e){f=0} f' <<<"$SYAG" | tr -d '\r'; }
+    SY_UN="$(syw 'UNRUNmark' 'ENDUNmark')"; SY_PK="$(syw 'PKRUNmark' 'ENDPKmark')"
+    grep -qF 'A ok' <<<"$SY_UN" || fail "elf-symbol (amd64): the UNPOKED client did not emit its original byte 'A' to COM1 (window: $(tr '\n' '|' <<<"$SY_UN")) — the payload did not run, or ran from the wrong entry — see $SYALOG"
+    grep -qF 'Z ok' <<<"$SY_PK" || fail "elf-symbol (amd64): the POKED client did not emit 'Z' (window: $(tr '\n' '|' <<<"$SY_PK")) — poking outbyte at its symbol address did not change what the program emits, so the outcome did not follow the poke — see $SYALOG"
+    grep -qF 'Z ok' <<<"$SY_UN" && fail "elf-symbol (amd64): the UNPOKED run already emitted 'Z' — the two runs are not distinguishable, so the poke's outcome is unproven (a grep that passes either way) — see $SYALOG"
+    grep -qF 'A ok' <<<"$SY_PK" && fail "elf-symbol (amd64): the POKED run still emitted 'A' — the poke did not take, or go re-copied the segment over it — see $SYALOG"
+    note "amd64 outcome: find outbyte at 0x$SYM_OUT (== nm); UNPOKED go emits 'A' (0x41, the original); poke that address to 'Z' (region-diff: exactly 1 byte); POKED go emits 'Z' (0x5a) — the running program's output followed the poke"
+
+    pass "B.4 Spike 4 — symbols: look one up, then poke it before boot. dsl/elf.fth's new sym-find walks the .symtab (resolving names through its sh_link string table) and finds a symbol by NAME in a loaded image: outbyte at 0x$SYM_OUT and _start at 0x$SYM_START, both equal to nm's and readelf -s's, on ALL FOUR doors — unix, x86, amd64 AND ppc reading the little-endian ELF64 payload — and an absent name returns 0 rather than inventing an address. Then GNU poke's headline trick on the bytes ABOUT TO RUN, on the amd64 door whose class the payload runs: the firmware finds outbyte, runs the client UNPOKED (it emits 'A', its original value, to COM1 through OpenBIOS go), then re-loads, snapshots the byte, pokes it to 'Z' — region-diff showing EXACTLY ONE byte changed at the symbol's address — and runs again: the client now emits 'Z'. The OUTCOME is the grade, not the mechanism: the two runs emit DIFFERENT bytes, so the poke changed what the program DOES, not merely bytes in a buffer; the unpoked run is the control that a grep passing either way would hide. This is poke's trick done before boot, on the live image, from a symbol looked up by name. B.4 COMPLETE: 0 gate · 1 measure · 2 sweep · 3 map · 4 symbol-poke · 5 identity · 6 big-endian"
+    ;;
   dict-budget)
     # B.3 plan §6 said: "Not a dictionary budget nobody measured … the budget stays
     # unmeasured — and no claim is made about it. If a future spike wants the dsl
@@ -10113,5 +10290,5 @@ PYX
 
     pass "TODO §20: the hosted firmware AUTHORED a runnable file and the host RAN it. dsl/elf-write.fth hand-builds a 132-byte static x86-64 ELF in the Forth arena and write-file (arch/unix/unix.c, hosted-only) persists it — closing REVIEW §G6's 'the reader is still ahead of the writer'. The assertion is the OUTCOME, not the mechanism: the kernel executed the firmware-authored file and it exited with the exact code the Forth wrote (proven for two distinct codes, so a hardcoded exit would fail), 'file'/readelf/ELFkickers-elfls all decode it as a valid x86-64 ELF64 entering at the authored 0x400078, the 4-byte primitive round-trips its bytes and its return value, and an unopenable path is refused BY NAME with nothing created"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|elf-be|elf-identity|unix|launcher]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|file-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|tlv-primitives|cbfs|cbfs-write|cbfs-payload|cbfs-live|event-log|event-replay|event-real|event-bench|optrom|region-diff|fdt|fdt-import|cpio|pe|bootparams|uki|cmdline-edit|cmdline-ptr|initrd-swap|config-edit|uki-edit|elf-gate|dict-budget|marker|elf-ladder|elf-sweep|elf-measure|elf-conform|elf-be|elf-identity|elf-symbol|unix|launcher]" >&2; exit 1 ;;
 esac
