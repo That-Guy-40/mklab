@@ -310,6 +310,8 @@ PYC
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
+# shellcheck source=tools/lib/bzimage.sh
+. "$REPO/tools/lib/bzimage.sh"   # is_bzimage, the single definition (#500 follow-up)
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
 FLAVOR="${1:-multiboot}"
@@ -6157,7 +6159,7 @@ PY
     (( ${#UKINAMES[@]} >= 2 )) || fail "uki: cpio -itv read no members from .initrd"
     objcopy -O binary --only-section=.linux   "$UKWD/uki.efi" "$UKWD/linux.bin"   2>/dev/null || fail "uki: objcopy could not extract .linux"
     UKLVER="$(file -b "$UKWD/linux.bin" | sed -E 's/.*version ([0-9][^ ]*) .*/\1/')"
-    file -b "$UKWD/linux.bin" | grep -q 'Linux kernel x86.*bzImage' || fail "uki: .linux is not a bzImage per file(1) — the fixture's kernel section is wrong"
+    is_bzimage "$UKWD/linux.bin" || fail "uki: .linux is not a bzImage per file(1) — the fixture's kernel section is wrong"
     # THE HOST-SIDE SELF-CONSISTENCY INVARIANT: ukify wrote .uname from .linux's version.
     [[ -n "$UKUNAME" && "$UKUNAME" == "$UKLVER" ]] || fail "uki: the fixture is not self-consistent — .uname='$UKUNAME' but file(.linux) reads version '$UKLVER'"
     cp "$UKSTRUCT" "$UKWD/stage/STRUCT.FTH"; cp "$UKPE" "$UKWD/stage/PE.FTH"; cp "$UKCPIO" "$UKWD/stage/CPIO.FTH"; cp "$UKBP" "$UKWD/stage/BOOTPARM.FTH"; cp "$UKWD/uki.efi" "$UKWD/stage/UKI.EFI"

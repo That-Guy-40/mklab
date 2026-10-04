@@ -20,13 +20,14 @@
 set -eu
 OUT="${1:?usage: build-uki-fixture.sh <out.efi>}"
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tools/lib/bzimage.sh
+. "$HERE/../../../../tools/lib/bzimage.sh"   # is_bzimage, the single definition (#500 follow-up)
 
 command -v ukify   >/dev/null || { echo "ukify not installed (systemd-ukify) — the UKI builder/oracle" >&2; exit 1; }
 command -v objcopy >/dev/null || { echo "objcopy not installed (binutils)" >&2; exit 1; }
 STUB=/usr/lib/systemd/boot/efi/linuxx64.efi.stub
 [[ -f "$STUB" ]] || { echo "missing $STUB (systemd-boot-efi) — the EFI stub" >&2; exit 1; }
 
-is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86.*bzImage'; }
 SRC=""
 for c in "${BZIMAGE:-}" \
   /media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/build/linux-6.12.30/arch/x86/boot/bzImage \

@@ -61,14 +61,15 @@ command -v python3 >/dev/null || skip "python3 not installed (parses the .pcrsig
 [[ -f "$STUB" ]] || skip "missing the systemd EFI stub $STUB (systemd-boot-efi)"
 
 # a readable bzImage for .linux (same discovery as the rival lab's UKI fixture builder)
-is_bz() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86.*bzImage'; }
+# shellcheck source=tools/lib/bzimage.sh
+. "$(dirname "$0")/../../tools/lib/bzimage.sh"   # is_bzimage, the single definition (#500 follow-up)
 SRC=""
 for c in "${BZIMAGE:-}" \
   "$RIVAL/../../micro-linux/out/x86_64/build/linux-6.12.30/arch/x86/boot/bzImage" \
   /media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/build/linux-6.12.30/arch/x86/boot/bzImage; do
-  [[ -n "$c" ]] && is_bz "$c" && { SRC="$c"; break; }
+  [[ -n "$c" ]] && is_bzimage "$c" && { SRC="$c"; break; }
 done
-[[ -z "$SRC" ]] && for k in /boot/vmlinuz-*; do is_bz "$k" && { SRC="$k"; break; }; done
+[[ -z "$SRC" ]] && for k in /boot/vmlinuz-*; do is_bzimage "$k" && { SRC="$k"; break; }; done
 [[ -n "$SRC" ]] || skip "no readable bzImage found (set BZIMAGE=/path/to/bzImage) — the .linux subject"
 
 WD="$(mktemp -d)"
