@@ -55,6 +55,8 @@ case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RIVAL="$(cd "$HERE/../openbios-the-rival-that-shipped" && pwd)"
 DSL="$RIVAL/dsl"
+# shellcheck source=tools/lib/bzimage.sh
+. "$HERE/../../tools/lib/bzimage.sh"   # is_bzimage, the single definition (#500 follow-up)
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 UB="$WORKDIR/openbios/obj-amd64/openbios-unix"; UD="$UB.dict"
 
@@ -92,7 +94,7 @@ for s in .linux .initrd .cmdline; do
     objdump -h "$WD/uki.efi" | grep -qE "[[:space:]]${s}[[:space:]]" || fail "objdump -h: the UKI lacks a $s section"
 done
 objcopy -O binary --only-section=.linux "$WD/uki.efi" "$WD/linux.bin" 2>/dev/null || fail "objcopy could not extract .linux"
-file -b "$WD/linux.bin" | grep -q 'Linux kernel x86.*bzImage' \
+is_bzimage "$WD/linux.bin" \
     || fail "file(1): .linux is not a bzImage — the kernel oracle disagrees"
 objcopy -O binary --only-section=.initrd "$WD/uki.efi" "$WD/initrd.bin" 2>/dev/null || fail "objcopy could not extract .initrd"
 mapfile -t IMEM < <(cpio -itv < "$WD/initrd.bin" 2>/dev/null | awk '{print $NF}')

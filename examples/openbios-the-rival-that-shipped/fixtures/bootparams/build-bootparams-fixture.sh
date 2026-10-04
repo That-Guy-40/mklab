@@ -18,8 +18,9 @@
 # Usage: build-bootparams-fixture.sh <out.setup>
 set -eu
 OUT="${1:?usage: build-bootparams-fixture.sh <out.setup>}"
-
-is_bzimage() { [[ -r "$1" ]] && file -b "$1" 2>/dev/null | grep -q 'Linux kernel x86.*bzImage'; }
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=tools/lib/bzimage.sh
+. "$HERE/../../../../tools/lib/bzimage.sh"   # is_bzimage, the single definition (#500 follow-up)
 
 SRC=""
 CANDS=(

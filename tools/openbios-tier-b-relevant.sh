@@ -41,6 +41,8 @@ PATTERNS=(
     'tools/openbios-*'                            # pin-check, the TESTED-TREE regenerator
     'tools/drive-pty-repl.py'                     # smoke-openbios.sh drives ppc through it
     'tools/drive-serial-repl.py'                  # ...and x86/amd64 through this one
+    'tools/lib/*'                                 # smoke-openbios.sh + the uki smokes source tools/lib/bzimage.sh (is_bzimage, #500 follow-up)
+    'tools/lib'                                   # ...and the relevance checker derives the bare dir (its $REPO/tools/NAME extractor stops at '/')
     '.github/workflows/openbios-tier-b.yml'       # the job itself
 )
 
