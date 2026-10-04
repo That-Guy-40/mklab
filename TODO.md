@@ -362,10 +362,19 @@ and its scope is confirmed with the user before building, per the usual rule for
       confirmed with the user before starting, not assumed here.
 - [ ] **Then the RESCUE ARC — [UKI plan Spikes 6–11](UKI_WORKBENCH_LAB_PLAN.md#the-rescue-arc--editing-a-boot-artifact-command-line-initrd-config-spikes-611-added-2026-09-17),
       mutating a boot artifact — command line, initrd, and config blobs (added 2026-09-17 at the user's
-      request; expanded the same day to 9–11).** _(IN-RAM half DONE 2026-10-02 via #475's
-      `smoke-uki-rescue.sh` — `pe-write`/`cpio-write` through the contract; the PERSISTED showcase
-      (`uki-edit.sh` re-emit, the rival lab's `showcase-rescue.sh`) and the attestation strand remain.)_
-      request; expanded the same day to 9–11).** The motive is an emergency **rescue boot** — fix a
+      request; expanded the same day to 9–11).** _(STATUS re-derived 2026-10-04, correcting a stale
+      note: the IN-RAM half is DONE (#475's `smoke-uki-rescue.sh`, `pe-write`/`cpio-write` through the
+      contract) **and the PERSISTED deliverables ALREADY EXIST** — `uki-edit.sh` (Sep 18) + the capstone
+      `showcase-rescue.sh` (Sep 19, Spikes 6/8/10/11, four break→fail→rescue paths), which are OVMF-gated
+      **manual** showcases, not CI tracks. So "the persisted showcase remains" was stale. ⚠️ **END-TO-END
+      RE-VERIFICATION HERE IS BLOCKED by a found liar** (2026-10-04): the UKI fixture builder's
+      `is_bzimage` greps `file` for `executable bzImage`, but `file-5.46` prints `executable, bzImage`
+      (comma), so the `uki`/`uki-edit`/`cmdline-edit`/`bootparams` tracks + the rescue smokes SKIP "no
+      bzImage" though a valid one sits at the builder's own default path — same brittle-regex-over-tool-
+      output shape this file warns about; fix that before claiming the showcase green. GENUINELY DEFERRED
+      (UNKNOWN≠PASS): the attestation BOOT half — the carried `.pcrsig` == a real OVMF+swtpm boot's PCR 11
+      (needs a live TPM + `systemd-measure`, which is MISSING here) — and the Authenticode
+      extract-and-host-verify.)_ The motive is an emergency **rescue boot** — fix a
       machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
       readers already *find* these; this arc *mutates* them, on the write words that already exist
       (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields` already do graded in-place surgery). **Build
@@ -882,7 +891,7 @@ requires of any other cached fact.
       **BUILD-READY** as of 2026-08-08, all four §9 decisions resolved including the
       charter boundary and the directory name (`examples/security-range/`). First
       increment: the spine + S2.
-- [ ] **B.4 — build [`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md)** —
+- [x] **B.4 — build [`ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md`](ELF_GATE_AND_BOOT_LADDER_LAB_PLAN.md)** —
       v1 (2026-09-05), B.3's successor: the ELF reader moves from a word typed at the prompt to a
       **gate in the load path** (Spike 0, a DECISION: C loader vs compiled-in Forth vs both), and
       the grading becomes a **boot ladder** (REFUSED / LOADED-NOT-RUN / RAN-RETURNED / BOOTED)

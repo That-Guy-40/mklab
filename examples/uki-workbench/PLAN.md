@@ -26,12 +26,17 @@ The **capstone that consumes the contract**, on the `unix` door, self-proving:
 ## What this lab defers (with the crux, so it is a spike and not a bare TODO)
 
 - **The persisted rescue + the full break→fail→rescue showcase (Spikes 8-basic, 11) —
-  PR2.** A firmware RAM edit is invisible to a host tool, so the persisted deliverable
-  is [`uki-edit.sh`](../openbios-the-rival-that-shipped/uki-edit.sh) re-emitting a
-  patched UKI that `objcopy`/`ukify` read back (the foreign-oracle grade of an *edited*
-  artifact), and a narrated `showcase-rescue.sh` that boots the unedited artifact to a
-  named failure signature first, then rescues it. **Crux:** the showcase needs the OVMF
-  boot loop for the cmdline act; the config/initrd acts are gradeable on the host now.
+  BUILT (re-derived 2026-10-04, correcting a "PR2-deferred" note).** The persisted
+  deliverable [`uki-edit.sh`](../openbios-the-rival-that-shipped/uki-edit.sh) (re-emits a
+  patched UKI that `objcopy`/`ukify` read back — the foreign-oracle grade of an *edited*
+  artifact) and the narrated [`showcase-rescue.sh`](../openbios-the-rival-that-shipped/showcase-rescue.sh)
+  (boots the unedited artifact to a named failure signature first, then rescues it, across
+  four acts: initrd/config/cmdline/bzImage) both exist. They are OVMF-gated **manual**
+  showcases, not CI tracks. **Crux (unchanged):** the showcase needs the OVMF boot loop for
+  the cmdline act; the config/initrd acts are gradeable on the host. **⚠️ 2026-10-04:** a
+  `file`-version regression (`is_bzimage` greps `executable bzImage`; `file-5.46` prints
+  `executable, bzImage`) makes the fixture builder SKIP, so re-verification is blocked until
+  that grep is made comma-tolerant — the UKI/rescue tracks are passing-via-SKIP meanwhile.
 - **The attestation strand — the SELF-PREDICTION half is DONE** (`smoke-uki-pcrsig.sh`), the
   BOOT half is deferred. A PCR-keyed UKI (lab keypair, `ukify --pcr-*-key --measure`) carries a
   `.pcrsig`; an independent `systemd-measure sign` over the UKI's own sections + key + phase-paths
