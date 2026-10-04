@@ -456,6 +456,14 @@ variable why-adr  variable why-len \ the last captured reason ( c-addr u )
 : cstr     ( adr -- adr len )  dup cstr-len ;
 : .cstr    ( adr -- )  cstr type ;
 
+\ byte-range equality — the primitive an identity check is built on (B.4 Spike 5).
+\ mem= compares len bytes; cstr= compares a NUL-terminated string to a counted one
+\ (its length first, so a prefix cannot pass for the whole name).
+: mem= ( a1 a2 len -- flag )
+  0 ?do over i + c@ over i + c@ <> if 2drop unloop false exit then loop 2drop true ;
+: cstr= ( cstr s-adr s-len -- flag )
+  >r over cstr-len r@ = if r> mem= else r> 2drop drop false then ;
+
 \ ── a hex+ASCII dump, because exploring needs one ──────────────────
 \ Not poke-derived; poke gives you this for free and a bare `0 >` prompt does
 \ not. 16 bytes a line, address first, printable ASCII on the right.

@@ -948,7 +948,23 @@ requires of any other cached fact.
       it flips+re-binds and is refused on the BE-misread ehsize, `got=4000`) and its §E2 assertion +
       verdict rewritten; `elf-gate` (LE ELF64) + `dict-budget` re-run green. ELF64-BE stays out of scope
       (the 8-byte lo/hi split needs a BE 64-bit path struct.fth refuses by name — no such subject exists).
-      **Remaining:** Spike 5 (identity), 4 (symbol poke).
+      **✅ Spike 5 DONE 2026-10-03 (track `elf-identity`): identity before trust.** The firmware reads
+      a loaded image's `.note.gnu.build-id` AT THE GATE and refuses a mismatch against a provenance
+      record BEFORE `go` — the record-outlives-its-subject guard (bug class #1), now inside the
+      firmware. `dsl/elf.fth`'s new `find-build-id` GENERALISES the `tlv-primitives` note walk: there
+      the host computed the note's offset and handed it over; here the gate WALKS THE SECTION HEADERS
+      for `.note.gnu.build-id` and parses the note itself (reusing the §E4 section machinery + the
+      Spike-6 `sub-field:` reads, so the note sizes come in the subject's byte order). `dsl/struct.fth`
+      gained `mem=`/`cstr=` (byte-range equality). Proven on ALL FOUR doors (unix/x86/amd64 AND ppc
+      reading the LE ELF64 payload), build-id read == `readelf -n` on each. The subjects are REAL
+      rebuilds: `cc` links V1/V2 from source differing by ONE byte and `--build-id=sha1` makes their
+      build-ids differ (`204fc65d…` vs `736e3d82…`), so the gate's refusal of V2 against V1's record is
+      the record outliving its subject, measured — caught before `go`, not after. Controls: V2 ADMITTED
+      once its record is re-stamped (not simply always-refusing); a payload with NO build-id refused as
+      identity-absent (unreadable identity is UNKNOWN, not a pass); and the mechanism's negative control
+      (defeat the byte-compare → V2 wrongly admitted, watched to bite). NOT a signature scheme — no key
+      verifies the build-id; the anchor is the provenance record on the host, and the verdict says so.
+      **Remaining:** Spike 4 (symbol lookup + poke-before-boot) — the last B.4 spike.
       **Two loader findings were parked here for patches of their own** (both measured
       while building Spike 0). (a) **⚠️ RE-MEASURED 2026-10-03 — the original characterization was a
       MISDIAGNOSIS, now corrected (derive, don't cache).** The 2026-09-05 claim — "`load` never frees the
