@@ -377,11 +377,17 @@ and its scope is confirmed with the user before building, per the usual rule for
       sections into PCR 11, the guest reads the LIVE PCR 11, and `tpm2_eventlog` replays the kernel's TCG
       log to exactly that register (its 14 PCR-11 events = the UKI's 7 sections, name+content); a
       one-section change moves PCR 11 (the control bites). `systemd-measure` is present at
-      `/usr/lib/systemd/systemd-measure` (off PATH). GENUINELY DEFERRED (UNKNOWN≠PASS): the PHASE-level
-      `.pcrsig` **policy** satisfaction — the boot measures sections-only, differing from
-      `systemd-measure calculate`'s phase-applied value by exactly the enter-initrd extension (diagnosed);
-      reaching it needs a `systemd-pcrphase` initrd unlocking a `.pcrsig`-sealed secret — plus the
-      Authenticode extract-and-host-verify.)_ The motive is an emergency **rescue boot** — fix a
+      `/usr/lib/systemd/systemd-measure` (off PATH). **AUTHENTICODE host-verify DONE 2026-10-05**
+      (`examples/uki-workbench/smoke-uki-authenticode.sh`): ukify `--signtool sbsign` signs the UKI,
+      `sbverify` (foreign oracle) accepts it against the lab cert, a rogue cert is rejected and a 6-byte
+      tamper is a hash mismatch — the signature gate before the TPM measurement. STILL A SPIKE
+      (UNKNOWN≠PASS): the PHASE-level `.pcrsig` **policy** satisfaction — a secret sealed to the signed
+      `.pcrsig` that unlocks only on a boot whose PCR 11 matches. The attest-boot measures sections-only
+      (14 events, no phase word — the stub 259 doesn't extend enter-initrd; `systemd-pcrextend` does, in a
+      systemd initrd), so reaching the signed phase + `systemd-creds decrypt` there is a real
+      systemd-in-initrd integration; crux + experiments (stage systemd-creds+libs+pcrextend into the
+      initrd, raw-PCR stepping-stone first; or a systemd initrd) in `examples/uki-workbench/PLAN.md`.)_
+      The motive is an emergency **rescue boot** — fix a
       machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
       readers already *find* these; this arc *mutates* them, on the write words that already exist
       (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields` already do graded in-place surgery). **Build
