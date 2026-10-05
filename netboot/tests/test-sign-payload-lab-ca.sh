@@ -112,12 +112,24 @@ note "the DER trust root is the shared anchor, by digest"
 # ── 6. tamper → rejected ────────────────────────────────────────────────────────────────
 # The positive case above verified an untouched payload; an assertion never seen to fail is
 # not known to be checking anything.
-printf 'X' | dd of="$payload" bs=1 seek=1024 count=1 conv=notrunc status=none
+#
+# THE FLIP MUST ACTUALLY CHANGE A BYTE. Writing a FIXED 'X' at offset 1024 was a 1/256 NO-OP:
+# the payload is /dev/urandom, so once in 256 runs byte 1024 was already 'X', the content did
+# not move, verification correctly still passed, and this control cried REGRESSION at a
+# signature that was fine (it blocked PRs #499 and #502, measured 2026-10-05 — a flake wearing
+# a signature-failure's clothes). So XOR the byte that is there (certain to differ) and ASSERT
+# the content moved before trusting the verify to reject it — a control that cannot bite unless
+# the thing it controls for actually happened.
+before_sha="$(sha256sum "$payload" | cut -d' ' -f1)"
+orig="$(od -An -tu1 -j1024 -N1 "$payload" | tr -d ' ')"
+printf "$(printf '\\%03o' $(( orig ^ 0xff )))" | dd of="$payload" bs=1 seek=1024 count=1 conv=notrunc status=none
+[[ "$(sha256sum "$payload" | cut -d' ' -f1)" != "$before_sha" ]] \
+    || fail "the tamper step did not change the payload at offset 1024 (orig byte $orig) — a negative control that alters nothing proves nothing"
 if openssl cms -verify -binary -purpose any -inform DER -in "$payload.sig" \
         -content "$payload" -CAfile "$CA/lab-ca.crt" -out /dev/null 2>/dev/null; then
     fail "REGRESSION: a payload with one flipped byte still verified — the signature is not covering the content"
 fi
-note "one flipped byte → the signature is rejected"
+note "one flipped byte (XOR of the original, content provably changed) → the signature is rejected"
 
 # ── 7. the OTHER leaf profile must NOT work here ────────────────────────────────────────
 # issue-signing-cert.sh mints Ed25519 with NO EKU, deliberately: stboot's Go x509 defaults
