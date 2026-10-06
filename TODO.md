@@ -380,14 +380,18 @@ and its scope is confirmed with the user before building, per the usual rule for
       `/usr/lib/systemd/systemd-measure` (off PATH). **AUTHENTICODE host-verify DONE 2026-10-05**
       (`examples/uki-workbench/smoke-uki-authenticode.sh`): ukify `--signtool sbsign` signs the UKI,
       `sbverify` (foreign oracle) accepts it against the lab cert, a rogue cert is rejected and a 6-byte
-      tamper is a hash mismatch — the signature gate before the TPM measurement. STILL A SPIKE
-      (UNKNOWN≠PASS): the PHASE-level `.pcrsig` **policy** satisfaction — a secret sealed to the signed
-      `.pcrsig` that unlocks only on a boot whose PCR 11 matches. The attest-boot measures sections-only
-      (14 events, no phase word — the stub 259 doesn't extend enter-initrd; `systemd-pcrextend` does, in a
-      systemd initrd), so reaching the signed phase + `systemd-creds decrypt` there is a real
-      systemd-in-initrd integration; crux + experiments (stage systemd-creds+libs+pcrextend into the
-      initrd, raw-PCR stepping-stone first; or a systemd initrd) in `examples/uki-workbench/PLAN.md`.)_
-      The motive is an emergency **rescue boot** — fix a
+      tamper is a hash mismatch — the signature gate before the TPM measurement. **SEALED-SECRET
+      UNLOCK DONE 2026-10-05** (`examples/uki-workbench/smoke-uki-pcr-unlock.sh`): the end-to-end — a
+      self-contained initrd carrying `systemd-creds` + `systemd-pcrextend` + the dlopen'd `libtss2`
+      closure runs in a ramdisk under real OVMF+swtpm; the stub measures PCR 11, `systemd-pcrextend`
+      adds the phase, `systemd-creds` seals a secret to PCR 11 (`--tpm2-pcrs=11`) and unlocks it (boot A),
+      and a one-section `.cmdline` tamper makes the TPM REFUSE the policy ("…tampered", boot B — the
+      negative control bites, same TPM + same cred). That resolves the in-initrd systemd-userspace
+      integration. STILL A SPIKE (UNKNOWN≠PASS) only for the UPDATE-SURVIVABLE **signed** `.pcrsig`
+      variant (`systemd-creds --tpm2-public-key`/PolicyAuthorize): its tampered boot still unlocked —
+      localized by event-log replay to systemd-creds' PolicyAuthorize handling, NOT the TPM (the UKIs
+      measure PCR 11 to genuinely different values 0x096a…/0xa506…); experiments in
+      `examples/uki-workbench/PLAN.md`.)_ The motive is an emergency **rescue boot** — fix a
       machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
       readers already *find* these; this arc *mutates* them, on the write words that already exist
       (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields` already do graded in-place surgery). **Build
