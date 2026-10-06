@@ -85,11 +85,16 @@ dlopen'd `libtss2`) in a ramdisk under real OVMF + swtpm. Boot A (good UKI): the
 Boot B (one section changed, same TPM + same cred): PCR 11 measures differently, the TPM **refuses the
 policy** ("…tampered") — the negative control bites. The credential is bound to the boot.
 
-**One residual stays a SPIKE, localized:** the UPDATE-SURVIVABLE *signed*-`.pcrsig` variant
-(`systemd-creds --tpm2-public-key` / PolicyAuthorize). Its tampered boot still unlocked in testing —
-localized by event-log replay to `systemd-creds`' PolicyAuthorize handling, **not** the TPM (the two
-UKIs do measure PCR 11 to different values). Experiments in [`PLAN.md`](PLAN.md). All OVMF/swtpm-gated →
-SKIP where absent; and swtpm is software, not a hardware root of trust.
+**The signed-policy question is RESOLVED** (the old "why didn't it gate" spike, chased to ground):
+`systemd-creds --tpm2-public-key` is a **soft** signed-PCR policy — the cred decrypts with *no*
+signature, *even on a tampered boot*, because systemd-creds degrades to the SRK-only key by design
+(graceful boot-time credential loading; no strict flag exists). It is **not** the TPM (event-log replay:
+the two UKIs measure PCR 11 to genuinely different values) and not the test. So the hard gate is
+`--tpm2-pcrs` (above); the hard *and* update-survivable signed gate is `systemd-cryptenroll` on a LUKS
+volume (no soft fallback), a separate mechanism. `smoke-uki-pcr-unlock.sh` pins this as a **watched
+contrast** — on the tampered boot the `--tpm2-pcrs` cred is refused while the `--tpm2-public-key` cred
+unlocks — so a future systemd change is noticed. Details in [`PLAN.md`](PLAN.md). All OVMF/swtpm-gated →
+SKIP where absent; swtpm is software, not a hardware root of trust.
 
 ## What this lab does NOT do (scope guards)
 
@@ -117,7 +122,7 @@ SKIP where absent; and swtpm is software, not a hardware root of trust.
 | `smoke-uki-pcrsig.sh` | the UKI's carried `.pcrsig` self-prediction reproduces exactly under an independent `systemd-measure` over its own sections (host-side, no boot) | a one-byte `.cmdline` change predicts different PCR policy digests |
 | `smoke-uki-attest-boot.sh` | a bootable PCR-keyed UKI boots under real OVMF+swtpm; the guest's LIVE PCR 11 is replayed from the kernel's TCG log by `tpm2_eventlog` (the 14 events are the UKI's sections); phase-level `.pcrsig` policy stays UNKNOWN, named | a one-section `.cmdline` change moves the live PCR 11 |
 | `smoke-uki-authenticode.sh` | the UKI's embedded Authenticode signature verifies against the lab Secure Boot cert under `sbverify` (the foreign oracle), the signature gate before the TPM measurement | a rogue cert → rejected; a six-byte tamper → hash mismatch |
-| `smoke-uki-pcr-unlock.sh` | end-to-end: a secret sealed to the UKI's measured PCR 11 (in-initrd `systemd-creds`) unlocks on the good boot and the TPM refuses a tampered one; signed-`.pcrsig` variant is a named spike | a one-section `.cmdline` change → the TPM rejects the policy (UNLOCK-FAIL, same TPM + cred) |
+| `smoke-uki-pcr-unlock.sh` | end-to-end: a secret sealed to the UKI's measured PCR 11 (in-initrd `systemd-creds --tpm2-pcrs`) unlocks on the good boot; a tampered UKI is refused by the TPM; and a watched contrast shows `--tpm2-public-key` is soft (unlocks a tampered boot too) | tampered boot: `--tpm2-pcrs` rejected (hard) while `--tpm2-public-key` unlocks (soft) — both observed |
 
 ## Layout
 

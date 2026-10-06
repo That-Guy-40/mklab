@@ -97,6 +97,21 @@ if /usr/bin/systemd-creds decrypt --name=labsecret /mnt/labsecret.cred /tmp/out 
 else
   busybox echo "UNLOCK-FAIL: $(busybox cat /tmp/e|busybox tr '\n' ' '|busybox cut -c1-160)"
 fi
+# THE CONTRAST — the SIGNED (public-key) policy. systemd-creds treats --tpm2-public-key
+# as a SOFT binding: the cred degrades to SRK-only and decrypts with NO signature, even
+# when PCR 11 differs. So the SAME pk.cred that unlocks on the good boot ALSO unlocks on
+# the tampered boot below — the opposite of labsecret.cred's hard --tpm2-pcrs gate. This
+# is the resolution of the old "signed-policy didn't gate" spike, pinned as a control:
+# if a future systemd makes --tpm2-public-key a hard gate, PKUNLOCK flips and this bites.
+if [ ! -f /mnt/pk.cred ]; then
+  busybox printf '%s' "SECRET_PLACEHOLDER" > /tmp/pks
+  /usr/bin/systemd-creds encrypt --with-key=tpm2 --tpm2-public-key=/mnt/pcr.pub --tpm2-public-key-pcrs=11 --name=pklab /tmp/pks /mnt/pk.cred 2>/dev/null && busybox echo "PKENROLL-OK"; busybox sync
+fi
+if /usr/bin/systemd-creds decrypt --name=pklab /mnt/pk.cred /tmp/pko 2>/dev/null; then
+  busybox echo "PKUNLOCK-OK (signed-policy cred decrypted with NO signature — soft)"
+else
+  busybox echo "PKUNLOCK-FAIL (signed-policy cred refused without a signature)"
+fi
 busybox echo "ATTEST-DONE"; busybox sync; busybox sleep 1; busybox poweroff -f
 INIT
 busybox sed -i "s/SECRET_PLACEHOLDER/$SECRET/" "$R/init" 2>/dev/null || sed -i "s/SECRET_PLACEHOLDER/$SECRET/" "$R/init"
@@ -120,7 +135,8 @@ objcopy -O binary --only-section=.pcrsig "$WD/uki-bad.efi"  "$WD/sig-bad"  2>/de
 
 # ── one swtpm state dir (SRK persists) + one ext2 scratch (the cred persists A→B) ──
 TPMSTATE="$WD/tpmstate"; mkdir -p "$TPMSTATE"
-rm -rf "$WD/creddir"; mkdir -p "$WD/creddir"; mke2fs -q -t ext2 -F -d "$WD/creddir" "$WD/creds.ext2" 16M 2>/dev/null || fail "could not build the ext2 scratch disk"
+rm -rf "$WD/creddir"; mkdir -p "$WD/creddir"; cp "$WD/pcr.pub" "$WD/creddir/"   # pcr.pub for the signed-policy contrast enroll
+mke2fs -q -t ext2 -F -d "$WD/creddir" "$WD/creds.ext2" 16M 2>/dev/null || fail "could not build the ext2 scratch disk"
 
 boot() {  # boot <uki> <tag> -> prints the guest's ENROLL/UNLOCK lines
     local uki="$1" tag="$2"
@@ -145,16 +161,27 @@ grep -qF 'PCREXTEND-OK' <<<"$A" || fail "boot A: systemd-pcrextend did not advan
 grep -qF 'ENROLL-OK' <<<"$A" || fail "boot A: systemd-creds could not seal a secret to PCR 11 in-guest: $(grep -aoE 'ENROLL-FAIL:[^Z]*' <<<"$A" | head -1)"
 grep -qF "UNLOCK-OK secret=[$SECRET]" <<<"$A" \
     || fail "boot A: the secret sealed to this boot's PCR 11 did not unlock on the SAME boot ($(grep -aoE 'UNLOCK-[A-Z]+[^Z]*' <<<"$A" | head -1)) — the mechanism is broken before the control can mean anything"
+grep -qF 'PKENROLL-OK' <<<"$A" || fail "boot A: could not enroll the signed-policy (--tpm2-public-key) contrast cred — the resolution of the old spike cannot be demonstrated"
+grep -qF 'PKUNLOCK-OK' <<<"$A" || fail "boot A: the signed-policy cred did not decrypt on its own good boot — unexpected, re-derive"
 note "boot A (good UKI): the stub measured its sections into PCR 11, systemd-pcrextend added the enter-initrd phase, systemd-creds sealed '$SECRET' to PCR 11 as-measured and decrypted it back — UNLOCK-OK, in a ramdisk, against a real swtpm TPM 2.0"
 
 # ── BOOT B: a tampered UKI, SAME TPM + SAME sealed cred — the TPM must REFUSE the policy ──
 B="$(boot "$WD/uki-bad.efi" B)"
 grep -qF 'ENROLL-SKIP' <<<"$B" || fail "boot B: the credential from boot A did not persist to boot B (no ENROLL-SKIP) — the test did not actually re-present the SAME sealed secret"
-grep -qF 'UNLOCK-OK' <<<"$B" \
-    && fail "NEGATIVE CONTROL FAILED: a tampered UKI (its .cmdline changed, a genuinely different PCR 11) STILL unlocked the secret — the credential is not bound to the boot, so a tampered image would attest as trusted"
+# the HARD gate (direct --tpm2-pcrs). NB: match 'UNLOCK-OK secret=' specifically — the
+# soft-policy line below is 'PKUNLOCK-OK', which contains 'UNLOCK-OK' as a substring.
+grep -qF 'UNLOCK-OK secret=' <<<"$B" \
+    && fail "NEGATIVE CONTROL FAILED: a tampered UKI (its .cmdline changed, a genuinely different PCR 11) STILL unlocked the --tpm2-pcrs secret — the credential is not bound to the boot, so a tampered image would attest as trusted"
 grep -qiE 'UNLOCK-FAIL.*(policy does not match|tampered|out-of-date|not permitted)' <<<"$B" \
-    || fail "boot B did not unlock, but not with a TPM policy-mismatch — the refusal is for the wrong reason: $(grep -aoE 'UNLOCK-FAIL:[^Z]*' <<<"$B" | head -1)"
-note "boot B (tampered UKI, same TPM + same cred): PCR 11 measures differently, so the TPM REFUSES the policy — $(grep -aoE 'UNLOCK-FAIL:[^Z]*' <<<"$B" | head -1 | cut -c1-110) — the credential is bound to the boot, not merely stored on it"
-note "REFINEMENT, a documented spike (PLAN.md): the UPDATE-SURVIVABLE form uses the UKI's SIGNED .pcrsig (systemd-creds --tpm2-public-key / PolicyAuthorize); its tampered boot STILL unlocked in testing, localized by event-log replay to systemd-creds' PolicyAuthorize handling (the two UKIs do measure PCR 11 differently), not to the TPM — so it stays open, UNKNOWN not PASS"
+    || fail "boot B did not unlock the --tpm2-pcrs cred, but not with a TPM policy-mismatch — the refusal is for the wrong reason: $(grep -aoE 'UNLOCK-FAIL:[^Z]*' <<<"$B" | head -1)"
+note "boot B (tampered UKI, same TPM + same cred): the --tpm2-pcrs cred's PCR 11 measures differently, so the TPM REFUSES the policy — $(grep -aoE 'UNLOCK-FAIL:[^Z]*' <<<"$B" | head -1 | cut -c1-110) — bound to the boot, not merely stored on it"
+# THE RESOLVED SPIKE, now a WATCHED CONTRAST: the signed-policy (--tpm2-public-key) cred
+# STILL unlocks on the tampered boot — systemd-creds treats it as SOFT (degrades to
+# SRK-only, no signature required). This is why the old spike's negative control did not
+# bite; it is NOT the TPM (the two UKIs measure PCR 11 to genuinely different values) and
+# NOT a bug in the test. Asserted so a future systemd making it a hard gate is NOTICED.
+grep -qF 'PKUNLOCK-OK' <<<"$B" \
+    || fail "RESOLVED-FINDING CHANGED: the signed-policy (--tpm2-public-key) cred was REFUSED on the tampered boot ($(grep -aoE 'PKUNLOCK-[A-Z]+' <<<"$B" | head -1)) — systemd-creds used to treat it as a SOFT binding (this is the whole point of the contrast). If systemd now hard-gates it, that is GOOD news but this control and PLAN.md must be re-derived"
+note "CONTRAST (the old 'signed-policy didn't gate' spike, RESOLVED): on the SAME tampered boot the --tpm2-public-key cred UNLOCKS with no signature — systemd-creds' signed-PCR policy is SOFT by design (graceful credential loading; no strict flag exists), the opposite of --tpm2-pcrs's hard gate. A HARD update-survivable signed gate lives in systemd-cryptenroll (LUKS), not systemd-creds — see PLAN.md"
 
-pass "the attestation strand, END TO END and gated: a secret SEALED to a UKI's measured boot unlocks ONLY on that boot, and a tampered UKI is REFUSED by a real TPM. A self-contained initrd carrying systemd-creds + systemd-pcrextend and their full runtime closure (libsystemd-shared, the dlopen'd libtss2 set, the dynamic linker) runs in a ramdisk under genuine OVMF + swtpm; the systemd-stub measures the UKI's sections into PCR 11, systemd-pcrextend adds the enter-initrd phase, and systemd-creds seals '$SECRET' to PCR 11 as-measured and decrypts it back (boot A). The negative control bites: one changed section (.cmdline) makes PCR 11 measure differently and the TPM refuses the policy — 'policy does not match current system state ... tampered' (boot B), with the SAME TPM and the SAME sealed credential, so the key is bound to the boot and not merely stored on it. The update-survivable signed-.pcrsig (PolicyAuthorize) variant is a named open spike whose gating did not bite in testing, localized to systemd-creds and not the TPM. swtpm is software, not a hardware root of trust — this proves the seal/measure/gate mechanism, not a trustworthy machine"
+pass "the attestation strand, END TO END, gated — AND the signed-policy spike RESOLVED by contrast. A self-contained initrd carrying systemd-creds + systemd-pcrextend and their full runtime closure (libsystemd-shared, the dlopen'd libtss2 set, the dynamic linker) runs in a ramdisk under genuine OVMF + swtpm. HARD GATE: systemd-creds seals '$SECRET' to PCR 11 as-measured (--tpm2-pcrs=11); it unlocks on the good boot (A) and the TPM REFUSES it on a tampered boot — 'policy does not match … tampered' (B) — the negative control biting, the credential bound to the boot. RESOLVED SPIKE, now a watched contrast: a cred sealed with the SIGNED policy (--tpm2-public-key / PolicyAuthorize) STILL unlocks on that same tampered boot with no signature — chasing the old 'why didn't it gate' question to ground, this is systemd-creds treating its signed-PCR policy as SOFT (graceful degradation; no strict flag), NOT the TPM (the two UKIs measure PCR 11 to genuinely different values, confirmed by event-log replay) and NOT the test. The hard, update-survivable signed gate is systemd-cryptenroll on a LUKS volume (disk encryption has no soft fallback), a separate mechanism. swtpm is software, not a hardware root of trust — this proves seal/measure/gate, not a trustworthy machine"
