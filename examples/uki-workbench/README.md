@@ -77,12 +77,19 @@ accepts it against the lab certificate and lists the embedded Authenticode signa
 certificate is rejected and a six-byte tamper is a hash mismatch (both controls bite). Host-side, no
 boot. That is the signature gate Secure Boot enforces *before* the TPM measurement.
 
-**One residual stays a SPIKE, crux measured:** PHASE-level `.pcrsig` *policy* satisfaction — a secret
-sealed to the signed `.pcrsig` that unlocks only on a boot whose PCR 11 matches. The measured boot
-above is sections-only (14 events, no phase word — the stub doesn't extend the enter-initrd phase;
-`systemd-pcrextend` does, from inside a systemd initrd), so reaching the signed phase + running
-`systemd-creds decrypt` there is a real systemd-in-initrd integration, held as a spike in
-[`PLAN.md`](PLAN.md) with its experiments. OVMF/swtpm-gated → SKIPs where absent.
+**And the sealed-secret unlock — the end-to-end — is built** ([`smoke-uki-pcr-unlock.sh`](smoke-uki-pcr-unlock.sh)):
+not "the boot measures X" but "a key that exists only when the boot measures X". A self-contained
+initrd carries `systemd-creds` + `systemd-pcrextend` and their full runtime closure (incl. the
+dlopen'd `libtss2`) in a ramdisk under real OVMF + swtpm. Boot A (good UKI): the stub measures PCR 11,
+`systemd-pcrextend` adds the phase, `systemd-creds` **seals** a secret to PCR 11 and **unlocks** it.
+Boot B (one section changed, same TPM + same cred): PCR 11 measures differently, the TPM **refuses the
+policy** ("…tampered") — the negative control bites. The credential is bound to the boot.
+
+**One residual stays a SPIKE, localized:** the UPDATE-SURVIVABLE *signed*-`.pcrsig` variant
+(`systemd-creds --tpm2-public-key` / PolicyAuthorize). Its tampered boot still unlocked in testing —
+localized by event-log replay to `systemd-creds`' PolicyAuthorize handling, **not** the TPM (the two
+UKIs do measure PCR 11 to different values). Experiments in [`PLAN.md`](PLAN.md). All OVMF/swtpm-gated →
+SKIP where absent; and swtpm is software, not a hardware root of trust.
 
 ## What this lab does NOT do (scope guards)
 
@@ -110,6 +117,7 @@ above is sections-only (14 events, no phase word — the stub doesn't extend the
 | `smoke-uki-pcrsig.sh` | the UKI's carried `.pcrsig` self-prediction reproduces exactly under an independent `systemd-measure` over its own sections (host-side, no boot) | a one-byte `.cmdline` change predicts different PCR policy digests |
 | `smoke-uki-attest-boot.sh` | a bootable PCR-keyed UKI boots under real OVMF+swtpm; the guest's LIVE PCR 11 is replayed from the kernel's TCG log by `tpm2_eventlog` (the 14 events are the UKI's sections); phase-level `.pcrsig` policy stays UNKNOWN, named | a one-section `.cmdline` change moves the live PCR 11 |
 | `smoke-uki-authenticode.sh` | the UKI's embedded Authenticode signature verifies against the lab Secure Boot cert under `sbverify` (the foreign oracle), the signature gate before the TPM measurement | a rogue cert → rejected; a six-byte tamper → hash mismatch |
+| `smoke-uki-pcr-unlock.sh` | end-to-end: a secret sealed to the UKI's measured PCR 11 (in-initrd `systemd-creds`) unlocks on the good boot and the TPM refuses a tampered one; signed-`.pcrsig` variant is a named spike | a one-section `.cmdline` change → the TPM rejects the policy (UNLOCK-FAIL, same TPM + cred) |
 
 ## Layout
 
@@ -123,7 +131,8 @@ uki-workbench/
 ├── smoke-uki-rescue.sh       the in-RAM rescue edits via the contract's NAME-write surface
 ├── smoke-uki-pcrsig.sh       the UKI's self-predicted PCR-11 measurement, graded host-side
 ├── smoke-uki-attest-boot.sh  the UKI's MEASURED boot into a real OVMF+swtpm TPM, PCR-11 read live
-└── smoke-uki-authenticode.sh the UKI's Authenticode signature, verified host-side against the lab cert
+├── smoke-uki-authenticode.sh the UKI's Authenticode signature, verified host-side against the lab cert
+└── smoke-uki-pcr-unlock.sh   a secret sealed to the measured boot unlocks only on it; a tampered UKI is refused
 ```
 
 ## Running it
@@ -135,6 +144,7 @@ OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-rescue.sh
 ./smoke-uki-pcrsig.sh   # host-only (no firmware/QEMU); needs ukify + systemd-measure
 ./smoke-uki-attest-boot.sh   # boots the UKI under real OVMF + swtpm; needs ovmf, swtpm, a TPM-capable kernel
 ./smoke-uki-authenticode.sh  # host-only; signs with ukify --signtool sbsign, verifies with sbverify
+./smoke-uki-pcr-unlock.sh    # 2 OVMF+swtpm boots; needs ovmf, swtpm, systemd-creds, a TPM-capable kernel
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. They **SKIP by name** without
