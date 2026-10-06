@@ -14,7 +14,7 @@
 # {bp_off, cmd_line_ptr, cmdline_size, cmdline} JSON on success.
 #
 # Usage: capture-bootparams.py <bzImage> <append> <out.bin> [<dumpsize-hex>]
-import json, os, signal, socket, subprocess, sys, tempfile, time
+import json, os, shutil, signal, socket, subprocess, sys, tempfile, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DECODE = os.path.join(HERE, "decode-cmdline.py")
@@ -82,7 +82,15 @@ def main():
             if "error" not in r:
                 info = verify(scratch, append)
                 if info:
-                    os.replace(scratch, out)
+                    # os.replace() is atomic but raises EXDEV when $TMPDIR (the
+                    # short /tmp path we need for AF_UNIX) and `out` are on
+                    # different filesystems — tmpfs /tmp vs an on-disk workdir,
+                    # the common laptop/CI layout. Copy beside `out` (same fs),
+                    # then atomically replace, so the destination still flips in
+                    # one step and a failed copy never leaves a half-written out.
+                    out_part = out + ".part"
+                    shutil.copyfile(scratch, out_part)
+                    os.replace(out_part, out)
                     break
             rpc(s, {"execute": "cont"})
     finally:

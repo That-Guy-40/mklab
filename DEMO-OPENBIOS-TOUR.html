@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <style>
+    /* Baseline reset — the hosted Artifact platform injects an equivalent; this
+       standalone copy carries its own so it renders identically on a double-click. */
+    *, *::before, *::after { box-sizing: border-box; }
+    html { color-scheme: light; -webkit-text-size-adjust: 100%; }
+    :root { padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); }
+    body { margin: 0; }
+    img { max-width: 100%; }
+    [hidden] { display: none !important; }
+  </style>
+<title>OpenBIOS Lab Family</title>
+<meta name="description" content="A guided tour of firmware you can read, break, and repair live at the prompt — with no OS underneath.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  /* Layout: a single reading column; the rescue story is the one big card, the
+     other labs a responsive grid. Identity: a firmware console — amber phosphor
+     accent, IBM Plex Mono for prompts/headings, Plex Sans for prose. */
+  :root {
+    --bg: #ecefe9; --surface: #ffffff; --surface-2: #f4f6f1;
+    --fg: #191f26; --muted: #5a6573; --faint: #889;
+    --accent: #b5531f; --accent-soft: #f0e2d6; --ok: #0f6e6a; --ok-soft: #dff0ee;
+    --line: #d8ddd5; --shadow: 20px 30px 60px -40px rgba(20,30,25,.45);
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: "IBM Plex Sans", system-ui, -apple-system, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1117; --surface: #151b23; --surface-2: #1b222c;
+      --fg: #e7ebf0; --muted: #94a0ae; --faint: #6b7988;
+      --accent: #ffb454; --accent-soft: #2a2114; --ok: #4fd0c6; --ok-soft: #122826;
+      --line: #252d38; --shadow: 20px 30px 70px -40px rgba(0,0,0,.8);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --surface: #151b23; --surface-2: #1b222c;
+    --fg: #e7ebf0; --muted: #94a0ae; --faint: #6b7988;
+    --accent: #ffb454; --accent-soft: #2a2114; --ok: #4fd0c6; --ok-soft: #122826;
+    --line: #252d38; --shadow: 20px 30px 70px -40px rgba(0,0,0,.8);
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font-family: var(--sans);
+    line-height: 1.6; -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 920px; margin: 0 auto; padding-inline: 20px;
+    padding-block: 0; }
+  h1,h2,h3 { text-wrap: balance; line-height: 1.15; margin: 0; }
+  p { margin: 0; }
+  a { color: inherit; }
+  code, .mono { font-family: var(--mono); }
+
+  /* ---- top bar ---- */
+  .topbar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+  .topbar .row { max-width: 920px; margin: 0 auto; padding: 12px 20px;
+    display: flex; align-items: center; gap: 12px; }
+  .brand { font-family: var(--mono); font-weight: 600; letter-spacing: .02em;
+    font-size: 15px; display: flex; align-items: center; gap: 9px; }
+  .brand .dot { color: var(--accent); }
+  .spacer { flex: 1; }
+  .theme-btn { font: 500 12px/1 var(--mono); color: var(--muted);
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 999px; padding: 7px 12px; cursor: pointer; }
+  .theme-btn:hover { color: var(--fg); border-color: var(--accent); }
+
+  /* ---- hero ---- */
+  .hero { padding-block: 54px 20px; }
+  .eyebrow { font: 600 12px/1 var(--mono); letter-spacing: .14em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 18px; }
+  .hero h1 { font-family: var(--mono); font-weight: 600; font-size: clamp(30px, 6vw, 50px);
+    letter-spacing: -.01em; }
+  .hero h1 .cursor { color: var(--accent); font-weight: 400; }
+  .hero .lede { margin-top: 20px; font-size: clamp(17px, 2.4vw, 20px);
+    color: var(--muted); max-width: 40em; }
+  .hero .lede b { color: var(--fg); font-weight: 600; }
+
+  /* ---- generic section ---- */
+  section { padding-block: 34px; }
+  .kicker { font: 600 12px/1 var(--mono); letter-spacing: .12em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 10px;
+    display: flex; align-items: center; gap: 10px; }
+  .kicker::before { content: ""; width: 22px; height: 2px; background: var(--accent); }
+  h2 { font-size: clamp(22px, 3.5vw, 30px); font-weight: 700; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin-top: 10px; max-width: 46em; }
+
+  /* ---- glossary chips ---- */
+  .gloss { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+  .chip { position: relative; font: 500 13px/1.4 var(--sans);
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: 10px; padding: 9px 12px; cursor: default; }
+  .chip b { font-family: var(--mono); color: var(--accent); font-weight: 600;
+    margin-right: 6px; }
+  .chip .d { display: none; }
+  @media (hover: hover) {
+    .chip:hover { border-color: var(--accent); }
+  }
+  .chip .d { color: var(--muted); }
+  .chip.open .d { display: inline; }
+
+  /* ---- code / console ---- */
+  .console { background: var(--surface); border: 1px solid var(--line);
+    border-radius: 12px; overflow: hidden; margin-top: 16px; box-shadow: var(--shadow); }
+  .console .bar { display: flex; align-items: center; gap: 8px; padding: 9px 13px;
+    border-bottom: 1px solid var(--line); background: var(--surface-2); }
+  .console .bar .lbl { font: 500 11px/1 var(--mono); color: var(--faint);
+    letter-spacing: .08em; text-transform: uppercase; }
+  .console .bar .copy { margin-left: auto; font: 500 11px/1 var(--mono);
+    color: var(--muted); background: transparent; border: 1px solid var(--line);
+    border-radius: 7px; padding: 5px 9px; cursor: pointer; }
+  .console .bar .copy:hover { color: var(--fg); border-color: var(--accent); }
+  .console pre { margin: 0; padding: 14px 15px; overflow-x: auto;
+    font: 400 13px/1.65 var(--mono); }
+  .console pre .pr { color: var(--accent); user-select: none; }
+  .console pre .cm { color: var(--faint); }
+  .console pre .ok { color: var(--ok); }
+  .console pre .path { color: var(--fg); }
+
+  /* ---- rescue feature ---- */
+  .feature { background: var(--surface); border: 1px solid var(--line);
+    border-radius: 16px; padding: clamp(18px, 3vw, 30px); margin-top: 18px;
+    box-shadow: var(--shadow); }
+  .acts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px; margin-top: 20px; }
+  .act { border: 1px solid var(--line); border-radius: 11px; padding: 14px;
+    background: var(--surface-2); min-width: 0; }
+  .act .n { font: 600 11px/1 var(--mono); color: var(--accent);
+    text-transform: uppercase; letter-spacing: .09em; }
+  .act h4 { margin: 8px 0 6px; font-size: 15px; font-weight: 600; }
+  .act p { font-size: 13.5px; color: var(--muted); }
+  .verdict { margin-top: 18px; border-left: 3px solid var(--ok);
+    background: var(--ok-soft); border-radius: 0 10px 10px 0; padding: 12px 15px;
+    font: 500 13.5px/1.55 var(--sans); }
+  .verdict .tag { font-family: var(--mono); font-weight: 600; color: var(--ok);
+    letter-spacing: .04em; }
+
+  /* ---- lab grid ---- */
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 14px; margin-top: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--line);
+    border-radius: 14px; padding: 18px; display: flex; flex-direction: column;
+    gap: 9px; min-width: 0; }
+  .card .ico { font-size: 22px; line-height: 1; }
+  .card h3 { font-size: 16.5px; font-weight: 600; }
+  .card .one { color: var(--muted); font-size: 14px; }
+  .card .hook { font-size: 13.5px; }
+  .card .hook b { color: var(--accent); font-weight: 600; }
+  .card .cmd { margin-top: auto; }
+  .card .cmd code { display: block; font-size: 12px; color: var(--fg);
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 8px; padding: 9px 10px; overflow-x: auto; white-space: nowrap; }
+  .tagrow { display: flex; gap: 6px; flex-wrap: wrap; }
+  .vtag, .dtag { font: 600 10.5px/1 var(--mono); letter-spacing: .06em;
+    padding: 5px 8px; border-radius: 6px; text-transform: uppercase; }
+  .vtag { color: var(--ok); background: var(--ok-soft); }
+  .dtag { color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); }
+
+  /* ---- trust ---- */
+  .pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr));
+    gap: 14px; margin-top: 20px; }
+  .pillar { min-width: 0; }
+  .pillar h4 { font-family: var(--mono); font-size: 14px; font-weight: 600;
+    color: var(--accent); margin-bottom: 6px; }
+  .pillar p { font-size: 14px; color: var(--muted); }
+  .inset { margin-top: 22px; border: 1px dashed var(--line); border-radius: 12px;
+    padding: 16px 18px; background: var(--surface-2); }
+  .inset .h { font: 600 12px/1 var(--mono); letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent); margin-bottom: 9px; }
+  .inset p { font-size: 14px; color: var(--fg); }
+  .inset p + p { margin-top: 8px; color: var(--muted); }
+
+  /* ---- footer ---- */
+  footer { border-top: 1px solid var(--line); margin-top: 20px;
+    padding-block: 30px 46px; color: var(--muted); font-size: 13.5px; }
+  footer .mono { color: var(--faint); }
+
+  .note { font-size: 12.5px; color: var(--faint); margin-top: 10px; }
+  @media (prefers-reduced-motion: no-preference) {
+    .chip, .theme-btn, .console .bar .copy { transition: border-color .15s, color .15s; }
+  }
+</style>
+</head>
+<body>
+<div class="topbar"><div class="row">
+  <span class="brand"><span class="dot">0 &gt;</span> OpenBIOS Lab Family</span>
+  <span class="spacer"></span>
+  <button class="theme-btn" id="themeBtn" aria-label="Toggle colour theme">theme</button>
+</div></div>
+
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">firmware · forth · qemu</div>
+    <h1>Read it. Break it.<br>Repair it <span class="cursor">at the prompt_</span></h1>
+    <p class="lede">Firmware is the code that runs <b>before</b> the operating system — and when
+      it's wrong, the machine won't boot and there's no OS to SSH into to fix it.
+      This is a family of labs that make firmware <b>inspectable and editable</b>:
+      a Forth prompt you can type at while the machine sits there, pre-OS, and a
+      toolkit that reads and rewrites the binary formats a boot chain is made of.
+      Everything runs in QEMU, as a normal user, no hardware required.</p>
+  </header>
+
+  <section id="glossary">
+    <div class="kicker">a 60-second glossary</div>
+    <h2>Six terms, then we're off</h2>
+    <p class="sub">Tap any term for the plain-English version.</p>
+    <div class="gloss" id="gloss">
+      <span class="chip"><b>bzImage</b><span class="d">— a compiled, compressed Linux kernel: the file a bootloader loads.</span></span>
+      <span class="chip"><b>initrd</b><span class="d">— a tiny first root filesystem (a cpio archive) the kernel mounts before the real disk.</span></span>
+      <span class="chip"><b>UKI</b><span class="d">— Unified Kernel Image: one signed .efi file with the kernel, initrd, and command line glued on as sections.</span></span>
+      <span class="chip"><b>the ok prompt</b><span class="d">— the interactive Forth language built into Open Firmware. You type words; it runs them now.</span></span>
+      <span class="chip"><b>device tree</b><span class="d">— a binary map of a machine's hardware firmware hands the kernel. Everywhere in switches &amp; routers.</span></span>
+      <span class="chip"><b>foreign oracle</b><span class="d">— an independent tool (dtc, objdump, cpio) used to check the firmware's answer. The firmware is never its own judge.</span></span>
+    </div>
+  </section>
+
+  <section id="rescue">
+    <div class="kicker">the centerpiece</div>
+    <h2>Rescue a machine that won't boot — no USB stick, no chroot</h2>
+    <p class="sub">A boot artifact is deliberately broken so the machine hangs, then
+      repaired <b>in place</b> by the firmware itself, pre-OS. The kind of fix you'd
+      normally do by pulling the disk, booting a rescue USB, and <code>chroot</code>-ing in.</p>
+
+    <div class="console">
+      <div class="bar"><span class="lbl">one command</span>
+        <button class="copy" data-copy="examples/openbios-the-rival-that-shipped/showcase-rescue.sh all">copy</button></div>
+<pre><span class="pr">$</span> examples/openbios-the-rival-that-shipped/<span class="path">showcase-rescue.sh</span> all</pre>
+    </div>
+
+    <div class="feature">
+      <p style="color:var(--muted);font-size:14.5px">Four independent acts, each on a <b style="color:var(--fg)">different</b>
+        kind of boot artifact. The negative control is the point: each act first boots the
+        <i>un-repaired</i> artifact and shows it genuinely failing, so when the fixed one comes
+        up you know the edit is what rescued it.</p>
+      <div class="acts">
+        <div class="act"><div class="n">act · initrd</div><h4>No initrd</h4>
+          <p>Boot with no initrd → kernel can't mount root → supply the good one on the boot line.</p></div>
+        <div class="act"><div class="n">act · config</div><h4>Bad config in the initrd</h4>
+          <p>Firmware edits a file <i>inside</i> the initramfs in place, same length, archive stays valid.</p></div>
+        <div class="act"><div class="n">act · cmdline</div><h4>UKI missing a flag</h4>
+          <p>Grow the UKI's <code>.cmdline</code> section to add the rescue flag; it boots under real UEFI.</p></div>
+        <div class="act"><div class="n">act · bzImage</div><h4>Kernel's live command line</h4>
+          <p>Follow the bzImage's <code>cmd_line_ptr</code> in RAM and rewrite the line; an outside decoder confirms it.</p></div>
+      </div>
+      <div class="verdict">
+        <span class="tag">PASS ✓</span> — three in-place editors, each turned on its native artifact
+        type, each rescuing a broken boot with no USB stick and no chroot. Verified end-to-end
+        on 2026-10-06: every act's broken artifact failed <i>first</i>
+        (<code>VFS: Unable to mount root fs</code> / <code>RESCUE-FAIL</code>), then the repaired
+        one reached its shell.
+      </div>
+    </div>
+    <p class="note">Run a single act too: <code>showcase-rescue.sh bzimage</code>, <code>… config</code>, <code>… cmdline</code>, <code>… initrd</code>.</p>
+  </section>
+
+  <section id="readers">
+    <div class="kicker">the toolkit</div>
+    <h2>Understand any boot artifact — graded against an outside tool</h2>
+    <p class="sub">Before you can safely edit a boot artifact you have to read it correctly. Each
+      reader is checked field-for-field against the standard third-party tool, on <b>four CPU
+      architectures at once</b> — because byte order is exactly the thing that's right on one
+      CPU and silently wrong on another.</p>
+    <div class="console">
+      <div class="bar"><span class="lbl">smoke-openbios.sh — four readers</span>
+        <button class="copy" data-copy="examples/openbios-the-rival-that-shipped/smoke-openbios.sh fdt">copy</button></div>
+<pre><span class="cm"># a bzImage's boot header, a UKI's sections, an initrd's members, the live device tree</span>
+<span class="pr">$</span> examples/openbios-the-rival-that-shipped/<span class="path">smoke-openbios.sh</span> bootparams
+<span class="pr">$</span> examples/openbios-the-rival-that-shipped/<span class="path">smoke-openbios.sh</span> pe
+<span class="pr">$</span> examples/openbios-the-rival-that-shipped/<span class="path">smoke-openbios.sh</span> cpio
+<span class="pr">$</span> examples/openbios-the-rival-that-shipped/<span class="path">smoke-openbios.sh</span> fdt
+<span class="ok">PASS</span>: the firmware's LIVE device tree, flattened and <span class="ok">accepted by dtc itself</span>,
+      on all four arches; fdtdump's node and property counts equal the firmware's.</pre>
+    </div>
+    <p class="note">The <b style="color:var(--accent)">fdt</b> one lands with network engineers: it's the same flattened device
+      tree that describes the hardware inside switches, routers and SBCs — here the firmware
+      generates it live and a real <code>dtc</code> signs off on it.</p>
+  </section>
+
+  <section id="breadth">
+    <div class="kicker">breadth</div>
+    <h2>Seven more labs, each with a headline you can run</h2>
+    <p class="sub">Full paths from the repo root, so you can jump straight in.</p>
+    <div class="grid" id="grid"></div>
+  </section>
+
+  <section id="trust">
+    <div class="kicker">why you can trust it</div>
+    <h2>The part worth lingering on</h2>
+    <p class="sub">This is the difference between a demo and a result. The testing discipline is
+      deliberately paranoid.</p>
+    <div class="pillars">
+      <div class="pillar"><h4>Foreign oracle</h4><p>Every claim is checked by an independent
+        tool — <code>dtc</code>, <code>objdump</code>, <code>cpio</code>, <code>tpm2_eventlog</code>.
+        "The firmware printed the right answer" is never the test.</p></div>
+      <div class="pillar"><h4>Controls that bite</h4><p>A checker that only ever passes checks
+        nothing. Each test also breaks the subject and confirms the assertion <i>fails</i> — the
+        un-repaired artifact is shown failing first, every time.</p></div>
+      <div class="pillar"><h4>UNKNOWN ≠ PASS</h4><p>A missing prerequisite SKIPs <i>by name</i>
+        (exit 77). "I couldn't check this" never silently becomes "this is fine."</p></div>
+      <div class="pillar"><h4>Outcome, not mechanism</h4><p>The symbol-poke demo doesn't check
+        "the firmware found the symbol table" — it pokes a function and checks the running
+        program <i>emits the poked value</i>.</p></div>
+    </div>
+    <div class="inset">
+      <div class="h">found while building this tour</div>
+      <p>Verifying the rescue showcase surfaced a real bug: the bzImage fixture capture moved a
+        scratch file from <code>/tmp</code> to the workdir with <code>os.replace()</code>, which
+        throws <code>EXDEV</code> when (as on most laptops) <code>/tmp</code> is a separate
+        filesystem. The run <b>failed honestly</b> with the traceback instead of silently skipping.</p>
+      <p>It's fixed now — copy beside the destination, then atomically rename — and the fix was
+        watched working across the real device boundary before this sentence was written. That's
+        the ethos in miniature: run it, don't reason about it; fix the thing that lies before the
+        thing that merely breaks.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p style="color:var(--fg);font-weight:600;margin-bottom:8px">Where to start</p>
+    <p><span class="mono">cd</span> into your clone, then the one command above. Each lab's own
+      <code>README.md</code> is the deep dive; the full runbook —
+      <span class="mono">DEMO-OPENBIOS-TOUR.md</span> at the repo root — carries the preflight
+      steps, every command, and the real verified output.</p>
+    <p style="margin-top:14px" class="mono">0 &gt; &nbsp;everything above runs in QEMU, as you, no root, no hardware.</p>
+  </footer>
+
+</div>
+
+<script>
+  // Labs data — the breadth grid. v = verified here (2026-10-06), d = run it yourself.
+  var LABS = [
+    { ico:"🗄️", name:"Modern filesystems", one:"Read ext4 / FAT / ISO the frozen firmware can't — then fix a file on one.",
+      hook:"<b>Breaks a config on a real ext4 root, repairs it in place, runs fsck clean, and boots the fixed image.</b> Rescue on a modern filesystem, no USB.",
+      cmd:"examples/openbios-modern-filesystems/smoke-grub2fs.sh", v:true },
+    { ico:"🔬", name:"pacme — live RAM", one:"Point GNU poke at a running firmware's memory, over QEMU's gdbstub.",
+      hook:"<b>Reads and writes the live guest's physical RAM while the firmware executes</b> — a structure-aware x-ray into firmware memory.",
+      cmd:"examples/pacme-inspects-the-firmware/smoke-pacme-live-ram.sh", v:false },
+    { ico:"🖥️", name:"Native habitats", one:"The same IEEE-1275 prompt, on real SPARC and PowerMac hardware models.",
+      hook:"A diagnostic vocabulary that lives in the NVRAM chip and <b>self-installs at power-on, before any device is probed</b>.",
+      cmd:"examples/open-firmware-native-habitats/smoke-habitat.sh all sparc32", v:false },
+    { ico:"🩺", name:"Firmware debugs itself", one:"Turn “Can't open boot device” into a specific diagnosis.",
+      hook:"The firmware <b>diagnoses and repairs its own failed boot</b> from its own prompt — and <code>see</code> decompiles the firmware you're standing in.",
+      cmd:"examples/open-firmware-debugs-itself/showcase-diagnose-a-broken-boot.sh", v:false },
+    { ico:"🐧", name:"Forth to boot", one:"Boot modern Linux on Open Firmware frozen since 2015.",
+      hook:"<b>Hand-place the initrd high in memory and re-point the firmware's hooks live</b> — each fix a one-liner where UEFI needs a reflash.",
+      cmd:"examples/open-firmware-forth-to-boot/showcase-forth-to-boot.sh", v:false },
+    { ico:"✍️", name:"Hello to EMACS", one:"Bare-metal C client programs the firmware loads and jumps into.",
+      hook:"A <b>MicroEMACS-style multi-line screen editor</b> — buffer, keymap, mode line — running with no operating system beneath it.",
+      cmd:"examples/openbios-clib-hello-to-emacs/smoke-client.sh x86 emacs", v:false },
+    { ico:"🔐", name:"UKI workbench", one:"A measured boot into a real TPM, and a secret keyed to it.",
+      hook:"Boot measurements land in PCR 11; an independent tpm2_eventlog replay matches exactly. <b>Tamper and the TPM refuses to release the key.</b>",
+      cmd:"examples/uki-workbench/smoke-uki-attest-boot.sh", v:false },
+  ];
+
+  var grid = document.getElementById("grid");
+  LABS.forEach(function(L){
+    var tag = L.v
+      ? '<span class="vtag">✓ verified here</span>'
+      : '<span class="dtag">run it yourself</span>';
+    var el = document.createElement("div");
+    el.className = "card";
+    el.innerHTML =
+      '<div class="ico">'+L.ico+'</div>'+
+      '<h3>'+L.name+'</h3>'+
+      '<div class="one">'+L.one+'</div>'+
+      '<div class="hook">'+L.hook+'</div>'+
+      '<div class="tagrow">'+tag+'</div>'+
+      '<div class="cmd"><code>'+L.cmd+'</code></div>';
+    grid.appendChild(el);
+  });
+
+  // Glossary chips: tap to reveal the definition.
+  document.getElementById("gloss").addEventListener("click", function(e){
+    var chip = e.target.closest(".chip"); if (chip) chip.classList.toggle("open");
+  });
+
+  // Copy buttons.
+  document.querySelectorAll(".copy").forEach(function(btn){
+    btn.addEventListener("click", function(){
+      var txt = btn.getAttribute("data-copy");
+      var done = function(){ var o=btn.textContent; btn.textContent="copied"; setTimeout(function(){btn.textContent=o;},1200); };
+      try {
+        navigator.clipboard.writeText(txt).then(done, function(){ fallback(txt, done); });
+      } catch(_) { fallback(txt, done); }
+    });
+  });
+  function fallback(txt, done){
+    try { var ta=document.createElement("textarea"); ta.value=txt; document.body.appendChild(ta);
+      ta.select(); document.execCommand("copy"); document.body.removeChild(ta); done(); } catch(_){}
+  }
+
+  // Theme toggle (per-viewer convenience; safe without storage).
+  var btn = document.getElementById("themeBtn"), root = document.documentElement;
+  try { var saved = localStorage.getItem("ob-theme"); if (saved) root.setAttribute("data-theme", saved); } catch(_){}
+  btn.addEventListener("click", function(){
+    var cur = root.getAttribute("data-theme");
+    var isDark = cur ? cur === "dark"
+      : window.matchMedia("(prefers-color-scheme: dark)").matches;
+    var next = isDark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("ob-theme", next); } catch(_){}
+  });
+</script>
+</body>
+</html>
