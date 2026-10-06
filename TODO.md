@@ -387,11 +387,15 @@ and its scope is confirmed with the user before building, per the usual rule for
       adds the phase, `systemd-creds` seals a secret to PCR 11 (`--tpm2-pcrs=11`) and unlocks it (boot A),
       and a one-section `.cmdline` tamper makes the TPM REFUSE the policy ("…tampered", boot B — the
       negative control bites, same TPM + same cred). That resolves the in-initrd systemd-userspace
-      integration. STILL A SPIKE (UNKNOWN≠PASS) only for the UPDATE-SURVIVABLE **signed** `.pcrsig`
-      variant (`systemd-creds --tpm2-public-key`/PolicyAuthorize): its tampered boot still unlocked —
-      localized by event-log replay to systemd-creds' PolicyAuthorize handling, NOT the TPM (the UKIs
-      measure PCR 11 to genuinely different values 0x096a…/0xa506…); experiments in
-      `examples/uki-workbench/PLAN.md`.)_ The motive is an emergency **rescue boot** — fix a
+      integration. **SIGNED-POLICY SPIKE RESOLVED 2026-10-06** (chased to ground): `systemd-creds
+      --tpm2-public-key` is a **SOFT** signed-PCR policy — a controlled in-guest matrix showed the cred
+      decrypts with NO signature and EVEN ON A TAMPERED BOOT, because systemd-creds degrades to the
+      SRK-only key by design (graceful credential loading; no strict flag). NOT the TPM (event-log replay:
+      the two UKIs measure PCR 11 to genuinely different 0x096a…/0xa506…), NOT the test. So the hard gate
+      is `--tpm2-pcrs` (done); the hard update-survivable signed gate is `systemd-cryptenroll` on LUKS
+      (no soft fallback), a separate mechanism/future demo. `smoke-uki-pcr-unlock.sh` now pins the
+      contrast as a watched control (tampered boot: `--tpm2-pcrs` refused vs `--tpm2-public-key` unlocks).
+      See `examples/uki-workbench/PLAN.md`.)_ The motive is an emergency **rescue boot** — fix a
       machine that won't come up without a USB stick, a chroot, or blind GRUB-over-serial editing. The
       readers already *find* these; this arc *mutates* them, on the write words that already exist
       (`struct.fth` `t!`/`c!`; `cbfs-write`/`rmw-fields` already do graded in-place surgery). **Build

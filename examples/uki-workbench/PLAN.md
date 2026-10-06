@@ -72,18 +72,23 @@ The **capstone that consumes the contract**, on the `unix` door, self-proving:
     biting**. Two boots share one swtpm state dir (SRK persists) and one ext2 scratch (the cred
     persists A→B). The credential is bound to the boot, not merely stored on it.
     **This resolves the in-initrd systemd-userspace integration the earlier spike flagged.**
-  - **STILL A SPIKE — the UPDATE-SURVIVABLE signed-policy variant.** The direct `--tpm2-pcrs=11`
-    policy above breaks on any legitimate UKI update. The update-survivable form is the UKI's
-    SIGNED `.pcrsig` (`systemd-creds --tpm2-public-key`, a PolicyAuthorize over the signature).
-    Built and measured here: the enroll/unlock ran, but the TAMPERED boot STILL unlocked under the
-    public-key policy. Localized (event-log replay, 2026-10-05): the two UKIs measure PCR 11 to
-    genuinely different values (`0x096a…` good vs `0xa506…` bad), so the TPM measurement is correct;
-    the non-gating is in `systemd-creds`' PolicyAuthorize/`--tpm2-signature` handling, NOT the TPM.
-    **Experiments to resolve:** inspect the enrolled cred's policy; test `decrypt` with a mismatched
-    signature to confirm whether gating fires at all; check the phase/PCR-selection alignment between
-    ukify's `.pcrsig` and systemd-creds' seal. (Also: `/sys/class/tpm` is unregistered in the
-    mklab-kernel — PCR reads go through the securityfs event log, not sysfs.) Plus the hardware AK
-    quote stays UNKNOWN — swtpm is software, not an anchor.
+  - **RESOLVED (2026-10-06) — why the signed-policy variant did not gate, chased to ground.** The
+    direct `--tpm2-pcrs=11` policy above is a hard gate but breaks on any legitimate UKI update; the
+    update-survivable form is the UKI's SIGNED `.pcrsig` (`systemd-creds --tpm2-public-key`, a
+    PolicyAuthorize over the signature), and its tampered boot kept unlocking. The chase (a controlled
+    in-guest experiment matrix): a `--tpm2-public-key` cred decrypts **with no signature at all**, and
+    **even on a tampered boot** (different PCR 11) — so the signed-PCR policy is **SOFT**:
+    `systemd-creds` degrades to the SRK-only key when no matching signature is present, by design for
+    boot-time credential loading, and there is **no strict/require flag** (`systemd-creds --help`
+    confirms only `--tpm2-signature`/`--refuse-null`). It is NOT the TPM (event-log replay: the two
+    UKIs measure PCR 11 to genuinely different values `0x096a…`/`0xa506…`) and NOT the test. The HARD,
+    update-survivable signed gate lives in **`systemd-cryptenroll` on a LUKS volume** — disk encryption
+    has no soft fallback, so there a wrong/unsigned PCR state truly blocks unlock (a separate mechanism;
+    a future demo if wanted). `smoke-uki-pcr-unlock.sh` now pins this as a **watched contrast**: on the
+    tampered boot the `--tpm2-pcrs` cred is refused (hard) while the `--tpm2-public-key` cred unlocks
+    (soft), so a future systemd making the signed policy strict would bite the test. (Also found while
+    chasing: `/sys/class/tpm` is unregistered in the mklab-kernel — PCR reads go via the securityfs
+    event log, not sysfs.) The hardware AK quote stays UNKNOWN — swtpm is software, not an anchor.
 - **NAME-live** — DONE as `fdt-live` (#477), consumed by the pacme lab.
 
 ## Grading discipline (the repo's rules, applied here)
