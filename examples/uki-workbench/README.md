@@ -71,10 +71,18 @@ digests (the prediction tracks the artifact). **The measured-boot half is now bu
 guest reads the **live** PCR 11 from its own `/sys/class/tpm/tpm0`, and `tpm2_eventlog` (the foreign
 oracle) replays the kernel's TCG event log to **exactly** that register — its 14 PCR-11 events the
 UKI's 7 sections measured name-then-content. A one-section change moves PCR 11 (the control bites).
-**One residual stays UNKNOWN, named:** PHASE-level `.pcrsig` *policy* satisfaction needs a
-`systemd-pcrphase` initrd (a busybox initrd never runs it, so the boot measures sections-only — it
-differs from `systemd-measure calculate`'s phase-applied value by exactly that extension,
-diagnosed). OVMF/swtpm-gated → SKIPs where they are absent.
+**The signature gate is built too** — [`smoke-uki-authenticode.sh`](smoke-uki-authenticode.sh) signs
+the UKI with a lab Secure Boot key (`ukify --signtool sbsign`) and `sbverify` (the foreign oracle)
+accepts it against the lab certificate and lists the embedded Authenticode signature; a rogue
+certificate is rejected and a six-byte tamper is a hash mismatch (both controls bite). Host-side, no
+boot. That is the signature gate Secure Boot enforces *before* the TPM measurement.
+
+**One residual stays a SPIKE, crux measured:** PHASE-level `.pcrsig` *policy* satisfaction — a secret
+sealed to the signed `.pcrsig` that unlocks only on a boot whose PCR 11 matches. The measured boot
+above is sections-only (14 events, no phase word — the stub doesn't extend the enter-initrd phase;
+`systemd-pcrextend` does, from inside a systemd initrd), so reaching the signed phase + running
+`systemd-creds decrypt` there is a real systemd-in-initrd integration, held as a spike in
+[`PLAN.md`](PLAN.md) with its experiments. OVMF/swtpm-gated → SKIPs where absent.
 
 ## What this lab does NOT do (scope guards)
 
@@ -101,6 +109,7 @@ diagnosed). OVMF/swtpm-gated → SKIPs where they are absent.
 | `smoke-uki-rescue.sh` | `pe-write` grows .cmdline, `cpio-write` flips a config inside .initrd — each a scoped delta agreeing with a foreign pre-edit oracle | an oversize .cmdline → `edit| TOO-BIG`; a length-changing config edit → `cpio| LEN-CHANGE`; bytes unchanged after each refusal |
 | `smoke-uki-pcrsig.sh` | the UKI's carried `.pcrsig` self-prediction reproduces exactly under an independent `systemd-measure` over its own sections (host-side, no boot) | a one-byte `.cmdline` change predicts different PCR policy digests |
 | `smoke-uki-attest-boot.sh` | a bootable PCR-keyed UKI boots under real OVMF+swtpm; the guest's LIVE PCR 11 is replayed from the kernel's TCG log by `tpm2_eventlog` (the 14 events are the UKI's sections); phase-level `.pcrsig` policy stays UNKNOWN, named | a one-section `.cmdline` change moves the live PCR 11 |
+| `smoke-uki-authenticode.sh` | the UKI's embedded Authenticode signature verifies against the lab Secure Boot cert under `sbverify` (the foreign oracle), the signature gate before the TPM measurement | a rogue cert → rejected; a six-byte tamper → hash mismatch |
 
 ## Layout
 
@@ -113,7 +122,8 @@ uki-workbench/
 ├── smoke-uki-dissect.sh      identify NAMES every typed artifact a real UKI carries
 ├── smoke-uki-rescue.sh       the in-RAM rescue edits via the contract's NAME-write surface
 ├── smoke-uki-pcrsig.sh       the UKI's self-predicted PCR-11 measurement, graded host-side
-└── smoke-uki-attest-boot.sh  the UKI's MEASURED boot into a real OVMF+swtpm TPM, PCR-11 read live
+├── smoke-uki-attest-boot.sh  the UKI's MEASURED boot into a real OVMF+swtpm TPM, PCR-11 read live
+└── smoke-uki-authenticode.sh the UKI's Authenticode signature, verified host-side against the lab cert
 ```
 
 ## Running it
@@ -124,6 +134,7 @@ OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-dissect.sh
 OPENBIOS_WORKDIR=~/openbios-lab ./smoke-uki-rescue.sh
 ./smoke-uki-pcrsig.sh   # host-only (no firmware/QEMU); needs ukify + systemd-measure
 ./smoke-uki-attest-boot.sh   # boots the UKI under real OVMF + swtpm; needs ovmf, swtpm, a TPM-capable kernel
+./smoke-uki-authenticode.sh  # host-only; signs with ukify --signtool sbsign, verifies with sbverify
 ```
 
 Each prints exactly one `PASS:`/`FAIL:`/`SKIP:` line. They **SKIP by name** without

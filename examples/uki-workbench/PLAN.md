@@ -52,12 +52,33 @@ The **capstone that consumes the contract**, on the `unix` door, self-proving:
     negative control bites). This closes the plan's old "the carried prediction == an actual
     OVMF+swtpm boot's PCR 11 (needs a live TPM)" for the *measurement*: the real TPM saw this UKI
     and nothing else, foreign-oracle-graded. OVMF/swtpm-gated → SKIPs where they are absent.
-  - **STILL DEFERRED, UNKNOWN not PASS:** PHASE-level `.pcrsig` *policy satisfaction*. The boot
-    above measures sections-only; `systemd-measure calculate` reports a value with the
-    enter-initrd PHASE already applied, so the two differ by exactly that phase extension
-    (diagnosed, not a mismatch). Reaching the phase needs a `systemd-pcrphase` initrd (a busybox
-    initrd never runs it); the end-to-end proof is such an initrd unlocking a `.pcrsig`-sealed
-    secret. Plus the Authenticode extract-and-host-verify. The plan §3 has the feasibility rows.
+  - AUTHENTICODE (`smoke-uki-authenticode.sh`, NEW 2026-10-05): the signature gate that sits
+    BEFORE the TPM measurement. ukify signs the UKI with a lab Secure Boot key
+    (`--signtool sbsign`); `sbverify` (the foreign oracle) accepts it against the lab certificate
+    and lists the embedded Authenticode signature. Both controls bite: a rogue certificate is
+    rejected (the signature is bound to the lab key), and overwriting six bytes makes sbverify
+    report a hash mismatch (Authenticode covers the whole image, so any post-sign edit — including
+    the rescue arc's — invalidates it). Host-side, no boot. This closes the plan's
+    "Authenticode extract-and-host-verify".
+  - **STILL DEFERRED — a SPIKE, crux measured (2026-10-05):** PHASE-level `.pcrsig` *policy
+    satisfaction* — a secret SEALED to the UKI's signed `.pcrsig` policy that UNLOCKS only on a
+    boot whose PCR 11 satisfies it. Achieved so far: the self-prediction (pcrsig), the live
+    measured boot (attest-boot), and the signature gate (authenticode). The gap, diagnosed from
+    the attest-boot event log: that boot measures **sections-only** (14 EV_IPL events = 7 sections
+    × name+content, **no phase word**), because the systemd-stub 259 does NOT extend the
+    enter-initrd phase itself — `systemd-pcrextend` (the renamed `systemd-pcrphase`) does, from
+    *inside a systemd initrd*. So `systemd-measure calculate`'s phase-applied prediction and the
+    `.pcrsig`'s per-phase signed policy are off from the busybox boot by exactly that extension.
+    **Crux:** reach the signed phase in the guest and run `systemd-creds decrypt --tpm2-signature`
+    there. **Experiments, in order of cost:** (1) stage `systemd-creds` + its 9 libs +
+    `systemd-pcrextend` into the measure initramfs (the packer's `--add` is single-file, so each
+    `.so` is explicit) — a ~20-file bundle, fragile but bounded; the stepping-stone is a RAW-PCR
+    seal to the sections-only value attest-boot already produces (no phase, no signature), proving
+    the unlock mechanism against the real measured PCR 11 with a tamper negative control; (2) the
+    full signed-policy version on a systemd-based initrd (`dracut` is absent here; `mkinitramfs`
+    with the systemd TPM units). This is a real systemd-in-initrd integration, held as a spike
+    rather than hand-waved. Plus: nothing here is a chain of trust — swtpm is software, not an
+    anchor.
 - **NAME-live** — DONE as `fdt-live` (#477), consumed by the pacme lab.
 
 ## Grading discipline (the repo's rules, applied here)
